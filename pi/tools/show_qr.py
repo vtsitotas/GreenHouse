@@ -21,11 +21,12 @@ def main():
     ap.add_argument("--tailscale", required=True)
     ap.add_argument("--user", default="app")
     ap.add_argument("--pass", dest="password", required=True)
-    ap.add_argument("--port", type=int, default=9001)
+    ap.add_argument("--port", type=int, default=8883)
+    ap.add_argument("--lan", default="192.168.1.88")
     args = ap.parse_args()
 
     payload = json.dumps({
-        "host_lan":        "greenhouse.local",
+        "host_lan":        args.lan,
         "host_tailscale":  args.tailscale,
         "port":            args.port,
         "tls_fingerprint": fingerprint(),
