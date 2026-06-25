@@ -23,12 +23,20 @@ class GreenhouseRepository {
     _sub = connection.events.listen(_handle);
   }
 
-  Stream<Map<String, Map<String, double>>> get readings =>
-      Stream.value(Map.from(_readings)).asyncExpand((_) => _readingsCtrl.stream);
-  Stream<Map<String, NodeStatus>> get nodes =>
-      Stream.value(Map.from(_nodes)).asyncExpand((_) => _nodesCtrl.stream);
-  Stream<Map<String, ActuatorState>> get actuators =>
-      Stream.value(Map.from(_actuators)).asyncExpand((_) => _actuatorsCtrl.stream);
+  Stream<Map<String, Map<String, double>>> get readings async* {
+    yield Map.from(_readings);
+    yield* _readingsCtrl.stream;
+  }
+
+  Stream<Map<String, NodeStatus>> get nodes async* {
+    yield Map.from(_nodes);
+    yield* _nodesCtrl.stream;
+  }
+
+  Stream<Map<String, ActuatorState>> get actuators async* {
+    yield Map.from(_actuators);
+    yield* _actuatorsCtrl.stream;
+  }
   Stream<ConnectionStatus> get connectionStatus => connection.status;
 
   void _handle(dynamic event) {

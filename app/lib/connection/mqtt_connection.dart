@@ -105,6 +105,7 @@ class MqttConnection implements GreenhouseConnection {
     for (final host in [config.lanHost, config.tailscaleHost]) {
       if (host.isEmpty) continue;
       if (await _tryConnect(host, config)) {
+        _client?.onDisconnected = null;
         await disconnect();
         return true;
       }
