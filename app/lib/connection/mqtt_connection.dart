@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'package:flutter/foundation.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:greenhouse_app/connection/greenhouse_connection.dart';
@@ -34,23 +35,26 @@ class MqttConnection implements GreenhouseConnection {
   }
 
   Future<bool> _tryConnect(String host, ConnectionConfig config) async {
+    if (host.isEmpty) return false;
     final clientId = 'gh_app_${DateTime.now().millisecondsSinceEpoch}';
     final client = MqttServerClient.withPort(host, clientId, config.port);
-    client.useWebSocket = true;
+    client.useWebSocket = false;
     client.secure = true;
-    client.onBadCertificate = (_) => true; // accept self-signed; pin in Slice 5
+    client.onBadCertificate = (Object _) => true; // accept self-signed; pin in Slice 5
     client.logging(on: false);
     client.keepAlivePeriod = 30;
     client.connectTimeoutPeriod = 5000;
     client.connectionMessage = MqttConnectMessage()
         .withClientIdentifier(clientId)
         .authenticateAs(config.username, config.password)
-        .startClean()
-        .withWillQos(MqttQos.atLeastOnce);
+        .startClean();
     try {
+      debugPrint('[MQTT] trying $host:${config.port}');
       final result = await client.connect();
+      debugPrint('[MQTT] result: ${result?.state}');
       if (result?.state != MqttConnectionState.connected) return false;
-    } catch (_) {
+    } catch (e, st) {
+      debugPrint('[MQTT] error on $host: $e\n$st');
       return false;
     }
     _client = client;
@@ -95,6 +99,17 @@ class MqttConnection implements GreenhouseConnection {
   Future<void> disconnect() async {
     _client?.disconnect();
     _client = null;
+  }
+
+  Future<bool> testConnect(ConnectionConfig config) async {
+    for (final host in [config.lanHost, config.tailscaleHost]) {
+      if (host.isEmpty) continue;
+      if (await _tryConnect(host, config)) {
+        await disconnect();
+        return true;
+      }
+    }
+    return false;
   }
 
   // ── Static routing helpers ──────────────────────────────────────────────
