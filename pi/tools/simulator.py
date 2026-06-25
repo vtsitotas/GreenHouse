@@ -24,7 +24,7 @@ def main():
     ap.add_argument("--interval", type=float, default=10.0)
     args = ap.parse_args()
 
-    c = mqtt.Client(client_id="simulator", clean_session=True)
+    c = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id="simulator", clean_session=True)
     c.connect(BROKER, PORT, keepalive=60)
     c.loop_start()
 
