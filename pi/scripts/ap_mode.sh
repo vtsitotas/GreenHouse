@@ -6,6 +6,15 @@ set -e
 DEVICE_ID=$(cat /sys/class/net/wlan0/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
 SSID="Greenhouse-${DEVICE_ID}"
 
+# Unblock WiFi radio (may be soft-blocked at boot)
+rfkill unblock wifi 2>/dev/null || true
+
+# Wait up to 10 s for wlan0 to appear
+for i in $(seq 1 10); do
+    ip link show wlan0 &>/dev/null && break
+    sleep 1
+done
+
 # Stop all network managers so hostapd can own wlan0 exclusively.
 # They restart normally on next reboot (needed for home WiFi reconnect after captive portal).
 systemctl stop NetworkManager 2>/dev/null || true
@@ -44,9 +53,9 @@ EOF
 iptables -t nat -F PREROUTING 2>/dev/null || true
 iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080
 
-# Start AP services
-systemctl unmask hostapd 2>/dev/null || true
-systemctl start hostapd
+# Start hostapd directly — avoids DAEMON_CONF lookup in /etc/default/hostapd
+# (on Debian Bookworm, systemctl start hostapd silently does nothing without it)
+hostapd -B /etc/hostapd/hostapd.conf
 systemctl restart dnsmasq
 
 echo "[ap_mode] hotspot ${SSID} started at 192.168.4.1"

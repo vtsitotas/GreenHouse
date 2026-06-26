@@ -1,3 +1,19 @@
 .superpowers/
 app/build/
 __pycache__/
+
+# Scratch / staging
+_dart_staging/
+
+# SD-card images (large binaries — keep out of git)
+*.img
+*.img.gz
+*.zip
+
+# Logs
+*.log
+
+# Flutter local state
+app/.dart_tool/
+app/.flutter-plugins
+app/.flutter-plugins-dependencies
