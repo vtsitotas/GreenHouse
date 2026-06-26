@@ -21,6 +21,12 @@ rm -f /etc/greenhouse/.wifi_configured
 rm -f /etc/greenhouse/.provisioned
 rm -f /etc/greenhouse/device.json
 : > /etc/mosquitto/passwd
+# Per-unit TLS — regenerated uniquely by first_boot.sh on the customer's first boot.
+rm -f /etc/mosquitto/certs/ca.key /etc/mosquitto/certs/ca.crt /etc/mosquitto/certs/ca.srl \
+      /etc/mosquitto/certs/server.key /etc/mosquitto/certs/server.crt /etc/mosquitto/certs/server.csr
+
+echo "[prep] removing per-unit OS password record..."
+rm -f /boot/firmware/INITIAL_PASSWORD.txt /boot/INITIAL_PASSWORD.txt
 
 echo "[prep] resetting machine-id (unique per clone)..."
 : > /etc/machine-id

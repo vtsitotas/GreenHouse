@@ -12,6 +12,9 @@ CERT="/etc/mosquitto/certs/server.crt"
 
 mkdir -p "$CONFIG_DIR"
 
+# Generate this unit's unique TLS certs (no-op if they already exist).
+bash "$(dirname "$0")/gen_certs.sh"
+
 # Unique 20-char URL-safe password
 PASSWORD=$(openssl rand -base64 21 | tr -d '/+=\n' | head -c 20)
 
@@ -24,7 +27,7 @@ DEVICE_ID=$(cat /sys/class/net/wlan0/address | tr -d ':' | tail -c 5 | tr '[:low
 
 # Update Mosquitto password for 'app' user
 mosquitto_passwd -b "$PASSWD_FILE" app "$PASSWORD"
-systemctl reload mosquitto 2>/dev/null || true
+systemctl restart mosquitto 2>/dev/null || true
 
 # Write device config (readable by pi user, not world)
 cat > "$CONFIG" <<EOF
@@ -39,5 +42,14 @@ EOF
 chmod 640 "$CONFIG"
 chown root:pi "$CONFIG"
 
+# Randomize the OS 'pi' password per unit; record it on the boot partition
+# (readable by popping the SD into a PC). Key-based SSH remains the admin path.
+OS_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
+echo "pi:${OS_PASS}" | chpasswd
+BOOT=/boot/firmware
+[ -d "$BOOT" ] || BOOT=/boot
+printf 'Greenhouse unit %s\npi user password: %s\n' "${DEVICE_ID}" "${OS_PASS}" > "${BOOT}/INITIAL_PASSWORD.txt"
+chmod 600 "${BOOT}/INITIAL_PASSWORD.txt"
+
 touch "$SENTINEL"
-echo "[first-boot] provisioned device ${DEVICE_ID} with unique password"
+echo "[first-boot] provisioned device ${DEVICE_ID}: unique MQTT password, TLS certs, OS password"

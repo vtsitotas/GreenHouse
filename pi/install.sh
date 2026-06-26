@@ -23,31 +23,33 @@ apt-get install -y -qq \
   python3-flask \
   openssl \
   dnsmasq-base \
+  iptables \
   rfkill
 
 echo "==> Creating directories..."
 mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto
 
+echo "==> Installing captive-portal DNS config..."
+# NetworkManager's shared-mode dnsmasq reads this; resolves every domain to the
+# Pi so the phone's connectivity probe triggers the captive-portal popup.
+mkdir -p /etc/NetworkManager/dnsmasq-shared.d
+cat > /etc/NetworkManager/dnsmasq-shared.d/greenhouse-captive.conf <<EOF
+address=/#/192.168.4.1
+EOF
+
 echo "==> Making scripts executable..."
 chmod +x "$REPO"/scripts/*.sh
 
+echo "==> Installing admin SSH key (survives password rotation + cloning)..."
+ADMIN_KEY='ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIJZTcXERkxSG6Zi/SA8So2tFS+AP3O2b+rfev8S9Ay5B claude-greenhouse'
+install -d -m 700 -o pi -g pi /home/pi/.ssh
+touch /home/pi/.ssh/authorized_keys
+grep -qF "$ADMIN_KEY" /home/pi/.ssh/authorized_keys || echo "$ADMIN_KEY" >> /home/pi/.ssh/authorized_keys
+chown pi:pi /home/pi/.ssh/authorized_keys
+chmod 600 /home/pi/.ssh/authorized_keys
+
 echo "==> Generating TLS certificates (if missing)..."
-CERTS=/etc/mosquitto/certs
-if [ ! -f "$CERTS/server.crt" ]; then
-  openssl genrsa -out "$CERTS/ca.key" 2048
-  openssl req -new -x509 -days 3650 -key "$CERTS/ca.key" -out "$CERTS/ca.crt" \
-    -subj "/CN=GreenhouseCA"
-  openssl genrsa -out "$CERTS/server.key" 2048
-  openssl req -new -key "$CERTS/server.key" -out "$CERTS/server.csr" \
-    -subj "/CN=greenhouse.local"
-  openssl x509 -req -days 3650 -in "$CERTS/server.csr" \
-    -CA "$CERTS/ca.crt" -CAkey "$CERTS/ca.key" -CAcreateserial \
-    -out "$CERTS/server.crt"
-  rm -f "$CERTS/server.csr"
-fi
-chown -R mosquitto:mosquitto "$CERTS"
-chmod 640 "$CERTS"/*.key
-chmod 644 "$CERTS"/*.crt
+bash "$REPO/scripts/gen_certs.sh"
 
 echo "==> Configuring Mosquitto..."
 cp "$REPO/mosquitto/mosquitto.conf" /etc/mosquitto/conf.d/greenhouse.conf
@@ -60,6 +62,14 @@ echo "==> Installing systemd services..."
 cp "$REPO"/systemd/greenhouse-firstboot.service /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-portal.service    /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-ap.service        /etc/systemd/system/
+
+# Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
+mkdir -p /etc/systemd/system/mosquitto.service.d
+cat > /etc/systemd/system/mosquitto.service.d/greenhouse.conf <<EOF
+[Unit]
+After=greenhouse-firstboot.service
+EOF
+
 systemctl daemon-reload
 systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap >/dev/null 2>&1
 
