@@ -29,4 +29,10 @@ nmcli connection modify greenhouse-ap \
   ipv4.addresses 192.168.4.1/24
 
 nmcli connection up greenhouse-ap
-echo "[ap_up] broadcasting open network '${SSID}' at 192.168.4.1"
+
+# Redirect captive-portal probes (HTTP/80) to the Flask portal on 8080 so the
+# WiFi-setup page auto-pops when a phone joins. Idempotent.
+iptables -t nat -C PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080 2>/dev/null \
+  || iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080
+
+echo "[ap_up] broadcasting open network '${SSID}' at 192.168.4.1 (captive portal on)"
