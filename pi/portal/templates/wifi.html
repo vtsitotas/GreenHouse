@@ -1,0 +1,47 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Set up your Greenhouse</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #f0f4f0;
+           display: flex; justify-content: center; align-items: center;
+           min-height: 100vh; padding: 20px; }
+    .card { background: white; border-radius: 16px; padding: 32px;
+            max-width: 380px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+    h1 { font-size: 22px; color: #1a3a1a; margin-bottom: 8px; }
+    p  { color: #666; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
+    label { display: block; font-size: 13px; color: #444; margin-bottom: 4px; font-weight: 500; }
+    input { width: 100%; padding: 12px 14px; border: 1.5px solid #ddd;
+            border-radius: 10px; font-size: 16px; margin-bottom: 16px;
+            outline: none; transition: border-color .2s; }
+    input:focus { border-color: #2e7d32; }
+    button { width: 100%; padding: 14px; background: #2e7d32; color: white;
+             border: none; border-radius: 10px; font-size: 16px;
+             font-weight: 600; cursor: pointer; }
+    button:active { background: #1b5e20; }
+    .error { background: #fff3f3; border: 1px solid #ffcdd2;
+             color: #c62828; padding: 10px 14px; border-radius: 8px;
+             font-size: 14px; margin-bottom: 16px; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>🌿 Set up your Greenhouse</h1>
+    <p>Connect to your home WiFi so the greenhouse can send you data from anywhere.</p>
+    {% if error %}
+      <div class="error">{{ error }}</div>
+    {% endif %}
+    <form method="post" action="/connect">
+      <label for="ssid">WiFi Name</label>
+      <input type="text" id="ssid" name="ssid" placeholder="My Home WiFi"
+             autocomplete="off" autocorrect="off" spellcheck="false" required>
+      <label for="password">WiFi Password</label>
+      <input type="password" id="password" name="password" placeholder="••••••••">
+      <button type="submit">Connect</button>
+    </form>
+  </div>
+</body>
+</html>

@@ -1,0 +1,13 @@
+[Unit]
+Description=Greenhouse AP mode (first-time WiFi setup)
+After=network.target greenhouse-firstboot.service
+ConditionPathExists=!/etc/greenhouse/.wifi_configured
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/greenhouse/scripts/ap_mode.sh
+RemainAfterExit=yes
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

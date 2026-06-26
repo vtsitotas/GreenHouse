@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Connecting…</title>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, sans-serif; background: #f0f4f0;
+           display: flex; justify-content: center; align-items: center;
+           min-height: 100vh; padding: 20px; text-align: center; }
+    .card { background: white; border-radius: 16px; padding: 40px 32px;
+            max-width: 380px; width: 100%; box-shadow: 0 4px 20px rgba(0,0,0,.08); }
+    .spinner { width: 48px; height: 48px; border: 4px solid #e8f5e9;
+               border-top: 4px solid #2e7d32; border-radius: 50%;
+               animation: spin 1s linear infinite; margin: 0 auto 24px; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    h1 { font-size: 20px; color: #1a3a1a; margin-bottom: 12px; }
+    p  { color: #666; font-size: 14px; line-height: 1.6; }
+    .step { margin-top: 20px; background: #f9fbe7; border-radius: 10px;
+            padding: 16px; text-align: left; font-size: 13px; color: #555; }
+    .step b { color: #2e7d32; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <div class="spinner"></div>
+    <h1>Connecting to WiFi…</h1>
+    <p>Your greenhouse is connecting to <strong>{{ ssid }}</strong> and will restart in about 30 seconds.</p>
+    <div class="step">
+      <b>Next steps:</b><br>
+      1. Reconnect your phone to your home WiFi<br>
+      2. Open the <b>Greenhouse</b> app<br>
+      3. Tap <b>"Find my greenhouse"</b>
+    </div>
+  </div>
+</body>
+</html>

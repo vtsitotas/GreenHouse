@@ -1,0 +1,15 @@
+[Unit]
+Description=Greenhouse pairing portal
+After=network.target greenhouse-firstboot.service
+
+[Service]
+Type=simple
+User=pi
+WorkingDirectory=/home/pi/greenhouse/portal
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/portal/portal.py
+Restart=always
+RestartSec=5
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
