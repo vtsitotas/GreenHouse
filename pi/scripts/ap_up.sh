@@ -17,6 +17,16 @@ SSID="Greenhouse-${DEVICE_ID}"
 # Unblock the radio in case it booted soft-blocked.
 rfkill unblock wifi 2>/dev/null || true
 
+# Boot-time race fix: this service can start before NetworkManager has finished
+# bringing up wlan0, which makes the nmcli calls below fail and no AP appears.
+# Wait until the radio is managed/available before touching it.
+nm-online -s -t 30 2>/dev/null || true
+for _ in $(seq 1 30); do
+  st=$(nmcli -t -f DEVICE,STATE device status 2>/dev/null | awk -F: '$1=="wlan0"{print $2}')
+  case "$st" in disconnected|connected|connecting) break ;; esac
+  sleep 1
+done
+
 # (Re)create the AP profile so the SSID always matches this unit's MAC.
 nmcli connection delete greenhouse-ap 2>/dev/null || true
 nmcli connection add type wifi ifname wlan0 con-name greenhouse-ap \
@@ -28,7 +38,16 @@ nmcli connection modify greenhouse-ap \
   ipv4.method shared \
   ipv4.addresses 192.168.4.1/24
 
-nmcli connection up greenhouse-ap
+# Retry activation — NetworkManager can still be settling right after boot.
+up_ok=0
+for _ in $(seq 1 5); do
+  if nmcli connection up greenhouse-ap; then up_ok=1; break; fi
+  sleep 2
+done
+if [ "$up_ok" -ne 1 ]; then
+  echo "[ap_up] ERROR: could not activate AP after retries" >&2
+  exit 1
+fi
 
 # Redirect captive-portal probes (HTTP/80) to the Flask portal on 8080 so the
 # WiFi-setup page auto-pops when a phone joins. Idempotent.

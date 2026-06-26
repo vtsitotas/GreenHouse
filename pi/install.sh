@@ -27,7 +27,9 @@ apt-get install -y -qq \
   rfkill
 
 echo "==> Creating directories..."
-mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto
+# /var/log/journal makes journald persistent across reboots (so a failed
+# boot-time service can be diagnosed after the fact, e.g. on a shipped unit).
+mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto /var/log/journal
 
 echo "==> Installing captive-portal DNS config..."
 # NetworkManager's shared-mode dnsmasq reads this; resolves every domain to the
