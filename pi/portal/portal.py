@@ -7,7 +7,11 @@ STA mode: serves pairing JSON at /pair
 import json
 import os
 import subprocess
-from flask import Flask, jsonify, render_template, request
+import time
+from flask import Flask, abort, jsonify, render_template, request
+
+_START_TIME = time.time()
+_PAIR_WINDOW = 300  # 5 minutes
 
 app = Flask(__name__, template_folder="templates")
 
@@ -36,8 +40,16 @@ def index(path):
 
 @app.route("/connect", methods=["POST"])
 def connect():
+    if not _ap_mode():
+        abort(403)
     ssid = request.form.get("ssid", "").strip()
     password = request.form.get("password", "").strip()
+    # Reject characters that would break wpa_supplicant.conf quoting
+    for field, value, max_len in [("WiFi name", ssid, 32), ("password", password, 63)]:
+        if any(c in value for c in ('"', '\n', '\r', '\\')):
+            return render_template("wifi.html", error=f"Invalid {field}: contains unsupported characters."), 400
+        if len(value.encode()) > max_len:
+            return render_template("wifi.html", error=f"Invalid {field}: too long."), 400
     if not ssid:
         return render_template("wifi.html", error="Please enter your WiFi name."), 400
 
@@ -64,6 +76,8 @@ def connect():
 @app.route("/pair")
 def pair():
     """Returns pairing JSON consumed by the Greenhouse Flutter app."""
+    if time.time() - _START_TIME > _PAIR_WINDOW:
+        return jsonify({"error": "Pairing window expired. Restart the Pi to open a new pairing window."}), 403
     try:
         c = _load_config()
         return jsonify({
