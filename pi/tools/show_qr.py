@@ -18,7 +18,7 @@ def fingerprint():
 
 def main():
     ap = argparse.ArgumentParser()
-    ap.add_argument("--tailscale", required=True)
+    ap.add_argument("--tailscale", default="")
     ap.add_argument("--user", default="app")
     ap.add_argument("--pass", dest="password", required=True)
     ap.add_argument("--port", type=int, default=8883)
