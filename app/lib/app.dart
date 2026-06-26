@@ -15,7 +15,7 @@ final _router = GoRouter(
   initialLocation: '/dashboard',
   redirect: (context, state) async {
     final pairing = ProviderScope.containerOf(context).read(pairingServiceProvider);
-    if (!await pairing.isPaired && state.matchedLocation != '/pair') return '/pair';
+    if (!await pairing.isPaired && !state.matchedLocation.startsWith('/pair')) return '/pair';
     return null;
   },
   routes: [

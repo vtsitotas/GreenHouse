@@ -6,13 +6,20 @@ set -e
 DEVICE_ID=$(cat /sys/class/net/wlan0/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
 SSID="Greenhouse-${DEVICE_ID}"
 
+# Stop all network managers so hostapd can own wlan0 exclusively.
+# They restart normally on next reboot (needed for home WiFi reconnect after captive portal).
+systemctl stop NetworkManager 2>/dev/null || true
+systemctl stop dhcpcd 2>/dev/null || true
+systemctl stop wpa_supplicant 2>/dev/null || true
+sleep 1
+
 # Static IP for AP interface
 ip addr flush dev wlan0 2>/dev/null || true
 ip addr add 192.168.4.1/24 dev wlan0
 ip link set wlan0 up
 
-# Write hostapd config
-cat > /etc/hostapd/greenhouse.conf <<EOF
+# Write hostapd config to the default path (systemd checks ConditionFileNotEmpty here)
+cat > /etc/hostapd/hostapd.conf <<EOF
 interface=wlan0
 driver=nl80211
 ssid=${SSID}
@@ -36,9 +43,6 @@ EOF
 # Redirect port 80 → 8080 so captive portal triggers automatically
 iptables -t nat -F PREROUTING 2>/dev/null || true
 iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080
-
-# Point hostapd at our config
-sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/greenhouse.conf"|' /etc/default/hostapd
 
 # Start AP services
 systemctl unmask hostapd 2>/dev/null || true
