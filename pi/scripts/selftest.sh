@@ -39,6 +39,12 @@ fi
 echo "== portal =="
 curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/pair | grep -qE '200|403' && ok "portal responding on 8080" || no "portal not responding"
 
+echo "== hardening artifacts =="
+[ -f /etc/NetworkManager/dnsmasq-shared.d/greenhouse-captive.conf ] && ok "captive DNS config present" || no "captive DNS config missing"
+command -v iptables >/dev/null && ok "iptables present" || no "iptables missing"
+[ -f /etc/systemd/system/mosquitto.service.d/greenhouse.conf ] && ok "mosquitto ordering drop-in present" || no "mosquitto drop-in missing"
+sudo -u mosquitto test -r /etc/mosquitto/certs/server.key && ok "per-unit server.key readable by broker" || no "server.key unreadable"
+
 echo "== AP profile sanity =="
 command -v nmcli >/dev/null && ok "nmcli present" || no "nmcli missing"
 
