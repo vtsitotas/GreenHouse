@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:http/http.dart' as http;
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
@@ -40,6 +41,34 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       _pass.text   = j['password']        ?? '';
     } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid QR code')));
+    }
+  }
+
+  Future<void> _discover() async {
+    setState(() { _busy = true; _error = null; });
+    try {
+      final uri = Uri.parse('http://pi.local:8080/pair');
+      final response = await http.get(uri).timeout(const Duration(seconds: 10));
+      if (response.statusCode == 200) {
+        final j = jsonDecode(response.body) as Map<String, dynamic>;
+        _host.text   = j['host_lan']        ?? '';
+        _tsHost.text = j['host_tailscale']  ?? '';
+        _port.text   = (j['port'] ?? 8883).toString();
+        _fp.text     = j['tls_fingerprint'] ?? '';
+        _user.text   = j['username']        ?? 'app';
+        _pass.text   = j['password']        ?? '';
+        setState(() { _busy = false; });
+      } else {
+        setState(() {
+          _error = 'Greenhouse not found. Make sure you are on the same WiFi.';
+          _busy = false;
+        });
+      }
+    } catch (_) {
+      setState(() {
+        _error = 'Greenhouse not found. Make sure you are on the same WiFi.';
+        _busy = false;
+      });
     }
   }
 
@@ -93,12 +122,21 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
             key: _formKey,
             child: Column(crossAxisAlignment: CrossAxisAlignment.stretch, children: [
               FilledButton.icon(
+                onPressed: _busy ? null : _discover,
+                icon: const Icon(Icons.search),
+                label: const Text('Find my greenhouse'),
+                style: FilledButton.styleFrom(
+                  minimumSize: const Size.fromHeight(52),
+                ),
+              ),
+              const SizedBox(height: 12),
+              OutlinedButton.icon(
                 onPressed: () async {
                   final result = await context.push<String>('/pair/qr');
                   if (result != null) _applyQr(result);
                 },
                 icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan QR from Pi'),
+                label: const Text('Scan QR code'),
               ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
