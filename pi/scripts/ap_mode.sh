@@ -37,6 +37,9 @@ EOF
 iptables -t nat -F PREROUTING 2>/dev/null || true
 iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080
 
+# Point hostapd at our config
+sed -i 's|^#\?DAEMON_CONF=.*|DAEMON_CONF="/etc/hostapd/greenhouse.conf"|' /etc/default/hostapd
+
 # Start AP services
 systemctl unmask hostapd 2>/dev/null || true
 systemctl start hostapd

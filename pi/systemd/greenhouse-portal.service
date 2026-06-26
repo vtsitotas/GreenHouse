@@ -4,7 +4,7 @@ After=network.target greenhouse-firstboot.service
 
 [Service]
 Type=simple
-User=pi
+User=root
 WorkingDirectory=/home/pi/greenhouse/portal
 ExecStart=/usr/bin/python3 /home/pi/greenhouse/portal/portal.py
 Restart=always

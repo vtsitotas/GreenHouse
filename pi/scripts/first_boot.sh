@@ -13,13 +13,13 @@ CERT="/etc/mosquitto/certs/server.crt"
 mkdir -p "$CONFIG_DIR"
 
 # Unique 20-char URL-safe password
-PASSWORD=$(openssl rand -base64 15 | tr -d '/+=\n' | head -c 20)
+PASSWORD=$(openssl rand -base64 21 | tr -d '/+=\n' | head -c 20)
 
 # TLS fingerprint (empty string if cert not yet deployed)
 FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "$CERT" 2>/dev/null \
   | cut -d= -f2 || echo "")
 
-# Device ID = last 4 hex chars of wlan0 MAC (uppercase)
+# Device ID = last 4-5 hex chars of MAC (tail -c 5 accounts for sysfs newline) (uppercase)
 DEVICE_ID=$(cat /sys/class/net/wlan0/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
 
 # Update Mosquitto password for 'app' user

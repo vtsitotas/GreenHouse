@@ -58,6 +58,11 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
         _user.text   = j['username']        ?? 'app';
         _pass.text   = j['password']        ?? '';
         setState(() { _busy = false; });
+      } else if (response.statusCode == 403) {
+        setState(() {
+          _error = 'Pairing window expired. Restart the Pi and try again within 5 minutes.';
+          _busy = false;
+        });
       } else {
         setState(() {
           _error = 'Greenhouse not found. Make sure you are on the same WiFi.';

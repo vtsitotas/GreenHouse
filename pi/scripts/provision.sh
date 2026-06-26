@@ -18,6 +18,11 @@ echo "==> Stopping default hostapd (we control it manually)..."
 systemctl stop hostapd 2>/dev/null || true
 systemctl disable hostapd 2>/dev/null || true
 
+echo "==> Ensuring Mosquitto passwd file exists..."
+touch /etc/mosquitto/passwd
+chmod 640 /etc/mosquitto/passwd
+chown mosquitto:mosquitto /etc/mosquitto/passwd
+
 echo "==> Making scripts executable..."
 chmod +x "$REPO/scripts/first_boot.sh"
 chmod +x "$REPO/scripts/ap_mode.sh"

@@ -1,8 +1,6 @@
 [Unit]
 Description=Greenhouse first-boot provisioning
-DefaultDependencies=no
-Before=sysinit.target
-After=local-fs.target
+After=network-pre.target
 
 [Service]
 Type=oneshot
