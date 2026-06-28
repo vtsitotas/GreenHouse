@@ -6,7 +6,7 @@ ok(){ echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 no(){ echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 echo "== services enabled =="
-for s in greenhouse-firstboot greenhouse-portal greenhouse-ap mosquitto; do
+for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog mosquitto; do
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
@@ -37,7 +37,7 @@ else
 fi
 
 echo "== portal =="
-curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:8080/pair | grep -qE '200|403' && ok "portal responding on 8080" || no "portal not responding"
+curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/pair | grep -qE '200|403' && ok "portal responding on :80" || no "portal not responding on :80"
 
 echo "== hardening artifacts =="
 [ -f /etc/NetworkManager/dnsmasq-shared.d/greenhouse-captive.conf ] && ok "captive DNS config present" || no "captive DNS config missing"

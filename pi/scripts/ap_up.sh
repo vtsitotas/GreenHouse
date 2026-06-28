@@ -17,6 +17,16 @@ SSID="Greenhouse-${DEVICE_ID}"
 # Unblock the radio in case it booted soft-blocked.
 rfkill unblock wifi 2>/dev/null || true
 
+# Set regulatory domain explicitly so the chip allows AP beaconing.
+iw reg set GR 2>/dev/null || true
+
+# Disconnect wlan0 from any WiFi client connection that netplan may have
+# re-established on boot (e.g. from a leftover 50-cloud-init.yaml).
+# Without this, nmcli connection up greenhouse-ap silently fails when wlan0
+# is already connected as a client.
+nmcli device disconnect wlan0 2>/dev/null || true
+sleep 2
+
 # Boot-time race fix: this service can start before NetworkManager has finished
 # bringing up wlan0, which makes the nmcli calls below fail and no AP appears.
 # Wait until the radio is managed/available before touching it.
@@ -46,12 +56,29 @@ for _ in $(seq 1 5); do
 done
 if [ "$up_ok" -ne 1 ]; then
   echo "[ap_up] ERROR: could not activate AP after retries" >&2
+  # Write diagnostics to boot partition before exiting so user can read it on PC
+  B=/boot/firmware
+  [ -d "$B" ] || B=/boot
+  {
+    echo "=== AP FAIL DIAGNOSTICS ==="
+    date
+    echo "=== iw reg get ==="
+    iw reg get 2>&1
+    echo "=== nmcli device status ==="
+    nmcli device status 2>&1
+    echo "=== nmcli connection show ==="
+    nmcli connection show 2>&1
+    echo "=== rfkill ==="
+    rfkill list 2>&1
+    echo "=== journalctl -u greenhouse-ap ==="
+    journalctl -u greenhouse-ap --no-pager -n 50 2>&1
+  } > "$B/ap_fail.log"
+  sync
   exit 1
 fi
 
-# Redirect captive-portal probes (HTTP/80) to the Flask portal on 8080 so the
-# WiFi-setup page auto-pops when a phone joins. Idempotent.
-iptables -t nat -C PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080 2>/dev/null \
-  || iptables -t nat -A PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080
+# Remove any stale port-80→8080 redirect left by older installs; the portal
+# now binds directly to port 80 so no iptables redirect is needed.
+iptables -t nat -D PREROUTING -i wlan0 -p tcp --dport 80 -j REDIRECT --to-port 8080 2>/dev/null || true
 
-echo "[ap_up] broadcasting open network '${SSID}' at 192.168.4.1 (captive portal on)"
+echo "[ap_up] broadcasting open network '${SSID}' at 192.168.4.1 (captive portal on :80)"

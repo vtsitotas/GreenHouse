@@ -1,0 +1,14 @@
+[Unit]
+Description=Greenhouse WiFi watchdog (fallback to AP if home WiFi fails)
+After=NetworkManager.service greenhouse-firstboot.service
+Wants=NetworkManager.service
+ConditionPathExists=/etc/greenhouse/.wifi_configured
+
+[Service]
+Type=oneshot
+ExecStart=/home/pi/greenhouse/scripts/wifi_watchdog.sh
+RemainAfterExit=yes
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target

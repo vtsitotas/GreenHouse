@@ -24,7 +24,8 @@ apt-get install -y -qq \
   openssl \
   dnsmasq-base \
   iptables \
-  rfkill
+  rfkill \
+  avahi-daemon
 
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
@@ -61,9 +62,10 @@ chmod 640 /etc/mosquitto/passwd
 chown -R mosquitto:mosquitto /var/lib/mosquitto
 
 echo "==> Installing systemd services..."
-cp "$REPO"/systemd/greenhouse-firstboot.service /etc/systemd/system/
-cp "$REPO"/systemd/greenhouse-portal.service    /etc/systemd/system/
-cp "$REPO"/systemd/greenhouse-ap.service        /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-firstboot.service      /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-portal.service         /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-ap.service             /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
 
 # Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
 mkdir -p /etc/systemd/system/mosquitto.service.d
@@ -73,7 +75,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog >/dev/null 2>&1
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.

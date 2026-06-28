@@ -47,7 +47,7 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   Future<void> _discover() async {
     setState(() { _busy = true; _error = null; });
     try {
-      final uri = Uri.parse('http://greenhouse.local:8080/pair');
+      final uri = Uri.parse('http://greenhouse.local/pair');
       final response = await http.get(uri).timeout(const Duration(seconds: 10));
       if (response.statusCode == 200) {
         final j = jsonDecode(response.body) as Map<String, dynamic>;

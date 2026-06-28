@@ -25,11 +25,13 @@
     .error { background: #fff3f3; border: 1px solid #ffcdd2;
              color: #c62828; padding: 10px 14px; border-radius: 8px;
              font-size: 14px; margin-bottom: 16px; }
+    .tip { margin-top: 20px; background: #f1f8e9; border-radius: 10px;
+           padding: 12px 14px; font-size: 12px; color: #558b2f; line-height: 1.6; }
   </style>
 </head>
 <body>
   <div class="card">
-    <h1>🌿 Set up your Greenhouse</h1>
+    <h1>Set up your Greenhouse</h1>
     <p>Connect to your home WiFi so the greenhouse can send you data from anywhere.</p>
     {% if error %}
       <div class="error">{{ error }}</div>
@@ -39,9 +41,13 @@
       <input type="text" id="ssid" name="ssid" placeholder="My Home WiFi"
              autocomplete="off" autocorrect="off" spellcheck="false" required>
       <label for="password">WiFi Password</label>
-      <input type="password" id="password" name="password" placeholder="••••••••">
+      <input type="password" id="password" name="password" placeholder="Leave empty for open networks">
       <button type="submit">Connect</button>
     </form>
+    <div class="tip">
+      Page closed? Make sure you are connected to <strong>Greenhouse-XXXX</strong>
+      WiFi, then open your browser and go to <strong>192.168.4.1</strong>
+    </div>
   </div>
 </body>
 </html>

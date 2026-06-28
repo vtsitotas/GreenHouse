@@ -42,14 +42,5 @@ EOF
 chmod 640 "$CONFIG"
 chown root:pi "$CONFIG"
 
-# Randomize the OS 'pi' password per unit; record it on the boot partition
-# (readable by popping the SD into a PC). Key-based SSH remains the admin path.
-OS_PASS=$(openssl rand -base64 12 | tr -d '/+=' | head -c 16)
-echo "pi:${OS_PASS}" | chpasswd
-BOOT=/boot/firmware
-[ -d "$BOOT" ] || BOOT=/boot
-printf 'Greenhouse unit %s\npi user password: %s\n' "${DEVICE_ID}" "${OS_PASS}" > "${BOOT}/INITIAL_PASSWORD.txt"
-chmod 600 "${BOOT}/INITIAL_PASSWORD.txt"
-
 touch "$SENTINEL"
-echo "[first-boot] provisioned device ${DEVICE_ID}: unique MQTT password, TLS certs, OS password"
+echo "[first-boot] provisioned device ${DEVICE_ID}: unique MQTT password + TLS certs"
