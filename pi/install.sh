@@ -61,6 +61,10 @@ chown mosquitto:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd
 chown -R mosquitto:mosquitto /var/lib/mosquitto
 
+echo "==> Installing avahi service advertisement..."
+mkdir -p /etc/avahi/services
+cp "$REPO/avahi/greenhouse-http.service" /etc/avahi/services/
+
 echo "==> Installing systemd services..."
 cp "$REPO"/systemd/greenhouse-firstboot.service      /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-portal.service         /etc/systemd/system/
