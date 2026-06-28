@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:multicast_dns/multicast_dns.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
@@ -44,37 +45,67 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     }
   }
 
-  Future<void> _discover() async {
-    setState(() { _busy = true; _error = null; });
-    try {
-      final uri = Uri.parse('http://greenhouse.local/pair');
-      final response = await http.get(uri).timeout(const Duration(seconds: 10));
-      if (response.statusCode == 200) {
-        final j = jsonDecode(response.body) as Map<String, dynamic>;
-        _host.text   = j['host_lan']        ?? '';
-        _tsHost.text = j['host_tailscale']  ?? '';
-        _port.text   = (j['port'] ?? 8883).toString();
-        _fp.text     = j['tls_fingerprint'] ?? '';
-        _user.text   = j['username']        ?? 'app';
-        _pass.text   = j['password']        ?? '';
-        setState(() { _busy = false; });
-      } else if (response.statusCode == 403) {
-        setState(() {
-          _error = 'Pairing window expired. Restart the Pi and try again within 5 minutes.';
-          _busy = false;
-        });
-      } else {
-        setState(() {
-          _error = 'Greenhouse not found. Make sure you are on the same WiFi.';
-          _busy = false;
-        });
-      }
-    } catch (_) {
+  Future<bool> _applyPair(http.Response res) async {
+    if (res.statusCode == 200) {
+      final j = jsonDecode(res.body) as Map<String, dynamic>;
+      _host.text   = j['host_lan']        ?? '';
+      _tsHost.text = j['host_tailscale']  ?? '';
+      _port.text   = (j['port'] ?? 8883).toString();
+      _fp.text     = j['tls_fingerprint'] ?? '';
+      _user.text   = j['username']        ?? 'app';
+      _pass.text   = j['password']        ?? '';
+      setState(() { _busy = false; });
+      return true;
+    } else if (res.statusCode == 403) {
       setState(() {
-        _error = 'Greenhouse not found. Make sure you are on the same WiFi.';
+        _error = 'Pairing window expired. Restart the Pi and try again within 5 minutes.';
         _busy = false;
       });
+      return true;
     }
+    return false;
+  }
+
+  Future<void> _discover() async {
+    setState(() { _busy = true; _error = null; });
+
+    // Try hostname first (works on iOS; sometimes on Android)
+    try {
+      final res = await http.get(Uri.parse('http://greenhouse.local/pair'))
+          .timeout(const Duration(seconds: 5));
+      if (await _applyPair(res)) return;
+    } catch (_) {}
+
+    // Fall back to mDNS service discovery (reliable on Android)
+    try {
+      String? ip;
+      final client = MDnsClient();
+      await client.start();
+      outer:
+      await for (final PtrResourceRecord ptr in client.lookup<PtrResourceRecord>(
+          ResourceRecordQuery.serverPointer('_greenhouse._tcp.local'))) {
+        await for (final SrvResourceRecord srv in client.lookup<SrvResourceRecord>(
+            ResourceRecordQuery.service(ptr.domainName))) {
+          await for (final IPAddressResourceRecord a in client.lookup<IPAddressResourceRecord>(
+              ResourceRecordQuery.addressIPv4(srv.target))) {
+            ip = a.address.address;
+            break outer;
+          }
+        }
+      }
+      client.stop();
+
+      if (ip != null) {
+        final res = await http.get(Uri.parse('http://$ip/pair'))
+            .timeout(const Duration(seconds: 5));
+        if (await _applyPair(res)) return;
+      }
+    } catch (_) {}
+
+    setState(() {
+      _error = 'Greenhouse not found. Make sure you are on the same WiFi.';
+      _busy = false;
+    });
   }
 
   Future<void> _save() async {
