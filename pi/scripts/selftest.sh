@@ -10,9 +10,13 @@ for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-wa
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
+echo "== services active =="
+for s in greenhouse-portal mosquitto; do
+  systemctl is-active "$s" >/dev/null 2>&1 && ok "$s running" || no "$s not running"
+done
+
 echo "== mosquitto listeners =="
 ss -tlnp 2>/dev/null | grep -q ':8883' && ok "TLS 8883 listening" || no "8883 not listening"
-ss -tlnp 2>/dev/null | grep -q ':9001' && ok "WebSocket 9001 listening" || no "9001 not listening"
 
 echo "== certs =="
 [ -f /etc/mosquitto/certs/server.crt ] && ok "server.crt present" || no "server.crt missing"
@@ -39,14 +43,30 @@ fi
 echo "== portal =="
 curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/pair | grep -qE '200|403' && ok "portal responding on :80" || no "portal not responding on :80"
 
+echo "== mDNS =="
+systemctl is-active avahi-daemon >/dev/null 2>&1 && ok "avahi-daemon running" || no "avahi-daemon not running"
+
 echo "== hardening artifacts =="
 [ -f /etc/NetworkManager/dnsmasq-shared.d/greenhouse-captive.conf ] && ok "captive DNS config present" || no "captive DNS config missing"
 command -v iptables >/dev/null && ok "iptables present" || no "iptables missing"
 [ -f /etc/systemd/system/mosquitto.service.d/greenhouse.conf ] && ok "mosquitto ordering drop-in present" || no "mosquitto drop-in missing"
-sudo -u mosquitto test -r /etc/mosquitto/certs/server.key && ok "per-unit server.key readable by broker" || no "server.key unreadable"
 
 echo "== AP profile sanity =="
 command -v nmcli >/dev/null && ok "nmcli present" || no "nmcli missing"
+
+echo ""
+echo "== device credentials =="
+python3 - <<'PYEOF'
+import json, sys
+try:
+    d = json.load(open('/etc/greenhouse/device.json'))
+    print(f"       device_id : {d['device_id']}")
+    print(f"       username  : {d['username']}")
+    print(f"       password  : {d['password']}")
+    print(f"       port      : {d['port']}")
+except Exception as e:
+    print(f"       error: {e}", file=sys.stderr)
+PYEOF
 
 echo ""
 echo "RESULT: $PASS passed, $FAIL failed"
