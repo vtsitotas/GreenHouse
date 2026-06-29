@@ -12,18 +12,21 @@ class MockConnection extends Mock implements GreenhouseConnection {}
 
 const _config = ConnectionConfig(
   lanHost: 'greenhouse.local',
-  tailscaleHost: '100.0.0.1',
+  remoteHost: '',
   port: 9001,
   tlsFingerprint: 'abc',
   username: 'app',
   password: 'pass',
+  remoteUsername: '',
+  remotePassword: '',
 );
 
 void main() {
   setUpAll(() {
     registerFallbackValue(const ConnectionConfig(
-      lanHost: '', tailscaleHost: '', port: 9001,
+      lanHost: '', remoteHost: '', port: 9001,
       tlsFingerprint: '', username: '', password: '',
+      remoteUsername: '', remotePassword: '',
     ));
   });
 

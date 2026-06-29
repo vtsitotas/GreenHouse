@@ -27,10 +27,6 @@ apt-get install -y -qq \
   rfkill \
   avahi-daemon
 
-echo "==> Installing Tailscale..."
-curl -fsSL https://tailscale.com/install.sh | sh 2>/dev/null || true
-systemctl enable tailscaled 2>/dev/null || true
-
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
 # boot-time service can be diagnosed after the fact, e.g. on a shipped unit).
@@ -59,7 +55,18 @@ echo "==> Generating TLS certificates (if missing)..."
 bash "$REPO/scripts/gen_certs.sh"
 
 echo "==> Configuring Mosquitto..."
-cp "$REPO/mosquitto/mosquitto.conf" /etc/mosquitto/conf.d/greenhouse.conf
+cp "$REPO/mosquitto/mosquitto.conf"      /etc/mosquitto/conf.d/greenhouse.conf
+cp "$REPO/mosquitto/hivemq-bridge.conf"  /etc/mosquitto/conf.d/hivemq-bridge.conf
+
+echo "==> Writing HiveMQ config for portal..."
+cat > /etc/greenhouse/hivemq.json << 'EOF'
+{
+  "host": "5d0f2497a0ba4a41a762943a32738484.s1.eu.hivemq.cloud",
+  "port": 8883,
+  "username": "greenhouse",
+  "password": "Greenhouse2026"
+}
+EOF
 touch /etc/mosquitto/passwd
 chown mosquitto:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd
