@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -8,6 +9,8 @@ import 'package:greenhouse_app/screens/dashboard/dashboard_screen.dart';
 import 'package:greenhouse_app/screens/devices/devices_screen.dart';
 import 'package:greenhouse_app/screens/control/control_screen.dart';
 import 'package:greenhouse_app/screens/settings/settings_screen.dart';
+import 'package:greenhouse_app/screens/weather/weather_screen.dart';
+import 'package:greenhouse_app/services/notification_service.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 import 'package:greenhouse_app/theme/app_theme.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
@@ -29,6 +32,7 @@ final _router = GoRouter(
         GoRoute(path: '/dashboard', builder: (_, __) => const DashboardScreen()),
         GoRoute(path: '/devices',   builder: (_, __) => const DevicesScreen()),
         GoRoute(path: '/control',   builder: (_, __) => const ControlScreen()),
+        GoRoute(path: '/weather',   builder: (_, __) => const WeatherScreen()),
         GoRoute(path: '/settings',  builder: (_, __) => const SettingsScreen()),
       ],
     ),
@@ -43,14 +47,27 @@ class GreenhouseApp extends ConsumerStatefulWidget {
 
 class _GreenhouseAppState extends ConsumerState<GreenhouseApp>
     with WidgetsBindingObserver {
+  ProviderSubscription? _alertSub;
+
   @override
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    _initNotifications();
+  }
+
+  Future<void> _initNotifications() async {
+    await NotificationService.instance.init();
+    await NotificationService.instance.requestPermission();
+    // Listen for incoming weather alerts and show local notifications
+    _alertSub = ref.listenManual(weatherAlertsProvider, (_, next) {
+      next.whenData((alert) => NotificationService.instance.showAlert(alert));
+    });
   }
 
   @override
   void dispose() {
+    _alertSub?.close();
     WidgetsBinding.instance.removeObserver(this);
     super.dispose();
   }
@@ -75,3 +92,4 @@ class _GreenhouseAppState extends ConsumerState<GreenhouseApp>
         routerConfig: _router,
       );
 }
+

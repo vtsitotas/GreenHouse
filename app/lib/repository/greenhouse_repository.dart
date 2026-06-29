@@ -1,21 +1,31 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:greenhouse_app/connection/greenhouse_connection.dart';
 import 'package:greenhouse_app/models/actuator_state.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
+import 'package:greenhouse_app/models/weather_alert.dart';
+import 'package:greenhouse_app/models/weather_events.dart';
+import 'package:greenhouse_app/models/weather_rule.dart';
 
 class GreenhouseRepository {
   final GreenhouseConnection connection;
 
-  final Map<String, Map<String, double>> _readings = {};
-  final Map<String, NodeStatus> _nodes = {};
-  final Map<String, ActuatorState> _actuators = {};
+  final Map<String, Map<String, double>> _readings   = {};
+  final Map<String, NodeStatus>          _nodes      = {};
+  final Map<String, ActuatorState>       _actuators  = {};
 
-  final _readingsCtrl = StreamController<Map<String, Map<String, double>>>.broadcast();
-  final _nodesCtrl = StreamController<Map<String, NodeStatus>>.broadcast();
+  final _readingsCtrl  = StreamController<Map<String, Map<String, double>>>.broadcast();
+  final _nodesCtrl     = StreamController<Map<String, NodeStatus>>.broadcast();
   final _actuatorsCtrl = StreamController<Map<String, ActuatorState>>.broadcast();
+  final _alertsCtrl    = StreamController<WeatherAlert>.broadcast();
+  final _forecastCtrl  = StreamController<Map<String, dynamic>>.broadcast();
+  final _rulesCtrl     = StreamController<List<WeatherRule>>.broadcast();
+
+  List<WeatherRule> _rules = [];
+  Map<String, dynamic>? _lastForecast;
 
   StreamSubscription<dynamic>? _sub;
 
@@ -37,6 +47,22 @@ class GreenhouseRepository {
     yield Map.from(_actuators);
     yield* _actuatorsCtrl.stream;
   }
+
+  /// Fires every time a weather alert arrives.
+  Stream<WeatherAlert> get alerts => _alertsCtrl.stream;
+
+  /// Fires when a new 24-hour forecast arrives (yields cached value immediately if available).
+  Stream<Map<String, dynamic>> get forecast async* {
+    if (_lastForecast != null) yield _lastForecast!;
+    yield* _forecastCtrl.stream;
+  }
+
+  /// Fires when the rules list is received / updated.
+  Stream<List<WeatherRule>> get rules async* {
+    if (_rules.isNotEmpty) yield List.from(_rules);
+    yield* _rulesCtrl.stream;
+  }
+
   Stream<ConnectionStatus> get connectionStatus => connection.status;
 
   void _handle(dynamic event) {
@@ -47,15 +73,28 @@ class GreenhouseRepository {
       final prev = _nodes[event.nodeId];
       _nodes[event.nodeId] = prev != null
           ? prev.copyWith(
-              isOnline: event.isOnline,
+              isOnline:      event.isOnline,
               batteryPercent: event.batteryPercent ?? prev.batteryPercent,
-              lastSeen: event.lastSeen,
+              lastSeen:      event.lastSeen,
             )
           : event;
       _nodesCtrl.add(Map.from(_nodes));
     } else if (event is ActuatorState) {
       _actuators[event.actuatorId] = event;
       _actuatorsCtrl.add(Map.from(_actuators));
+    } else if (event is WeatherAlert) {
+      _alertsCtrl.add(event);
+    } else if (event is WeatherForecastRaw) {
+      try {
+        final data = jsonDecode(event.payload) as Map<String, dynamic>;
+        _lastForecast = data;
+        _forecastCtrl.add(data);
+      } catch (_) {}
+    } else if (event is RulesPayloadRaw) {
+      try {
+        _rules = WeatherRule.listFromJson(event.payload);
+        _rulesCtrl.add(List.from(_rules));
+      } catch (_) {}
     }
   }
 
@@ -68,8 +107,30 @@ class GreenhouseRepository {
     await connection.sendCommand(actuatorId, on);
   }
 
+  /// Send updated rules to the Pi (Pi saves and reloads).
+  Future<void> publishRules(List<WeatherRule> rules) async {
+    _rules = rules;
+    _rulesCtrl.add(List.from(_rules));
+    await connection.publishRaw(
+      'greenhouse/rules/update',
+      WeatherRule.listToJson(rules),
+    );
+  }
+
+  /// Ask the Pi to broadcast its current rules.
+  Future<void> requestRules() async {
+    await connection.publishRaw('greenhouse/rules/get', '1');
+  }
+
+  /// Push location + interval to the Pi (retained so weather.py picks it up on restart).
+  Future<void> publishLocation(double lat, double lon, {int intervalSeconds = 1800}) async {
+    final payload = '{"latitude":$lat,"longitude":$lon,"timezone":"auto","interval_seconds":$intervalSeconds}';
+    await connection.publishRaw('greenhouse/weather/location/set', payload, retain: true);
+  }
+
   Future<void> disconnect() async {
     await _sub?.cancel();
     await connection.disconnect();
   }
 }
+

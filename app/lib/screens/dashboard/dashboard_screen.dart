@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/providers/readings_provider.dart';
 import 'package:greenhouse_app/screens/dashboard/connection_banner.dart';
+import 'package:greenhouse_app/screens/dashboard/weather_card.dart';
 import 'package:greenhouse_app/screens/dashboard/zone_card.dart';
 
 class DashboardScreen extends ConsumerWidget {
@@ -23,9 +24,22 @@ class DashboardScreen extends ConsumerWidget {
         Expanded(child: readingsAsync.when(
           loading: () => ListView.builder(itemCount: 3, itemBuilder: (_, __) => const _Skeleton()),
           error: (e, _) => Center(child: Text('Error: $e')),
-          data: (r) => r.isEmpty
-              ? const Center(child: Text('Waiting for sensor data…'))
-              : ListView(children: r.entries.map((e) => ZoneCard(zone: e.key, readings: e.value)).toList()),
+          data: (r) {
+            // Separate weather zone from sensor zones
+            final sensorZones = Map.fromEntries(
+              r.entries.where((e) => e.key != 'weather'),
+            );
+            return ListView(children: [
+              const WeatherCard(),
+              if (sensorZones.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Center(child: Text('Waiting for sensor data…')),
+                )
+              else
+                ...sensorZones.entries.map((e) => ZoneCard(zone: e.key, readings: e.value)),
+            ]);
+          },
         )),
       ]),
     );
@@ -46,3 +60,4 @@ class _Skeleton extends StatelessWidget {
     )),
   );
 }
+

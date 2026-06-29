@@ -81,6 +81,7 @@ cp "$REPO"/systemd/greenhouse-firstboot.service      /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-portal.service         /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-ap.service             /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
 
 # Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
 mkdir -p /etc/systemd/system/mosquitto.service.d
@@ -90,7 +91,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather >/dev/null 2>&1
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.
@@ -102,6 +103,30 @@ echo "==> Keeping this master as a WiFi client during setup..."
 # master. prep_image.sh removes it so shipped clones boot into AP mode.
 touch /etc/greenhouse/.wifi_configured
 
+echo "==> Writing default weather location config (Athens — edit /etc/greenhouse/weather.json)..."
+[ -f /etc/greenhouse/weather.json ] || cat > /etc/greenhouse/weather.json << 'EOF'
+{
+  "latitude": 37.97,
+  "longitude": 23.72,
+  "timezone": "Europe/Athens"
+}
+EOF
+
+echo "==> Writing default automation rules config..."
+[ -f /etc/greenhouse/rules.json ] || cat > /etc/greenhouse/rules.json << 'EOF'
+[
+  {"id":"rain-close","name":"Close fan on rain","enabled":true,
+   "trigger":{"metric":"rain_mm_1h","op":">","value":0.3},
+   "action":{"actuator":"fan1","command":"OFF"}},
+  {"id":"frost-heat","name":"Frost protection","enabled":true,
+   "trigger":{"metric":"temperature","op":"<","value":3},
+   "action":{"actuator":"pump1","command":"ON"}},
+  {"id":"heat-fan","name":"Heat wave ventilation","enabled":true,
+   "trigger":{"metric":"temperature","op":">","value":35},
+   "action":{"actuator":"fan1","command":"ON"}}
+]
+EOF
+
 echo "==> Generating this unit's MQTT credentials..."
 bash "$REPO/scripts/first_boot.sh"
 # Mosquitto 2.x wants the passwd file owned by root; mosquitto group reads it.
@@ -111,6 +136,7 @@ chmod 640 /etc/mosquitto/passwd
 echo "==> Restarting services..."
 systemctl restart mosquitto
 systemctl restart greenhouse-portal
+systemctl restart greenhouse-weather
 
 echo ""
 echo "==> Done. Verify with:  sudo bash $REPO/scripts/selftest.sh"

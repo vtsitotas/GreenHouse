@@ -27,7 +27,7 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
 
   @override
   void dispose() {
-    for (final t in _timers.values) t.cancel();
+    for (final t in _timers.values) { t.cancel(); }
     super.dispose();
   }
 
