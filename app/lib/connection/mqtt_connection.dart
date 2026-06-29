@@ -8,6 +8,8 @@ import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
+import 'package:greenhouse_app/models/weather_alert.dart';
+import 'package:greenhouse_app/models/weather_events.dart';
 
 class MqttConnection implements GreenhouseConnection {
   MqttServerClient? _client;
@@ -101,7 +103,13 @@ class MqttConnection implements GreenhouseConnection {
   }
 
   void _route(String topic, String payload) {
-    if (isSensorTopic(topic)) {
+    if (isWeatherAlertTopic(topic)) {
+      try { _events.add(WeatherAlert.fromMqtt(payload)); } catch (_) {}
+    } else if (isWeatherForecastTopic(topic)) {
+      _events.add(WeatherForecastRaw(payload));
+    } else if (isRulesCurrentTopic(topic)) {
+      _events.add(RulesPayloadRaw(payload));
+    } else if (isSensorTopic(topic)) {
       try { _events.add(SensorReading.fromMqtt(topic, payload)); } catch (_) {}
     } else if (isNodeStatusTopic(topic)) {
       _events.add(NodeStatus.fromMqttStatus(extractNodeId(topic), payload));
@@ -130,6 +138,18 @@ class MqttConnection implements GreenhouseConnection {
     _client = null;
   }
 
+  @override
+  Future<void> publishRaw(String topic, String payload, {bool retain = false}) async {
+    if (_client?.connectionStatus?.state != MqttConnectionState.connected) return;
+    final builder = MqttClientPayloadBuilder()..addString(payload);
+    _client!.publishMessage(
+      topic,
+      MqttQos.atLeastOnce,
+      builder.payload!,
+      retain: retain,
+    );
+  }
+
   Future<bool> testConnect(ConnectionConfig config) async {
     final hosts = [
       (config.lanHost,    config.username,      config.password),
@@ -147,10 +167,17 @@ class MqttConnection implements GreenhouseConnection {
   }
 
   // ── Static routing helpers ──────────────────────────────────────────────
+  static bool isWeatherAlertTopic(String t) => t == 'greenhouse/weather/alert';
+  static bool isWeatherForecastTopic(String t) => t == 'greenhouse/weather/forecast';
+  static bool isRulesCurrentTopic(String t) => t == 'greenhouse/rules/current';
+
   static bool isSensorTopic(String topic) {
     final p = topic.split('/');
     if (p.length < 3 || p[0] != 'greenhouse') return false;
-    return p[1] != 'nodes' && p[1] != 'actuators';
+    // Exclude nodes, actuators, weather (non-numeric), and rules topics
+    if (p[1] == 'nodes' || p[1] == 'actuators' || p[1] == 'rules') return false;
+    if (p[1] == 'weather' && (p.length < 3 || p[2] == 'alert' || p[2] == 'forecast')) return false;
+    return true;
   }
 
   static bool isNodeStatusTopic(String t) =>

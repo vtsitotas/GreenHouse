@@ -29,7 +29,9 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
 
   @override
   void dispose() {
-    for (final c in [_host, _pass, _remoteHost, _remoteUser, _remotePass, _port, _fp, _user]) c.dispose();
+    for (final c in [_host, _pass, _remoteHost, _remoteUser, _remotePass, _port, _fp, _user]) {
+      c.dispose();
+    }
     super.dispose();
   }
 

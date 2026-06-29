@@ -14,14 +14,20 @@
     h1 { font-size: 22px; color: #1a3a1a; margin-bottom: 8px; }
     p  { color: #666; font-size: 14px; margin-bottom: 24px; line-height: 1.5; }
     label { display: block; font-size: 13px; color: #444; margin-bottom: 4px; font-weight: 500; }
-    input { width: 100%; padding: 12px 14px; border: 1.5px solid #ddd;
+    input, select { width: 100%; padding: 12px 14px; border: 1.5px solid #ddd;
             border-radius: 10px; font-size: 16px; margin-bottom: 16px;
-            outline: none; transition: border-color .2s; }
-    input:focus { border-color: #2e7d32; }
+            outline: none; transition: border-color .2s; background: white;
+            appearance: none; -webkit-appearance: none; }
+    input:focus, select:focus { border-color: #2e7d32; }
+    .select-wrap { position: relative; margin-bottom: 16px; }
+    .select-wrap select { margin-bottom: 0; padding-right: 36px; }
+    .select-wrap::after { content: '▾'; position: absolute; right: 14px; top: 50%;
+                          transform: translateY(-50%); color: #888; pointer-events: none; font-size: 14px; }
     button { width: 100%; padding: 14px; background: #2e7d32; color: white;
              border: none; border-radius: 10px; font-size: 16px;
              font-weight: 600; cursor: pointer; }
     button:active { background: #1b5e20; }
+    button:disabled { background: #aaa; cursor: default; }
     .error { background: #fff3f3; border: 1px solid #ffcdd2;
              color: #c62828; padding: 10px 14px; border-radius: 8px;
              font-size: 14px; margin-bottom: 16px; }
@@ -34,6 +40,7 @@
                border-top-color: #2e7d32; border-radius: 50%; animation: spin .8s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
     .overlay p { font-size: 16px; color: #1a3a1a; font-weight: 500; }
+    [hidden] { display: none !important; }
   </style>
 </head>
 <body>
@@ -47,18 +54,111 @@
     {% if error %}
       <div class="error">{{ error }}</div>
     {% endif %}
-    <form method="post" action="/connect" onsubmit="document.getElementById('overlay').classList.add('show')">
-      <label for="ssid">WiFi Name</label>
-      <input type="text" id="ssid" name="ssid" placeholder="My Home WiFi"
-             autocomplete="off" autocorrect="off" spellcheck="false" required>
-      <label for="password">WiFi Password</label>
-      <input type="password" id="password" name="password" placeholder="Leave empty for open networks">
-      <button type="submit">Connect</button>
+    <form id="form" method="post" action="/connect">
+      <input type="hidden" id="ssid" name="ssid" value="{{ request.form.get('ssid', '') }}">
+
+      <label for="ssid-select">WiFi Network</label>
+      <div class="select-wrap">
+        <select id="ssid-select">
+          <option value="" disabled selected>Scanning…</option>
+        </select>
+      </div>
+
+      <div id="manual-wrap" hidden>
+        <label for="ssid-manual">WiFi Name</label>
+        <input type="text" id="ssid-manual" placeholder="Enter network name exactly"
+               autocomplete="off" autocorrect="off" spellcheck="false">
+      </div>
+
+      <div id="pass-wrap" hidden>
+        <label for="password">WiFi Password</label>
+        <input type="password" id="password" name="password" placeholder="Leave empty for open networks">
+      </div>
+
+      <button type="submit" id="btn" disabled>Connect</button>
     </form>
     <div class="tip">
       Page closed? Make sure you are connected to <strong>Greenhouse-XXXX</strong>
       WiFi, then open your browser and go to <strong>192.168.4.1</strong>
     </div>
   </div>
+  <script>
+    const sel = document.getElementById('ssid-select');
+    const manualWrap = document.getElementById('manual-wrap');
+    const manualInput = document.getElementById('ssid-manual');
+    const passWrap = document.getElementById('pass-wrap');
+    const ssidHidden = document.getElementById('ssid');
+    const btn = document.getElementById('btn');
+    const form = document.getElementById('form');
+
+    let networks = [];
+
+    function applySelection() {
+      const val = sel.value;
+      if (val === '__other__') {
+        manualWrap.hidden = false;
+        passWrap.hidden = false;
+        ssidHidden.value = manualInput.value.trim();
+        btn.disabled = !manualInput.value.trim();
+      } else {
+        manualWrap.hidden = true;
+        const net = networks.find(n => n.ssid === val);
+        passWrap.hidden = net ? !net.secured : false;
+        ssidHidden.value = val;
+        btn.disabled = !val;
+      }
+    }
+
+    manualInput.addEventListener('input', () => {
+      ssidHidden.value = manualInput.value.trim();
+      btn.disabled = !manualInput.value.trim();
+    });
+
+    sel.addEventListener('change', applySelection);
+
+    form.addEventListener('submit', e => {
+      if (sel.value === '__other__') ssidHidden.value = manualInput.value.trim();
+      if (!ssidHidden.value) { e.preventDefault(); return; }
+      document.getElementById('overlay').classList.add('show');
+    });
+
+    fetch('/api/scan')
+      .then(r => r.json())
+      .then(data => {
+        networks = data;
+        sel.innerHTML = '';
+        if (data.length === 0) {
+          sel.innerHTML = '<option value="" disabled selected>No networks found</option>';
+          const other = document.createElement('option');
+          other.value = '__other__';
+          other.textContent = 'Type manually…';
+          sel.appendChild(other);
+        } else {
+          const placeholder = document.createElement('option');
+          placeholder.value = '';
+          placeholder.disabled = true;
+          placeholder.selected = true;
+          placeholder.textContent = 'Select your WiFi…';
+          sel.appendChild(placeholder);
+          data.forEach(net => {
+            const opt = document.createElement('option');
+            opt.value = net.ssid;
+            opt.textContent = net.ssid + (net.secured ? ' 🔒' : '');
+            sel.appendChild(opt);
+          });
+          const other = document.createElement('option');
+          other.value = '__other__';
+          other.textContent = 'Other… (type manually)';
+          sel.appendChild(other);
+        }
+        btn.disabled = true;
+      })
+      .catch(() => {
+        sel.innerHTML = '<option value="__other__" selected>Type manually…</option>';
+        manualWrap.hidden = false;
+        passWrap.hidden = false;
+        btn.disabled = false;
+      });
+  </script>
 </body>
 </html>

@@ -1,0 +1,30 @@
+[Unit]
+Description=Greenhouse Weather Service
+Documentation=https://open-meteo.com/
+After=network-online.target mosquitto.service
+Wants=network-online.target
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/weather.py
+Restart=always
+RestartSec=30
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+# Graceful shutdown — give the sleep loop time to wake and exit
+TimeoutStopSec=35
+KillSignal=SIGTERM
+
+# Environment
+Environment=WEATHER_INTERVAL=30
+
+# Basic sandboxing (no network restriction; needs urllib)
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp /etc/greenhouse
+
+[Install]
+WantedBy=multi-user.target
