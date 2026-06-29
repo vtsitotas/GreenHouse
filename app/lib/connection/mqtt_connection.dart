@@ -13,6 +13,7 @@ class MqttConnection implements GreenhouseConnection {
   MqttServerClient? _client;
   final _events = StreamController<dynamic>.broadcast();
   final _status = StreamController<ConnectionStatus>.broadcast();
+  int _generation = 0;
 
   @override
   Stream<dynamic> get events => _events.stream;
@@ -22,19 +23,41 @@ class MqttConnection implements GreenhouseConnection {
 
   @override
   Future<void> connect(ConnectionConfig config) async {
+    _generation++;
+    final gen = _generation;
     _status.add(ConnectionStatus.reconnecting);
     for (final host in [config.lanHost, config.tailscaleHost]) {
       try {
-        if (await _tryConnect(host, config)) {
+        if (await _tryConnect(host, config, gen)) {
           _status.add(host == config.lanHost ? ConnectionStatus.local : ConnectionStatus.remote);
           return;
         }
       } catch (_) {}
     }
     _status.add(ConnectionStatus.offline);
+    _scheduleRetry(config, gen);
   }
 
-  Future<bool> _tryConnect(String host, ConnectionConfig config) async {
+  Future<void> _scheduleRetry(ConnectionConfig config, int gen) async {
+    int delay = 10;
+    while (_generation == gen) {
+      await Future.delayed(Duration(seconds: delay));
+      if (_generation != gen) return;
+      _status.add(ConnectionStatus.reconnecting);
+      for (final host in [config.lanHost, config.tailscaleHost]) {
+        try {
+          if (await _tryConnect(host, config, gen)) {
+            _status.add(host == config.lanHost ? ConnectionStatus.local : ConnectionStatus.remote);
+            return;
+          }
+        } catch (_) {}
+      }
+      _status.add(ConnectionStatus.offline);
+      delay = (delay * 2).clamp(10, 60);
+    }
+  }
+
+  Future<bool> _tryConnect(String host, ConnectionConfig config, int gen) async {
     if (host.isEmpty) return false;
     final clientId = 'gh_app_${DateTime.now().millisecondsSinceEpoch}';
     final client = MqttServerClient.withPort(host, clientId, config.port);
@@ -60,7 +83,10 @@ class MqttConnection implements GreenhouseConnection {
     _client = client;
     client.subscribe('greenhouse/#', MqttQos.atLeastOnce);
     client.updates?.listen(_handleMessages);
-    client.onDisconnected = () => _status.add(ConnectionStatus.offline);
+    client.onDisconnected = () {
+      _status.add(ConnectionStatus.offline);
+      if (_generation == gen) _scheduleRetry(config, gen);
+    };
     return true;
   }
 
@@ -97,6 +123,7 @@ class MqttConnection implements GreenhouseConnection {
 
   @override
   Future<void> disconnect() async {
+    _generation++;
     _client?.disconnect();
     _client = null;
   }
@@ -104,7 +131,7 @@ class MqttConnection implements GreenhouseConnection {
   Future<bool> testConnect(ConnectionConfig config) async {
     for (final host in [config.lanHost, config.tailscaleHost]) {
       if (host.isEmpty) continue;
-      if (await _tryConnect(host, config)) {
+      if (await _tryConnect(host, config, -1)) {
         _client?.onDisconnected = null;
         await disconnect();
         return true;

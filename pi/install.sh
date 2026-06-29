@@ -27,6 +27,10 @@ apt-get install -y -qq \
   rfkill \
   avahi-daemon
 
+echo "==> Installing Tailscale..."
+curl -fsSL https://tailscale.com/install.sh | sh 2>/dev/null || true
+systemctl enable tailscaled 2>/dev/null || true
+
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
 # boot-time service can be diagnosed after the fact, e.g. on a shipped unit).

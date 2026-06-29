@@ -10,6 +10,8 @@ import 'package:greenhouse_app/screens/control/control_screen.dart';
 import 'package:greenhouse_app/screens/settings/settings_screen.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 import 'package:greenhouse_app/theme/app_theme.dart';
+import 'package:greenhouse_app/models/connection_status.dart';
+import 'package:greenhouse_app/providers/connection_provider.dart';
 
 final _router = GoRouter(
   initialLocation: '/dashboard',
@@ -33,8 +35,37 @@ final _router = GoRouter(
   ],
 );
 
-class GreenhouseApp extends StatelessWidget {
+class GreenhouseApp extends ConsumerStatefulWidget {
   const GreenhouseApp({super.key});
+  @override
+  ConsumerState<GreenhouseApp> createState() => _GreenhouseAppState();
+}
+
+class _GreenhouseAppState extends ConsumerState<GreenhouseApp>
+    with WidgetsBindingObserver {
+  @override
+  void initState() {
+    super.initState();
+    WidgetsBinding.instance.addObserver(this);
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final status = ref.read(connectionStatusProvider).value;
+    if (status == ConnectionStatus.offline) {
+      ref.read(pairingServiceProvider).loadConfig().then((config) {
+        if (config != null) ref.read(repositoryProvider).connect(config);
+      });
+    }
+  }
+
   @override
   Widget build(BuildContext context) => MaterialApp.router(
         title: 'Greenhouse',

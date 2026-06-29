@@ -110,6 +110,42 @@ def index(path):
     return render_template("rebooting.html", ssid="your network")
 
 
+@app.route("/api/scan")
+def scan():
+    if not _ap_mode():
+        abort(403)
+    try:
+        subprocess.run(
+            ["nmcli", "device", "wifi", "rescan", "ifname", "wlan0"],
+            timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass
+    try:
+        out = subprocess.run(
+            ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY",
+             "device", "wifi", "list", "ifname", "wlan0"],
+            capture_output=True, text=True, timeout=10).stdout
+        seen, networks = set(), []
+        for line in out.splitlines():
+            parts = line.rsplit(":", 2)
+            if len(parts) < 3:
+                continue
+            ssid, signal, security = parts[0], parts[1], parts[2]
+            ssid = ssid.replace("\\:", ":")
+            if not ssid or ssid in seen or ssid.startswith("Greenhouse-"):
+                continue
+            seen.add(ssid)
+            networks.append({
+                "ssid": ssid,
+                "secured": bool(security.strip()),
+                "signal": int(signal) if signal.isdigit() else 0,
+            })
+        networks.sort(key=lambda x: -x["signal"])
+        return jsonify(networks)
+    except Exception:
+        return jsonify([])
+
+
 @app.route("/connect", methods=["POST"])
 def connect():
     if not _ap_mode():
@@ -146,9 +182,15 @@ def pair():
                                  "to open a new pairing window."}), 403
     try:
         c = _load_config()
+        try:
+            ts_ip = subprocess.run(
+                ["tailscale", "ip", "-4"],
+                capture_output=True, text=True, timeout=3).stdout.strip()
+        except Exception:
+            ts_ip = ""
         return jsonify({
             "host_lan":        "greenhouse.local",
-            "host_tailscale":  "",
+            "host_tailscale":  ts_ip,
             "port":            c["port"],
             "tls_fingerprint": c["tls_fingerprint"],
             "username":        c["username"],
