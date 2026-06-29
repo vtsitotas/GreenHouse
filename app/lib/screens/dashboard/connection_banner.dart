@@ -10,7 +10,7 @@ class ConnectionBanner extends StatelessWidget {
   Widget build(BuildContext context) {
     final (color, icon, label) = switch (status) {
       ConnectionStatus.local        => (AppColors.local,        Icons.wifi,      'Local'),
-      ConnectionStatus.remote       => (AppColors.remote,       Icons.vpn_lock,  'Remote via Tailscale'),
+      ConnectionStatus.remote       => (AppColors.remote,       Icons.cloud,     'Remote'),
       ConnectionStatus.reconnecting => (AppColors.reconnecting, Icons.sync,      'Reconnecting…'),
       ConnectionStatus.offline      => (AppColors.offline,      Icons.wifi_off,  'Offline — showing last known data'),
     };
