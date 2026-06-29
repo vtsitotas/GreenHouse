@@ -261,6 +261,9 @@ def run():
     publish_rules()
 
     while _running:
+        # Pick up location/interval changes published from the app
+        _pull_location_from_mqtt()
+
         # Check for a reload flag written by the MQTT rules-update handler
         if os.path.exists(RELOAD_FLAG):
             os.remove(RELOAD_FLAG)
