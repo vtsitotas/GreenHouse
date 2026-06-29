@@ -147,7 +147,7 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
       await ref.read(repositoryProvider).publishLocation(lat, lon, intervalSeconds: intervalSeconds);
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('Settings saved. Restart the Pi weather service to apply.')),
+          const SnackBar(content: Text('Settings saved. Will apply on the next weather cycle.')),
         );
       }
     }
