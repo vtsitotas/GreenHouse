@@ -27,16 +27,27 @@
              font-size: 14px; margin-bottom: 16px; }
     .tip { margin-top: 20px; background: #f1f8e9; border-radius: 10px;
            padding: 12px 14px; font-size: 12px; color: #558b2f; line-height: 1.6; }
+    .overlay { display: none; position: fixed; inset: 0; background: rgba(240,244,240,.97);
+               justify-content: center; align-items: center; flex-direction: column; gap: 16px; }
+    .overlay.show { display: flex; }
+    .spinner { width: 40px; height: 40px; border: 4px solid #c8e6c9;
+               border-top-color: #2e7d32; border-radius: 50%; animation: spin .8s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+    .overlay p { font-size: 16px; color: #1a3a1a; font-weight: 500; }
   </style>
 </head>
 <body>
+  <div class="overlay" id="overlay">
+    <div class="spinner"></div>
+    <p>Connecting to WiFi…</p>
+  </div>
   <div class="card">
     <h1>Set up your Greenhouse</h1>
     <p>Connect to your home WiFi so the greenhouse can send you data from anywhere.</p>
     {% if error %}
       <div class="error">{{ error }}</div>
     {% endif %}
-    <form method="post" action="/connect">
+    <form method="post" action="/connect" onsubmit="document.getElementById('overlay').classList.add('show')">
       <label for="ssid">WiFi Name</label>
       <input type="text" id="ssid" name="ssid" placeholder="My Home WiFi"
              autocomplete="off" autocorrect="off" spellcheck="false" required>
