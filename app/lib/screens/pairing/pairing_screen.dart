@@ -15,31 +15,35 @@ class PairingScreen extends ConsumerStatefulWidget {
 
 class _PairingScreenState extends ConsumerState<PairingScreen> {
   final _formKey = GlobalKey<FormState>();
-  final _host   = TextEditingController(text: 'greenhouse.local');
-  final _pass   = TextEditingController();
-  final _tsHost = TextEditingController();
-  final _port   = TextEditingController(text: '8883');
-  final _fp     = TextEditingController();
-  final _user   = TextEditingController(text: 'app');
+  final _host       = TextEditingController(text: 'greenhouse.local');
+  final _pass       = TextEditingController();
+  final _remoteHost = TextEditingController();
+  final _remoteUser = TextEditingController();
+  final _remotePass = TextEditingController();
+  final _port       = TextEditingController(text: '8883');
+  final _fp         = TextEditingController();
+  final _user       = TextEditingController(text: 'app');
   bool _busy = false;
   bool _showAdvanced = false;
   String? _error;
 
   @override
   void dispose() {
-    for (final c in [_host, _pass, _tsHost, _port, _fp, _user]) c.dispose();
+    for (final c in [_host, _pass, _remoteHost, _remoteUser, _remotePass, _port, _fp, _user]) c.dispose();
     super.dispose();
   }
 
   void _applyQr(String raw) {
     try {
       final j = jsonDecode(raw) as Map<String, dynamic>;
-      _host.text   = j['host_lan']        ?? '';
-      _tsHost.text = j['host_tailscale']  ?? '';
-      _port.text   = (j['port'] ?? 8883).toString();
-      _fp.text     = j['tls_fingerprint'] ?? '';
-      _user.text   = j['username']        ?? 'app';
-      _pass.text   = j['password']        ?? '';
+      _host.text       = j['host_lan']        ?? '';
+      _remoteHost.text = j['host_remote']     ?? j['host_tailscale'] ?? '';
+      _remoteUser.text = j['remote_username'] ?? '';
+      _remotePass.text = j['remote_password'] ?? '';
+      _port.text       = (j['port'] ?? 8883).toString();
+      _fp.text         = j['tls_fingerprint'] ?? '';
+      _user.text       = j['username']        ?? 'app';
+      _pass.text       = j['password']        ?? '';
     } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid QR code')));
     }
@@ -48,17 +52,19 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   Future<bool> _applyPair(http.Response res) async {
     if (res.statusCode == 200) {
       final j = jsonDecode(res.body) as Map<String, dynamic>;
-      _host.text   = j['host_lan']        ?? '';
-      _tsHost.text = j['host_tailscale']  ?? '';
-      _port.text   = (j['port'] ?? 8883).toString();
-      _fp.text     = j['tls_fingerprint'] ?? '';
-      _user.text   = j['username']        ?? 'app';
-      _pass.text   = j['password']        ?? '';
+      _host.text       = j['host_lan']        ?? '';
+      _remoteHost.text = j['host_remote']     ?? j['host_tailscale'] ?? '';
+      _remoteUser.text = j['remote_username'] ?? '';
+      _remotePass.text = j['remote_password'] ?? '';
+      _port.text       = (j['port'] ?? 8883).toString();
+      _fp.text         = j['tls_fingerprint'] ?? '';
+      _user.text       = j['username']        ?? 'app';
+      _pass.text       = j['password']        ?? '';
       setState(() { _busy = false; });
       return true;
     } else if (res.statusCode == 403) {
       setState(() {
-        _error = 'Pairing window expired. Restart the Pi and try again within 5 minutes.';
+        _error = 'Pairing window expired. Restart the Pi and try again within 10 minutes.';
         _busy = false;
       });
       return true;
@@ -112,12 +118,14 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     if (!_formKey.currentState!.validate()) return;
     setState(() { _busy = true; _error = null; });
     final config = ConnectionConfig(
-      lanHost: _host.text.trim(),
-      tailscaleHost: _tsHost.text.trim(),
-      port: int.parse(_port.text.trim()),
+      lanHost:        _host.text.trim(),
+      remoteHost:     _remoteHost.text.trim(),
+      port:           int.parse(_port.text.trim()),
       tlsFingerprint: _fp.text.trim(),
-      username: _user.text.trim(),
-      password: _pass.text,
+      username:       _user.text.trim(),
+      password:       _pass.text,
+      remoteUsername: _remoteUser.text.trim(),
+      remotePassword: _remotePass.text,
     );
     try {
       final ok = await ref.read(mqttConnectionProvider).testConnect(config);
@@ -197,7 +205,9 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                 ),
               ),
               if (_showAdvanced) ...[
-                _field(_tsHost, 'Tailscale IP (for remote access)', validator: (_) => null, hint: '100.x.x.x'),
+                _field(_remoteHost, 'Remote host (HiveMQ)', validator: (_) => null, hint: 'xxxxx.s1.eu.hivemq.cloud'),
+                _field(_remoteUser, 'Remote username', validator: (_) => null),
+                _field(_remotePass, 'Remote password', obscure: true, validator: (_) => null),
                 _field(_port, 'Port', type: TextInputType.number,
                     validator: (v) => int.tryParse(v ?? '') == null ? 'Must be a number' : null),
                 _field(_user, 'Username'),

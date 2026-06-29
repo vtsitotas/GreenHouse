@@ -26,16 +26,25 @@ class MqttConnection implements GreenhouseConnection {
     _generation++;
     final gen = _generation;
     _status.add(ConnectionStatus.reconnecting);
-    for (final host in [config.lanHost, config.tailscaleHost]) {
+    if (await _attempt(config, gen)) return;
+    _scheduleRetry(config, gen);
+  }
+
+  Future<bool> _attempt(ConnectionConfig config, int gen) async {
+    final hosts = [
+      (config.lanHost,    config.username,       config.password),
+      (config.remoteHost, config.remoteUsername,  config.remotePassword),
+    ];
+    for (final (host, user, pass) in hosts) {
       try {
-        if (await _tryConnect(host, config, gen)) {
+        if (await _tryConnect(host, user, pass, config, gen)) {
           _status.add(host == config.lanHost ? ConnectionStatus.local : ConnectionStatus.remote);
-          return;
+          return true;
         }
       } catch (_) {}
     }
     _status.add(ConnectionStatus.offline);
-    _scheduleRetry(config, gen);
+    return false;
   }
 
   Future<void> _scheduleRetry(ConnectionConfig config, int gen) async {
@@ -44,20 +53,13 @@ class MqttConnection implements GreenhouseConnection {
       await Future.delayed(Duration(seconds: delay));
       if (_generation != gen) return;
       _status.add(ConnectionStatus.reconnecting);
-      for (final host in [config.lanHost, config.tailscaleHost]) {
-        try {
-          if (await _tryConnect(host, config, gen)) {
-            _status.add(host == config.lanHost ? ConnectionStatus.local : ConnectionStatus.remote);
-            return;
-          }
-        } catch (_) {}
-      }
-      _status.add(ConnectionStatus.offline);
+      if (await _attempt(config, gen)) return;
       delay = (delay * 2).clamp(10, 60);
     }
   }
 
-  Future<bool> _tryConnect(String host, ConnectionConfig config, int gen) async {
+  Future<bool> _tryConnect(String host, String user, String pass,
+      ConnectionConfig config, int gen) async {
     if (host.isEmpty) return false;
     final clientId = 'gh_app_${DateTime.now().millisecondsSinceEpoch}';
     final client = MqttServerClient.withPort(host, clientId, config.port);
@@ -69,7 +71,7 @@ class MqttConnection implements GreenhouseConnection {
     client.connectTimeoutPeriod = 5000;
     client.connectionMessage = MqttConnectMessage()
         .withClientIdentifier(clientId)
-        .authenticateAs(config.username, config.password)
+        .authenticateAs(user, pass)
         .startClean();
     try {
       debugPrint('[MQTT] trying $host:${config.port}');
@@ -129,9 +131,13 @@ class MqttConnection implements GreenhouseConnection {
   }
 
   Future<bool> testConnect(ConnectionConfig config) async {
-    for (final host in [config.lanHost, config.tailscaleHost]) {
+    final hosts = [
+      (config.lanHost,    config.username,      config.password),
+      (config.remoteHost, config.remoteUsername, config.remotePassword),
+    ];
+    for (final (host, user, pass) in hosts) {
       if (host.isEmpty) continue;
-      if (await _tryConnect(host, config, -1)) {
+      if (await _tryConnect(host, user, pass, config, -1)) {
         _client?.onDisconnected = null;
         await disconnect();
         return true;

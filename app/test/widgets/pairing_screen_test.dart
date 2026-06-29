@@ -10,8 +10,9 @@ class MockPairingService extends Mock implements PairingService {}
 
 void main() {
   setUpAll(() => registerFallbackValue(const ConnectionConfig(
-    lanHost: '', tailscaleHost: '', port: 9001,
+    lanHost: '', remoteHost: '', port: 9001,
     tlsFingerprint: '', username: '', password: '',
+    remoteUsername: '', remotePassword: '',
   )));
 
   testWidgets('PairingScreen shows manual entry fields', (tester) async {

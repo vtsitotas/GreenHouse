@@ -19,7 +19,7 @@ import time
 from flask import Flask, abort, jsonify, redirect, render_template, request
 
 _START_TIME = time.time()
-_PAIR_WINDOW = 300  # seconds the /pair endpoint stays open after boot
+_PAIR_WINDOW = 600  # seconds the /pair endpoint stays open after boot
 
 app = Flask(__name__, template_folder="templates")
 
@@ -48,6 +48,14 @@ def _ap_mode() -> bool:
 def _load_config() -> dict:
     with open(_CONFIG) as f:
         return json.load(f)
+
+
+def _load_hivemq() -> dict:
+    try:
+        with open('/etc/greenhouse/hivemq.json') as f:
+            return json.load(f)
+    except Exception:
+        return {}
 
 
 def _validate(ssid: str, password: str):
@@ -181,20 +189,17 @@ def pair():
         return jsonify({"error": "Pairing window expired. Restart the Pi "
                                  "to open a new pairing window."}), 403
     try:
-        c = _load_config()
-        try:
-            ts_ip = subprocess.run(
-                ["tailscale", "ip", "-4"],
-                capture_output=True, text=True, timeout=3).stdout.strip()
-        except Exception:
-            ts_ip = ""
+        c  = _load_config()
+        hm = _load_hivemq()
         return jsonify({
             "host_lan":        "greenhouse.local",
-            "host_tailscale":  ts_ip,
+            "host_remote":     hm.get("host", ""),
             "port":            c["port"],
             "tls_fingerprint": c["tls_fingerprint"],
             "username":        c["username"],
             "password":        c["password"],
+            "remote_username": hm.get("username", ""),
+            "remote_password": hm.get("password", ""),
         })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
