@@ -13,9 +13,11 @@ const char* mqtt_topic = "test/sensors/data";
 WiFiClient espClient;
 PubSubClient client(espClient);
 
+// ADDED SOIL MOISTURE
 typedef struct struct_message {
   float temperature;
   float humidity;
+  int soil_moisture;
 } struct_message;
 
 struct_message myData;
@@ -39,6 +41,12 @@ void reconnectMQTT() {
 
 // --- UPDATED FOR ESP32 CORE V3.x ---
 void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
+  // If the incoming packet size doesn't match our struct, drop it
+  if (len != sizeof(myData)) {
+    Serial.println("Received packet size mismatch! Dropping.");
+    return;
+  }
+  
   memcpy(&myData, incomingData, sizeof(myData));
   
   char macStr[18];
@@ -46,9 +54,9 @@ void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, in
            info->src_addr[0], info->src_addr[1], info->src_addr[2], 
            info->src_addr[3], info->src_addr[4], info->src_addr[5]);
            
-  char jsonPayload[128];
-  snprintf(jsonPayload, sizeof(jsonPayload), "{\"mac\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f}", 
-           macStr, myData.temperature, myData.humidity);
+  char jsonPayload[150];
+  snprintf(jsonPayload, sizeof(jsonPayload), "{\"mac\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f,\"soil_moisture\":%d}", 
+           macStr, myData.temperature, myData.humidity, myData.soil_moisture);
            
   if (client.connected()) {
     client.publish(mqtt_topic, jsonPayload);
