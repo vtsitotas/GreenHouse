@@ -1,95 +1,141 @@
 #include <Arduino.h>
 #include <esp_now.h>
 #include <WiFi.h>
-#include <PubSubClient.h> // Install this via Library Manager
+#include <WiFiClientSecure.h>
+#include <PubSubClient.h>
 
-// --- Network Configuration ---
-const char* ssid = "billredmi";
-const char* password = "billtsit2003";
-const char* mqtt_server = "10.70.155.202"; 
-const int mqtt_port = 1884;
-const char* mqtt_topic = "test/sensors/data";
+// ── WiFi (home router) ────────────────────────────────────────────────────────
+#define WIFI_SSID     "TP-Link_14A6"
+#define WIFI_PASSWORD "6940604664"   // ← fill in
 
-WiFiClient espClient;
-PubSubClient client(espClient);
+// ── Pi MQTT broker ────────────────────────────────────────────────────────────
+#define MQTT_HOST     "greenhouse.local"
+#define MQTT_PORT     8883
+#define MQTT_USER     "app"
+#define MQTT_PASS     "tCCprsQSqwT072X6WRTr"
 
-// ADDED SOIL MOISTURE
-typedef struct struct_message {
+// ── Zone map: MAC → zone name ─────────────────────────────────────────────────
+// Add one entry per edge node.  MAC must be uppercase, no colons.
+struct ZoneEntry { const char* mac; const char* zone; };
+static const ZoneEntry ZONES[] = {
+  { "206EF16CA1B0", "zone1" },  // ESP32-C3 edge node
+  { "88F155314564", "zone2" },  // ESP32 WROOM-32 edge node
+};
+static const int ZONE_COUNT = sizeof(ZONES) / sizeof(ZONES[0]);
+
+// ── Shared data struct (must match edge node exactly) ────────────────────────
+typedef struct {
   float temperature;
   float humidity;
-  int soil_moisture;
-} struct_message;
+  float soil_moisture;  // 0–100 %
+} SensorPacket;
 
-struct_message myData;
+// ── MQTT client ───────────────────────────────────────────────────────────────
+WiFiClientSecure net;
+PubSubClient     mqtt(net);
+
+const char* zoneForMac(const char* mac) {
+  for (int i = 0; i < ZONE_COUNT; i++) {
+    if (strcasecmp(ZONES[i].mac, mac) == 0) return ZONES[i].zone;
+  }
+  return nullptr;
+}
+
+void mqttPublish(const char* topic, const char* payload) {
+  if (!mqtt.connected()) return;
+  mqtt.publish(topic, payload);
+  Serial.printf("  → %s  %s\n", topic, payload);
+}
 
 void reconnectMQTT() {
-  while (!client.connected()) {
-    Serial.print("Attempting MQTT connection...");
-    String clientId = "ESP32Bridge-";
-    clientId += String(random(0xffff), HEX);
-    
-    if (client.connect(clientId.c_str())) {
-      Serial.println("connected");
+  while (!mqtt.connected()) {
+    Serial.print("[mqtt] connecting... ");
+    String id = "gh-bridge-";
+    id += String((uint32_t)ESP.getEfuseMac(), HEX);
+    if (mqtt.connect(id.c_str(), MQTT_USER, MQTT_PASS)) {
+      Serial.println("OK");
     } else {
-      Serial.print("failed, rc=");
-      Serial.print(client.state());
-      Serial.println(" try again in 5 seconds");
+      Serial.printf("failed rc=%d, retry in 5s\n", mqtt.state());
       delay(5000);
     }
   }
 }
 
-// --- UPDATED FOR ESP32 CORE V3.x ---
-void OnDataRecv(const esp_now_recv_info_t *info, const uint8_t *incomingData, int len) {
-  // If the incoming packet size doesn't match our struct, drop it
-  if (len != sizeof(myData)) {
-    Serial.println("Received packet size mismatch! Dropping.");
+// ── ESP-NOW receive callback ──────────────────────────────────────────────────
+void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  if (len != sizeof(SensorPacket)) {
+    Serial.printf("[esp-now] bad packet size %d\n", len);
     return;
   }
-  
-  memcpy(&myData, incomingData, sizeof(myData));
-  
-  char macStr[18];
-  snprintf(macStr, sizeof(macStr), "%02X:%02X:%02X:%02X:%02X:%02X",
-           info->src_addr[0], info->src_addr[1], info->src_addr[2], 
+
+  // Format MAC string
+  char mac[13];
+  snprintf(mac, sizeof(mac), "%02X%02X%02X%02X%02X%02X",
+           info->src_addr[0], info->src_addr[1], info->src_addr[2],
            info->src_addr[3], info->src_addr[4], info->src_addr[5]);
-           
-  char jsonPayload[150];
-  snprintf(jsonPayload, sizeof(jsonPayload), "{\"mac\":\"%s\",\"temperature\":%.2f,\"humidity\":%.2f,\"soil_moisture\":%d}", 
-           macStr, myData.temperature, myData.humidity, myData.soil_moisture);
-           
-  if (client.connected()) {
-    client.publish(mqtt_topic, jsonPayload);
-    Serial.printf("Forwarded to MQTT: %s\n", jsonPayload);
-  } else {
-    Serial.println("MQTT not connected, packet dropped.");
+
+  const char* zone = zoneForMac(mac);
+  if (!zone) {
+    Serial.printf("[esp-now] unknown node %s — add to ZONES[]\n", mac);
+    return;
   }
+
+  SensorPacket pkt;
+  memcpy(&pkt, data, sizeof(pkt));
+
+  Serial.printf("[esp-now] %s (zone=%s) T=%.1f H=%.1f Soil=%d\n",
+                mac, zone, pkt.temperature, pkt.humidity, pkt.soil_moisture);
+
+  if (!mqtt.connected()) { Serial.println("  MQTT not ready, packet dropped"); return; }
+
+  char topic[64], payload[16];
+
+  snprintf(topic, sizeof(topic), "greenhouse/%s/air/temperature", zone);
+  snprintf(payload, sizeof(payload), "%.1f", pkt.temperature);
+  mqttPublish(topic, payload);
+
+  snprintf(topic, sizeof(topic), "greenhouse/%s/air/humidity", zone);
+  snprintf(payload, sizeof(payload), "%.1f", pkt.humidity);
+  mqttPublish(topic, payload);
+
+  snprintf(topic, sizeof(topic), "greenhouse/%s/soil/moisture", zone);
+  snprintf(payload, sizeof(payload), "%.1f", pkt.soil_moisture);
+  mqttPublish(topic, payload);
+
+  snprintf(topic, sizeof(topic), "greenhouse/nodes/%s/status", mac);
+  mqttPublish(topic, "online");
 }
 
 void setup() {
   Serial.begin(115200);
-  
+  delay(1500);  // wait for USB CDC to connect on C3
+
+  // Print own MAC so you can paste it into edge node firmware
   WiFi.mode(WIFI_STA);
-  WiFi.begin(ssid, password);
-  Serial.print("Connecting to WiFi");
-  while (WiFi.status() != WL_CONNECTED) {
-    delay(500);
-    Serial.print(".");
-  }
-  Serial.println("\nWiFi connected.");
+  Serial.printf("\n[bridge] MAC: %s\n", WiFi.macAddress().c_str());
 
-  client.setServer(mqtt_server, mqtt_port);
+  // Connect WiFi
+  WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
+  Serial.print("[wifi] connecting");
+  while (WiFi.status() != WL_CONNECTED) { delay(500); Serial.print("."); }
+  Serial.printf("\n[wifi] connected, IP=%s\n", WiFi.localIP().toString().c_str());
 
+  // MQTT — skip cert verification (self-signed, local network)
+  net.setInsecure();
+  mqtt.setServer(MQTT_HOST, MQTT_PORT);
+  mqtt.setBufferSize(512);
+  reconnectMQTT();
+
+  // ESP-NOW
   if (esp_now_init() != ESP_OK) {
-    Serial.println("Error initializing ESP-NOW");
+    Serial.println("[esp-now] init failed");
     return;
   }
-  esp_now_register_recv_cb(OnDataRecv);
+  esp_now_register_recv_cb(onDataRecv);
+  Serial.println("[bridge] ready");
 }
 
 void loop() {
-  if (!client.connected()) {
-    reconnectMQTT();
-  }
-  client.loop(); 
+  if (!mqtt.connected()) reconnectMQTT();
+  mqtt.loop();
 }

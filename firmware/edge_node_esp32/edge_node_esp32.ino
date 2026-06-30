@@ -4,11 +4,11 @@
 #include <esp_wifi.h>
 #include <DHT.h>
 
-// ── Pin definitions ───────────────────────────────────────────────────────────
-#define SOIL_DATA_PIN  2   // ADC1_CH2
-#define DHT_DATA_PIN   6   // GPIO6 — moved away from JTAG pins
-#define SOIL_PWR_PIN   4
-#define DHT_PWR_PIN    5
+// ── Pin definitions (ESP32 WROOM-32) ─────────────────────────────────────────
+#define DHT_DATA_PIN   4   // GPIO4
+#define SOIL_DATA_PIN  34  // GPIO34 — ADC1, input-only
+#define DHT_PWR_PIN    26  // GPIO26
+#define SOIL_PWR_PIN   27  // GPIO27
 
 // ── Soil moisture calibration ─────────────────────────────────────────────────
 // Read SOIL_DATA_PIN with sensor in dry air → set DRY_VAL
@@ -63,12 +63,11 @@ void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
 
 void setup() {
   Serial.begin(115200);
-  delay(1500);
 
-  pinMode(SOIL_PWR_PIN, OUTPUT);
   pinMode(DHT_PWR_PIN,  OUTPUT);
-  digitalWrite(SOIL_PWR_PIN, LOW);
+  pinMode(SOIL_PWR_PIN, OUTPUT);
   digitalWrite(DHT_PWR_PIN,  LOW);
+  digitalWrite(SOIL_PWR_PIN, LOW);
 
   dht.begin();
 
@@ -98,20 +97,20 @@ void setup() {
 }
 
 void loop() {
-  digitalWrite(SOIL_PWR_PIN, HIGH);
   digitalWrite(DHT_PWR_PIN,  HIGH);
+  digitalWrite(SOIL_PWR_PIN, HIGH);
   delay(2000);
 
   SensorPacket pkt;
-  pkt.temperature  = dht.readTemperature();
-  pkt.humidity     = dht.readHumidity();
+  pkt.temperature   = dht.readTemperature();
+  pkt.humidity      = dht.readHumidity();
   pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
 
-  digitalWrite(SOIL_PWR_PIN, LOW);
   digitalWrite(DHT_PWR_PIN,  LOW);
+  digitalWrite(SOIL_PWR_PIN, LOW);
 
   if (isnan(pkt.temperature) || isnan(pkt.humidity)) {
-    Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO6");
+    Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO4");
   } else {
     pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
     Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
