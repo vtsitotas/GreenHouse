@@ -151,3 +151,71 @@ def test_write_buckets_rolls_back_and_stays_usable_after_failure():
         rows = conn.execute('SELECT COUNT(*) FROM readings').fetchone()
         assert rows[0] == 1  # failed transaction fully rolled back; only the good write persisted
         conn.close()
+
+
+def test_rollup_creates_hourly_row_from_minute_rows():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        # Two minute buckets inside the same completed hour (hour starts at 3600)
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'air_temperature'), 3600, 20.0, 20.0, 20.0, 2),
+            (('zone', 'zone1', 'air_temperature'), 3660, 24.0, 22.0, 26.0, 2),
+        ])
+        now = 3600 + 3600 + 3600  # well past the hour's end, so it's "completed"
+        recorder.rollup_and_prune(conn, now, raw_days=90, hourly_days=730)
+        rows = conn.execute('SELECT ts, avg, min, max, n FROM readings_hourly').fetchall()
+        assert len(rows) == 1
+        ts, avg, mn, mx, n = rows[0]
+        assert ts == 3600
+        assert avg == 22.0  # (20*2 + 24*2) / 4
+        assert mn == 20.0
+        assert mx == 26.0
+        assert n == 4
+        conn.close()
+
+
+def test_rollup_advances_watermark_and_does_not_reprocess():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        recorder.write_buckets(conn, series_ids, [
+            (('weather', None, 'temperature'), 3600, 15.0, 15.0, 15.0, 1),
+        ])
+        now = 3600 * 3
+        recorder.rollup_and_prune(conn, now, raw_days=90, hourly_days=730)
+        recorder.write_buckets(conn, series_ids, [
+            # A late/duplicate write into the already-rolled-up hour
+            (('weather', None, 'temperature'), 3600, 99.0, 99.0, 99.0, 1),
+        ])
+        recorder.rollup_and_prune(conn, now, raw_days=90, hourly_days=730)
+        rows = conn.execute('SELECT avg FROM readings_hourly').fetchall()
+        assert len(rows) == 1
+        assert rows[0][0] == 15.0  # unchanged — watermark already passed this hour
+        conn.close()
+
+
+def test_rollup_prunes_old_raw_and_hourly_rows():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        one_day = 86400
+        now = 200 * one_day
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'air_temperature'), now - 100 * one_day, 20.0, 20.0, 20.0, 1),
+            (('zone', 'zone1', 'air_temperature'), now - 1 * one_day, 21.0, 21.0, 21.0, 1),
+        ])
+        conn.execute('BEGIN')
+        conn.execute(
+            "INSERT INTO readings_hourly (series_id, ts, avg, min, max, n) "
+            "SELECT id, ?, 20.0, 20.0, 20.0, 1 FROM series LIMIT 1",
+            (now - 800 * one_day,))
+        conn.execute('COMMIT')
+        recorder.rollup_and_prune(conn, now, raw_days=90, hourly_days=730)
+        raw_count = conn.execute('SELECT COUNT(*) FROM readings').fetchone()[0]
+        hourly_old = conn.execute(
+            'SELECT COUNT(*) FROM readings_hourly WHERE ts < ?',
+            (now - 730 * one_day,)).fetchone()[0]
+        assert raw_count == 1  # the 100-day-old raw row was pruned, the 1-day-old one kept
+        assert hourly_old == 0  # the 800-day-old hourly row was pruned
+        conn.close()
