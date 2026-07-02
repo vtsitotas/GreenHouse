@@ -25,7 +25,7 @@ This spec covers adding a local database on the Pi Zero W to:
 - An automation-history/audit event log.
 
 ### Corrections to prior assumptions (found verifying code for this spec)
-- **`WEATHER_INTERVAL` is 30 seconds, not 30 minutes.** `pi/systemd/greenhouse-weather.service` sets `Environment=WEATHER_INTERVAL=30`, overriding the 1800s default in `pi/scripts/weather.py`. This means ~2,880 Open-Meteo calls/day today and that rules are already evaluated every 30s. Doesn't block this design but is worth a deliberate decision outside this spec.
+- **`WEATHER_INTERVAL` is 30 seconds, not 30 minutes.** `pi/systemd/greenhouse-weather.service` sets `Environment=WEATHER_INTERVAL=30`, overriding the 1800s default in `pi/scripts/weather.py`. This is an intentional debug setting (not a bug) — it means ~2,880 Open-Meteo calls/day and rules evaluated every 30s while iterating. Doesn't block this design; should be reset to a production-appropriate interval before field deployment.
 - **The bridge firmware does not publish retained.** `firmware/bridge_esp32/bridge_esp32.ino` calls `mqtt.publish(topic, payload)` — the client library defaults to `retained=false` (only `tools/simulator.py` publishes retained). This contradicts the Slice 1 spec's "retained required" assumption and means zone cards can show empty after a broker restart until the next 5s packet. Unrelated to this spec's persistence layer (the recorder below doesn't depend on retain flags for correctness) but worth fixing separately.
 - **The app already publishes `greenhouse/rules/update` and `greenhouse/rules/get` with no Pi-side consumer** — `weather.py` has no handler for either. Cheap to fix as part of this slice since the new recorder service is the natural long-lived MQTT subscriber to own it (see §8, step 9); not required for the core DB work.
 
@@ -234,7 +234,7 @@ A small pure-function unit test for the minute-bucket aggregation and the durati
 - MQTT-based remote history RPC (`greenhouse/history/request`/`response`) so charts work over the HiveMQ bridge, not just LAN.
 - Auth on the `/api/history` endpoint (reuse device credentials as a header).
 - An `events(ts, type, payload_json)` audit table logging `greenhouse/weather/alert` and `greenhouse/actuators/+/set` traffic, for an "automation history" view in the app.
-- Fixing `WEATHER_INTERVAL` (currently 30s, likely intended as minutes) and the bridge's missing `retain=true` — both noted in §1 as pre-existing issues, neither blocking this spec.
+- Resetting `WEATHER_INTERVAL` from its current debug value (30s) to a production-appropriate interval, and fixing the bridge's missing `retain=true` — both noted in §1, neither blocking this spec.
 - Multi-hop sensor mesh / relay bridging for far-away nodes — tracked as a separate design.
 
 ---
