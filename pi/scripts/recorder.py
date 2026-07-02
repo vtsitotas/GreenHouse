@@ -143,5 +143,45 @@ def write_buckets(conn: sqlite3.Connection, series_ids: dict, buckets: list) -> 
         raise
 
 
+# ── Rollup and retention ─────────────────────────────────────────────────────
+def _get_meta_int(conn: sqlite3.Connection, key: str, default: int) -> int:
+    row = conn.execute('SELECT value FROM meta WHERE key=?', (key,)).fetchone()
+    return int(row[0]) if row else default
+
+
+def _set_meta(conn: sqlite3.Connection, key: str, value) -> None:
+    conn.execute(
+        'INSERT INTO meta (key, value) VALUES (?, ?) '
+        'ON CONFLICT(key) DO UPDATE SET value=excluded.value',
+        (key, str(value)))
+
+
+def rollup_and_prune(conn: sqlite3.Connection, now: int, raw_days: int, hourly_days: int) -> None:
+    """Roll completed hours into readings_hourly, then prune rows past retention."""
+    watermark = _get_meta_int(conn, 'rollup_watermark', default=0)
+    current_hour_start = now - (now % 3600)
+    # Only hours that have fully elapsed are "completed" — never roll up the
+    # in-progress hour, or a late-arriving reading for it would be missed.
+    rollup_end = current_hour_start  # exclusive upper bound
+
+    conn.execute('BEGIN')
+    if rollup_end > watermark:
+        conn.execute('''
+            INSERT INTO readings_hourly (series_id, ts, avg, min, max, n)
+            SELECT series_id, ts - (ts % 3600) AS hour_ts,
+                   SUM(avg * n) / SUM(n), MIN(min), MAX(max), SUM(n)
+            FROM readings
+            WHERE ts >= ? AND ts < ?
+            GROUP BY series_id, hour_ts
+            ON CONFLICT(series_id, ts) DO UPDATE SET
+              avg=excluded.avg, min=excluded.min, max=excluded.max, n=excluded.n
+        ''', (watermark, rollup_end))
+        _set_meta(conn, 'rollup_watermark', rollup_end)
+    conn.execute('DELETE FROM readings WHERE ts < ?', (now - raw_days * 86400,))
+    conn.execute('DELETE FROM readings_hourly WHERE ts < ?', (now - hourly_days * 86400,))
+    conn.execute('COMMIT')
+    conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
+
+
 if __name__ == '__main__':
     pass  # run() is added in Task 4
