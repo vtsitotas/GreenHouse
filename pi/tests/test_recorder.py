@@ -121,3 +121,33 @@ def test_write_buckets_handles_empty_list():
         conn = recorder.init_db(os.path.join(d, 'test.db'))
         recorder.write_buckets(conn, {}, [])  # must not raise
         conn.close()
+
+
+def test_write_buckets_rolls_back_and_stays_usable_after_failure():
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        # Second row violates the NOT NULL constraint on `avg`, so executemany
+        # fails partway through the batch.
+        bad_buckets = [
+            (('zone', 'zone1', 'air_temperature'), 960, 22.0, 20.0, 24.0, 3),
+            (('zone', 'zone1', 'air_temperature'), 1020, None, 20.0, 24.0, 3),
+        ]
+        raised = False
+        try:
+            recorder.write_buckets(conn, series_ids, bad_buckets)
+        except sqlite3.IntegrityError:
+            raised = True
+        assert raised  # the failure must propagate, not be swallowed
+
+        # A wedged connection would raise OperationalError here ("cannot
+        # start a transaction within a transaction"). It must not.
+        good_buckets = [
+            (('zone', 'zone1', 'air_temperature'), 1080, 25.0, 25.0, 25.0, 1),
+        ]
+        recorder.write_buckets(conn, series_ids, good_buckets)  # must not raise
+
+        rows = conn.execute('SELECT COUNT(*) FROM readings').fetchone()
+        assert rows[0] == 1  # failed transaction fully rolled back; only the good write persisted
+        conn.close()
