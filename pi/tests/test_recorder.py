@@ -52,3 +52,72 @@ def test_flush_all_returns_incomplete_buckets():
     assert len(ready) == 1
     assert ready[0][2] == 15.0
     assert buf.flush_all() == []  # drained
+
+
+import tempfile
+
+
+def test_init_db_creates_schema():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        tables = {row[0] for row in conn.execute(
+            "SELECT name FROM sqlite_master WHERE type='table'")}
+        assert {'series', 'readings', 'readings_hourly', 'meta'} <= tables
+        conn.close()
+
+
+def test_get_or_create_series_id_is_idempotent():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        id1 = recorder.get_or_create_series_id(conn, 'zone', 'zone1', 'air_temperature')
+        id2 = recorder.get_or_create_series_id(conn, 'zone', 'zone1', 'air_temperature')
+        assert id1 == id2
+        conn.close()
+
+
+def test_get_or_create_series_id_handles_null_zone():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        id1 = recorder.get_or_create_series_id(conn, 'weather', None, 'temperature')
+        id2 = recorder.get_or_create_series_id(conn, 'weather', None, 'temperature')
+        assert id1 == id2
+        row = conn.execute('SELECT zone FROM series WHERE id=?', (id1,)).fetchone()
+        assert row[0] is None
+        conn.close()
+
+
+def test_write_buckets_inserts_rows():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        buckets = [
+            (('zone', 'zone1', 'air_temperature'), 960, 22.0, 20.0, 24.0, 3),
+            (('weather', None, 'temperature'), 960, 15.0, 15.0, 15.0, 1),
+        ]
+        recorder.write_buckets(conn, series_ids, buckets)
+        rows = conn.execute('SELECT COUNT(*) FROM readings').fetchone()
+        assert rows[0] == 2
+        conn.close()
+
+
+def test_write_buckets_replaces_on_duplicate_series_and_ts():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'soil_moisture'), 960, 40.0, 40.0, 40.0, 1),
+        ])
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'soil_moisture'), 960, 45.0, 45.0, 45.0, 2),
+        ])
+        rows = conn.execute('SELECT avg, n FROM readings').fetchall()
+        assert len(rows) == 1
+        assert rows[0] == (45.0, 2)
+        conn.close()
+
+
+def test_write_buckets_handles_empty_list():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        recorder.write_buckets(conn, {}, [])  # must not raise
+        conn.close()

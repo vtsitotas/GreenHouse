@@ -72,5 +72,72 @@ class MinuteBucketBuffer:
         return ready
 
 
+# ── SQLite schema + write path ───────────────────────────────────────────────
+_SCHEMA = '''
+CREATE TABLE IF NOT EXISTS series (
+  id     INTEGER PRIMARY KEY,
+  kind   TEXT NOT NULL,
+  zone   TEXT,
+  metric TEXT NOT NULL,
+  UNIQUE(kind, zone, metric)
+);
+
+CREATE TABLE IF NOT EXISTS readings (
+  series_id INTEGER NOT NULL REFERENCES series(id),
+  ts        INTEGER NOT NULL,
+  avg REAL NOT NULL, min REAL NOT NULL, max REAL NOT NULL, n INTEGER NOT NULL,
+  PRIMARY KEY (series_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS readings_hourly (
+  series_id INTEGER NOT NULL REFERENCES series(id),
+  ts INTEGER NOT NULL,
+  avg REAL NOT NULL, min REAL NOT NULL, max REAL NOT NULL, n INTEGER NOT NULL,
+  PRIMARY KEY (series_id, ts)
+) WITHOUT ROWID;
+
+CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT);
+'''
+
+
+def init_db(db_path: str) -> sqlite3.Connection:
+    os.makedirs(os.path.dirname(db_path), exist_ok=True)
+    conn = sqlite3.connect(db_path, isolation_level=None)  # explicit BEGIN/COMMIT below
+    conn.execute('PRAGMA journal_mode=WAL')
+    conn.execute('PRAGMA synchronous=NORMAL')
+    conn.executescript(_SCHEMA)
+    return conn
+
+
+def get_or_create_series_id(conn: sqlite3.Connection, kind: str, zone, metric: str) -> int:
+    row = conn.execute(
+        'SELECT id FROM series WHERE kind=? AND zone IS ? AND metric=?',
+        (kind, zone, metric)).fetchone()
+    if row:
+        return row[0]
+    cur = conn.execute(
+        'INSERT INTO series (kind, zone, metric) VALUES (?, ?, ?)',
+        (kind, zone, metric))
+    return cur.lastrowid
+
+
+def write_buckets(conn: sqlite3.Connection, series_ids: dict, buckets: list) -> None:
+    """buckets: list of (series_key, ts, avg, min, max, n). One transaction for all rows."""
+    if not buckets:
+        return
+    rows = []
+    for series_key, ts, avg, mn, mx, n in buckets:
+        kind, zone, metric = series_key
+        if series_key not in series_ids:
+            series_ids[series_key] = get_or_create_series_id(conn, kind, zone, metric)
+        rows.append((series_ids[series_key], ts, avg, mn, mx, n))
+    conn.execute('BEGIN')
+    conn.executemany(
+        'INSERT OR REPLACE INTO readings (series_id, ts, avg, min, max, n) '
+        'VALUES (?, ?, ?, ?, ?, ?)',
+        rows)
+    conn.execute('COMMIT')
+
+
 if __name__ == '__main__':
     pass  # run() is added in Task 4
