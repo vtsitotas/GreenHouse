@@ -132,11 +132,15 @@ def write_buckets(conn: sqlite3.Connection, series_ids: dict, buckets: list) -> 
             series_ids[series_key] = get_or_create_series_id(conn, kind, zone, metric)
         rows.append((series_ids[series_key], ts, avg, mn, mx, n))
     conn.execute('BEGIN')
-    conn.executemany(
-        'INSERT OR REPLACE INTO readings (series_id, ts, avg, min, max, n) '
-        'VALUES (?, ?, ?, ?, ?, ?)',
-        rows)
-    conn.execute('COMMIT')
+    try:
+        conn.executemany(
+            'INSERT OR REPLACE INTO readings (series_id, ts, avg, min, max, n) '
+            'VALUES (?, ?, ?, ?, ?, ?)',
+            rows)
+        conn.execute('COMMIT')
+    except Exception:
+        conn.execute('ROLLBACK')
+        raise
 
 
 if __name__ == '__main__':
