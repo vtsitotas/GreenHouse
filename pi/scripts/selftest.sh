@@ -6,12 +6,12 @@ ok(){ echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 no(){ echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 echo "== services enabled =="
-for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog mosquitto; do
+for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder mosquitto; do
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
 echo "== services active =="
-for s in greenhouse-portal mosquitto; do
+for s in greenhouse-portal greenhouse-recorder mosquitto; do
   systemctl is-active "$s" >/dev/null 2>&1 && ok "$s running" || no "$s not running"
 done
 
@@ -42,6 +42,26 @@ fi
 
 echo "== portal =="
 curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/pair | grep -qE '200|403' && ok "portal responding on :80" || no "portal not responding on :80"
+
+echo "== recorder database =="
+[ -f /var/lib/greenhouse/greenhouse.db ] && ok "greenhouse.db present" || no "greenhouse.db missing"
+python3 - <<'PYEOF'
+import sqlite3, time, sys
+try:
+    conn = sqlite3.connect('file:/var/lib/greenhouse/greenhouse.db?mode=ro', uri=True)
+    integrity = conn.execute('PRAGMA integrity_check').fetchone()[0]
+    assert integrity == 'ok', f'integrity_check returned {integrity}'
+    recent = conn.execute(
+        'SELECT COUNT(*) FROM readings WHERE ts >= ?',
+        (int(time.time()) - 600,)).fetchone()[0]
+    assert recent > 0, 'no readings in the last 10 minutes'
+    print('       [ OK ] db integrity ok, recent readings present')
+except Exception as e:
+    print(f'       [FAIL] {e}', file=sys.stderr)
+    sys.exit(1)
+PYEOF
+[ $? -eq 0 ] && ok "recorder db healthy" || no "recorder db unhealthy"
+curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/api/history/series | grep -q '200' && ok "history endpoint responding" || no "history endpoint not responding"
 
 echo "== mDNS =="
 systemctl is-active avahi-daemon >/dev/null 2>&1 && ok "avahi-daemon running" || no "avahi-daemon not running"

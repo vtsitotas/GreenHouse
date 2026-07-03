@@ -25,6 +25,9 @@ rm -f /etc/greenhouse/device.json
 rm -f /etc/mosquitto/certs/ca.key /etc/mosquitto/certs/ca.crt /etc/mosquitto/certs/ca.srl \
       /etc/mosquitto/certs/server.key /etc/mosquitto/certs/server.crt /etc/mosquitto/certs/server.csr
 
+echo "[prep] wiping sensor history database..."
+rm -f /var/lib/greenhouse/greenhouse.db /var/lib/greenhouse/greenhouse.db-wal /var/lib/greenhouse/greenhouse.db-shm
+
 echo "[prep] removing per-unit OS password record..."
 rm -f /boot/firmware/INITIAL_PASSWORD.txt /boot/INITIAL_PASSWORD.txt
 
