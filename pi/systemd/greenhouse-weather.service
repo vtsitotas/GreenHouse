@@ -24,7 +24,7 @@ Environment=WEATHER_INTERVAL=30
 NoNewPrivileges=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/tmp /etc/greenhouse
+ReadWritePaths=/tmp /etc/greenhouse /var/lib/greenhouse
 
 [Install]
 WantedBy=multi-user.target
