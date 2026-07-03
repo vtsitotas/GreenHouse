@@ -21,6 +21,7 @@ apt-get update -qq
 apt-get install -y -qq \
   mosquitto mosquitto-clients \
   python3-flask \
+  python3-paho-mqtt \
   openssl \
   dnsmasq-base \
   iptables \
@@ -30,7 +31,8 @@ apt-get install -y -qq \
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
 # boot-time service can be diagnosed after the fact, e.g. on a shipped unit).
-mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto /var/log/journal
+mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto /var/log/journal /var/lib/greenhouse
+chown pi:pi /var/lib/greenhouse
 
 echo "==> Installing captive-portal DNS config..."
 # NetworkManager's shared-mode dnsmasq reads this; resolves every domain to the
@@ -82,6 +84,7 @@ cp "$REPO"/systemd/greenhouse-portal.service         /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-ap.service             /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
 
 # Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
 mkdir -p /etc/systemd/system/mosquitto.service.d
@@ -91,7 +94,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder >/dev/null 2>&1
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.
@@ -127,6 +130,16 @@ echo "==> Writing default automation rules config..."
 ]
 EOF
 
+echo "==> Writing default recorder config..."
+[ -f /etc/greenhouse/recorder.json ] || cat > /etc/greenhouse/recorder.json << 'EOF'
+{
+  "db_path": "/var/lib/greenhouse/greenhouse.db",
+  "flush_seconds": 60,
+  "raw_days": 90,
+  "hourly_days": 730
+}
+EOF
+
 echo "==> Generating this unit's MQTT credentials..."
 bash "$REPO/scripts/first_boot.sh"
 # Mosquitto 2.x wants the passwd file owned by root; mosquitto group reads it.
@@ -137,6 +150,7 @@ echo "==> Restarting services..."
 systemctl restart mosquitto
 systemctl restart greenhouse-portal
 systemctl restart greenhouse-weather
+systemctl restart greenhouse-recorder
 
 echo ""
 echo "==> Done. Verify with:  sudo bash $REPO/scripts/selftest.sh"
