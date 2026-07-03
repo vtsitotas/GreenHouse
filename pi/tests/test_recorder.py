@@ -416,3 +416,61 @@ def test_buffer_add_is_thread_safe_concurrently_with_flush_ready():
     # is silently lost to the add()/flush_ready() race, this sum comes up
     # short -- a deterministic final-state check, not a timing assertion.
     assert total_n == n_adds
+
+
+# ── Finding 1: crash-safety of the per-tick flush/rollup helpers ───────────
+def test_flush_tick_logs_and_does_not_raise_on_write_failure(monkeypatch, capsys):
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        buf = recorder.MinuteBucketBuffer()
+        buf.add(('zone', 'zone1', 'air_temperature'), 1000, 20.0)
+
+        def broken_write_buckets(conn, series_ids, buckets):
+            raise sqlite3.OperationalError('database is locked')
+
+        monkeypatch.setattr(recorder, 'write_buckets', broken_write_buckets)
+
+        recorder._flush_tick(conn, series_ids, buf, now=1060)  # must not raise
+
+        out = capsys.readouterr().out
+        assert '[recorder] ERROR' in out
+        conn.close()
+
+
+def test_flush_shutdown_logs_and_does_not_raise_on_write_failure(monkeypatch, capsys):
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        buf = recorder.MinuteBucketBuffer()
+        buf.add(('zone', 'zone1', 'air_temperature'), 1000, 20.0)
+
+        def broken_write_buckets(conn, series_ids, buckets):
+            raise sqlite3.OperationalError('database is locked')
+
+        monkeypatch.setattr(recorder, 'write_buckets', broken_write_buckets)
+
+        recorder._flush_shutdown(conn, series_ids, buf)  # must not raise
+
+        out = capsys.readouterr().out
+        assert '[recorder] ERROR' in out
+        conn.close()
+
+
+def test_rollup_tick_logs_and_does_not_raise_on_failure(monkeypatch, capsys):
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+
+        def broken_rollup(conn, now, raw_days, hourly_days):
+            raise sqlite3.OperationalError('database is locked')
+
+        monkeypatch.setattr(recorder, 'rollup_and_prune', broken_rollup)
+
+        recorder._rollup_tick(conn, now=3600 * 3, raw_days=90, hourly_days=730)  # must not raise
+
+        out = capsys.readouterr().out
+        assert '[recorder] ERROR' in out
+        conn.close()

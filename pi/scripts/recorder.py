@@ -239,6 +239,48 @@ signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT, _handle_signal)
 
 
+def _flush_tick(conn: sqlite3.Connection, series_ids: dict, buffer: MinuteBucketBuffer, now: int) -> None:
+    """Write out buckets whose minute has fully elapsed.
+
+    write_buckets() already rolls back and re-raises on failure (Task 2); if
+    that were left uncaught here it would crash the whole recorder process
+    over a transient error (e.g. "database is locked"). We log and move on
+    instead — the batch that failed to write is lost, but per the design
+    spec that's an accepted trade-off (losing at most a few minutes of
+    buffered readings) versus taking the whole service down.
+    """
+    try:
+        write_buckets(conn, series_ids, buffer.flush_ready(now))
+    except Exception as e:
+        print(f'[recorder] ERROR: write_buckets failed during flush, dropping this batch: {e}', flush=True)
+
+
+def _rollup_tick(conn: sqlite3.Connection, now: int, raw_days: int, hourly_days: int) -> None:
+    """Run hourly rollup + retention pruning, logging (not raising) on failure.
+
+    Same rationale as _flush_tick: rollup_and_prune() rolls back and
+    re-raises on failure (Task 3); a transient failure here must not crash
+    the process. The next hourly tick will retry from the same watermark.
+    """
+    try:
+        rollup_and_prune(conn, now, raw_days, hourly_days)
+    except Exception as e:
+        print(f'[recorder] ERROR: rollup_and_prune failed: {e}', flush=True)
+
+
+def _flush_shutdown(conn: sqlite3.Connection, series_ids: dict, buffer: MinuteBucketBuffer) -> None:
+    """Final flush of all remaining buckets (including in-progress minutes) on shutdown.
+
+    Must not raise: a write failure here must not skip the cleanup
+    (conn.close() / client.loop_stop() / client.disconnect()) that follows
+    it in run().
+    """
+    try:
+        write_buckets(conn, series_ids, buffer.flush_all())
+    except Exception as e:
+        print(f'[recorder] ERROR: write_buckets failed during shutdown flush, dropping remaining buckets: {e}', flush=True)
+
+
 def run():
     cfg = load_config()
     conn = init_db(cfg['db_path'])
@@ -277,14 +319,14 @@ def run():
         time.sleep(1)
         now = time.time()
         if now - last_flush >= cfg['flush_seconds']:
-            write_buckets(conn, series_ids, buffer.flush_ready(int(now)))
+            _flush_tick(conn, series_ids, buffer, int(now))
             last_flush = now
             if now - last_rollup >= 3600:
-                rollup_and_prune(conn, int(now), cfg['raw_days'], cfg['hourly_days'])
+                _rollup_tick(conn, int(now), cfg['raw_days'], cfg['hourly_days'])
                 last_rollup = now
 
     print('[recorder] Stopping, flushing remaining buckets...', flush=True)
-    write_buckets(conn, series_ids, buffer.flush_all())
+    _flush_shutdown(conn, series_ids, buffer)
     conn.close()
     client.loop_stop()
     client.disconnect()
