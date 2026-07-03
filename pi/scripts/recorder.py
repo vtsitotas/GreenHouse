@@ -165,21 +165,25 @@ def rollup_and_prune(conn: sqlite3.Connection, now: int, raw_days: int, hourly_d
     rollup_end = current_hour_start  # exclusive upper bound
 
     conn.execute('BEGIN')
-    if rollup_end > watermark:
-        conn.execute('''
-            INSERT INTO readings_hourly (series_id, ts, avg, min, max, n)
-            SELECT series_id, ts - (ts % 3600) AS hour_ts,
-                   SUM(avg * n) / SUM(n), MIN(min), MAX(max), SUM(n)
-            FROM readings
-            WHERE ts >= ? AND ts < ?
-            GROUP BY series_id, hour_ts
-            ON CONFLICT(series_id, ts) DO UPDATE SET
-              avg=excluded.avg, min=excluded.min, max=excluded.max, n=excluded.n
-        ''', (watermark, rollup_end))
-        _set_meta(conn, 'rollup_watermark', rollup_end)
-    conn.execute('DELETE FROM readings WHERE ts < ?', (now - raw_days * 86400,))
-    conn.execute('DELETE FROM readings_hourly WHERE ts < ?', (now - hourly_days * 86400,))
-    conn.execute('COMMIT')
+    try:
+        if rollup_end > watermark:
+            conn.execute('''
+                INSERT INTO readings_hourly (series_id, ts, avg, min, max, n)
+                SELECT series_id, ts - (ts % 3600) AS hour_ts,
+                       SUM(avg * n) / SUM(n), MIN(min), MAX(max), SUM(n)
+                FROM readings
+                WHERE ts >= ? AND ts < ?
+                GROUP BY series_id, hour_ts
+                ON CONFLICT(series_id, ts) DO UPDATE SET
+                  avg=excluded.avg, min=excluded.min, max=excluded.max, n=excluded.n
+            ''', (watermark, rollup_end))
+            _set_meta(conn, 'rollup_watermark', rollup_end)
+        conn.execute('DELETE FROM readings WHERE ts < ?', (now - raw_days * 86400,))
+        conn.execute('DELETE FROM readings_hourly WHERE ts < ?', (now - hourly_days * 86400,))
+        conn.execute('COMMIT')
+    except Exception:
+        conn.execute('ROLLBACK')
+        raise
     conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
