@@ -13,6 +13,7 @@ STA mode (.wifi_configured present):
 """
 import json
 import os
+import sqlite3
 import subprocess
 import time
 
@@ -56,6 +57,13 @@ def _load_hivemq() -> dict:
             return json.load(f)
     except Exception:
         return {}
+
+
+_RECORDER_DB = "/var/lib/greenhouse/greenhouse.db"
+
+
+def _history_db() -> sqlite3.Connection:
+    return sqlite3.connect(f"file:{_RECORDER_DB}?mode=ro", uri=True)
 
 
 def _validate(ssid: str, password: str):
@@ -200,6 +208,57 @@ def pair():
             "password":        c["password"],
             "remote_username": hm.get("username", ""),
             "remote_password": hm.get("password", ""),
+        })
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/history/series")
+def history_series():
+    try:
+        conn = _history_db()
+        rows = conn.execute(
+            "SELECT kind, zone, metric FROM series ORDER BY kind, zone, metric").fetchall()
+        conn.close()
+        return jsonify([{"kind": r[0], "zone": r[1], "metric": r[2]} for r in rows])
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+
+
+@app.route("/api/history")
+def history():
+    zone = request.args.get("zone")
+    kind = request.args.get("kind") or ("zone" if zone else None)
+    metric = request.args.get("metric")
+    try:
+        hours = float(request.args.get("hours", 24))
+    except ValueError:
+        return jsonify({"error": "hours must be a number"}), 400
+    if not metric or not kind:
+        return jsonify({"error": "metric and (zone or kind) are required"}), 400
+
+    table = "readings" if hours <= 48 else "readings_hourly"
+    resolution = "minute" if table == "readings" else "hour"
+    cutoff = int(time.time() - hours * 3600)
+    try:
+        conn = _history_db()
+        row = conn.execute(
+            "SELECT id FROM series WHERE kind=? AND zone IS ? AND metric=?",
+            (kind, zone, metric)).fetchone()
+        if row is None:
+            conn.close()
+            return jsonify({"zone": zone, "metric": metric,
+                             "resolution": resolution, "points": []})
+        series_id = row[0]
+        pts = conn.execute(
+            f"SELECT ts, avg, min, max FROM {table} WHERE series_id=? AND ts >= ? ORDER BY ts",
+            (series_id, cutoff)).fetchall()
+        conn.close()
+        return jsonify({
+            "zone": zone,
+            "metric": metric,
+            "resolution": resolution,
+            "points": [[p[0], p[1], p[2], p[3]] for p in pts],
         })
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
