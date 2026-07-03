@@ -187,5 +187,100 @@ def rollup_and_prune(conn: sqlite3.Connection, now: int, raw_days: int, hourly_d
     conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
+# ── Topic parsing ─────────────────────────────────────────────────────────────
+_ZONE_METRIC_GROUPS = {'air', 'soil', 'light'}
+_WEATHER_METRICS = {'temperature', 'humidity', 'wind_kmh', 'uv_index', 'rain_mm_1h'}
+
+
+def parse_topic(topic: str):
+    """Return (kind, zone, metric) for a recordable topic, else None."""
+    parts = topic.split('/')
+    if len(parts) == 4 and parts[0] == 'greenhouse' and parts[2] in _ZONE_METRIC_GROUPS:
+        zone, group, field = parts[1], parts[2], parts[3]
+        return ('zone', zone, f'{group}_{field}')
+    if len(parts) == 3 and parts[0] == 'greenhouse' and parts[1] == 'weather':
+        metric = parts[2]
+        if metric in _WEATHER_METRICS:
+            return ('weather', None, metric)
+    return None
+
+
+# ── Config ───────────────────────────────────────────────────────────────────
+def load_config() -> dict:
+    cfg = dict(DEFAULT_CONFIG)
+    try:
+        with open(RECORDER_CFG) as f:
+            cfg.update(json.load(f))
+    except Exception as e:
+        print(f'[recorder] WARN: using defaults, cannot load config: {e}', flush=True)
+    return cfg
+
+
+# ── Main loop ────────────────────────────────────────────────────────────────
+_running = True
+
+
+def _handle_signal(sig, frame):
+    global _running
+    print(f'[recorder] Signal {sig} received, stopping.', flush=True)
+    _running = False
+
+
+signal.signal(signal.SIGTERM, _handle_signal)
+signal.signal(signal.SIGINT, _handle_signal)
+
+
+def run():
+    cfg = load_config()
+    conn = init_db(cfg['db_path'])
+    buffer = MinuteBucketBuffer()
+    series_ids = {}
+
+    def on_connect(client, userdata, flags, rc, properties=None):
+        for topic in SUBSCRIBE_TOPICS:
+            client.subscribe(topic)
+        print(f'[recorder] Connected, subscribed to {len(SUBSCRIBE_TOPICS)} topic patterns', flush=True)
+
+    def on_message(client, userdata, msg):
+        if msg.retain:
+            return  # skip stale retained replay on (re)connect
+        parsed = parse_topic(msg.topic)
+        if parsed is None:
+            return
+        try:
+            value = float(msg.payload.decode().strip())
+        except (ValueError, UnicodeDecodeError):
+            return
+        buffer.add(parsed, int(time.time()), value)
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id='greenhouse-recorder')
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.loop_start()
+
+    print(f'[recorder] Starting — flush every {cfg["flush_seconds"]}s, '
+          f'db={cfg["db_path"]}', flush=True)
+
+    last_flush = time.time()
+    last_rollup = 0.0
+    while _running:
+        time.sleep(1)
+        now = time.time()
+        if now - last_flush >= cfg['flush_seconds']:
+            write_buckets(conn, series_ids, buffer.flush_ready(int(now)))
+            last_flush = now
+            if now - last_rollup >= 3600:
+                rollup_and_prune(conn, int(now), cfg['raw_days'], cfg['hourly_days'])
+                last_rollup = now
+
+    print('[recorder] Stopping, flushing remaining buckets...', flush=True)
+    write_buckets(conn, series_ids, buffer.flush_all())
+    conn.close()
+    client.loop_stop()
+    client.disconnect()
+    print('[recorder] Stopped.', flush=True)
+
+
 if __name__ == '__main__':
-    pass  # run() is added in Task 4
+    run()
