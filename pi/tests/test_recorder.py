@@ -293,3 +293,43 @@ def test_rollup_uses_weighted_average_not_naive_average():
         assert mx == 32.0
         assert n == 4
         conn.close()
+
+
+def test_parse_topic_zone_metrics():
+    assert recorder.parse_topic('greenhouse/zone1/air/temperature') == \
+        ('zone', 'zone1', 'air_temperature')
+    assert recorder.parse_topic('greenhouse/zone2/soil/moisture') == \
+        ('zone', 'zone2', 'soil_moisture')
+    assert recorder.parse_topic('greenhouse/zone1/light/lux') == \
+        ('zone', 'zone1', 'light_lux')
+
+
+def test_parse_topic_weather_metrics():
+    assert recorder.parse_topic('greenhouse/weather/temperature') == \
+        ('weather', None, 'temperature')
+    assert recorder.parse_topic('greenhouse/weather/rain_mm_1h') == \
+        ('weather', None, 'rain_mm_1h')
+
+
+def test_parse_topic_ignores_unknown_topics():
+    assert recorder.parse_topic('greenhouse/weather/forecast') is None  # JSON, not a scalar
+    assert recorder.parse_topic('greenhouse/weather/alert') is None
+    assert recorder.parse_topic('greenhouse/actuators/pump1/set') is None
+    assert recorder.parse_topic('greenhouse/nodes/node1/status') is None
+
+
+def test_load_config_uses_defaults_when_file_missing(monkeypatch):
+    monkeypatch.setattr(recorder, 'RECORDER_CFG', '/nonexistent/path/recorder.json')
+    cfg = recorder.load_config()
+    assert cfg['flush_seconds'] == 60
+    assert cfg['raw_days'] == 90
+    assert cfg['hourly_days'] == 730
+
+
+def test_load_config_merges_file_over_defaults(tmp_path, monkeypatch):
+    cfg_file = tmp_path / 'recorder.json'
+    cfg_file.write_text('{"flush_seconds": 30}')
+    monkeypatch.setattr(recorder, 'RECORDER_CFG', str(cfg_file))
+    cfg = recorder.load_config()
+    assert cfg['flush_seconds'] == 30
+    assert cfg['raw_days'] == 90  # untouched default
