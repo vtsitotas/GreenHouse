@@ -10,6 +10,7 @@ import 'package:greenhouse_app/screens/devices/devices_screen.dart';
 import 'package:greenhouse_app/screens/control/control_screen.dart';
 import 'package:greenhouse_app/screens/settings/settings_screen.dart';
 import 'package:greenhouse_app/screens/weather/weather_screen.dart';
+import 'package:greenhouse_app/screens/history/history_screen.dart';
 import 'package:greenhouse_app/services/notification_service.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 import 'package:greenhouse_app/theme/app_theme.dart';
@@ -34,6 +35,13 @@ final _router = GoRouter(
         GoRoute(path: '/control',   builder: (_, __) => const ControlScreen()),
         GoRoute(path: '/weather',   builder: (_, __) => const WeatherScreen()),
         GoRoute(path: '/settings',  builder: (_, __) => const SettingsScreen()),
+        GoRoute(
+          path: '/history/:zone/:metric',
+          builder: (_, state) => HistoryScreen(
+            zone: state.pathParameters['zone']!,
+            metric: state.pathParameters['metric']!,
+          ),
+        ),
       ],
     ),
   ],
