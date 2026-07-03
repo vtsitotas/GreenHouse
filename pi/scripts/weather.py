@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import socket
+import sqlite3
 import sys
 import time
 import urllib.request
@@ -19,6 +20,7 @@ WEATHER_CFG = '/etc/greenhouse/weather.json'
 RULES_CFG   = '/etc/greenhouse/rules.json'
 DEVICE_CFG  = '/etc/greenhouse/device.json'
 RELOAD_FLAG = '/tmp/greenhouse-weather-reload'
+RECORDER_DB = '/var/lib/greenhouse/greenhouse.db'
 
 # ── Open-Meteo endpoint ──────────────────────────────────────────────────────
 OPEN_METEO_URL = (
@@ -104,7 +106,63 @@ def load_rules() -> list[dict]:
         print(f'[weather] WARN: cannot load rules: {e}', flush=True)
         return []
 
-def eval_rules(rules: list[dict], metrics: dict[str, float]):
+def duration_coverage(values: list, op: str, threshold: float, expected_buckets: int):
+    """Given avg values in the lookback window, return (fires, coverage_ratio).
+
+    Fires when coverage is at least 80% of the expected minute-buckets AND
+    every present bucket satisfies the condition.
+    """
+    ops = {
+        '>':  lambda a, b: a > b,
+        '<':  lambda a, b: a < b,
+        '>=': lambda a, b: a >= b,
+        '<=': lambda a, b: a <= b,
+        '==': lambda a, b: a == b,
+    }
+    op_fn = ops.get(op)
+    if op_fn is None or expected_buckets <= 0:
+        return False, 0.0
+    coverage = len(values) / expected_buckets
+    if not values:
+        return False, coverage
+    all_match = all(op_fn(v, threshold) for v in values)
+    return (coverage >= 0.8 and all_match), coverage
+
+
+def eval_duration_rule(conn: sqlite3.Connection, zone, metric: str, op: str,
+                        threshold: float, duration_minutes: int, now: int) -> bool:
+    kind = 'zone' if zone else 'weather'
+    row = conn.execute(
+        'SELECT id FROM series WHERE kind=? AND zone IS ? AND metric=?',
+        (kind, zone, metric)).fetchone()
+    if row is None:
+        return False
+    series_id = row[0]
+    cutoff = now - duration_minutes * 60
+    result = conn.execute(
+        'SELECT avg, ts FROM readings WHERE series_id=? AND ts >= ? ORDER BY ts',
+        (series_id, cutoff)).fetchall()
+    if not result:
+        return False
+    values = [r[0] for r in result]
+    ts_list = [r[1] for r in result]
+
+    # Calculate expected_buckets based on the actual time span of the data
+    if len(ts_list) > 1:
+        time_span = ts_list[-1] - ts_list[0]
+        expected_buckets = max(1, (time_span // 60) + 1)
+    else:
+        # Single reading: expected_buckets = 1
+        expected_buckets = 1
+
+    fires, _ = duration_coverage(values, op, threshold, expected_buckets=expected_buckets)
+    return fires
+
+
+_last_fired: dict[str, float] = {}  # rule id -> monotonic time last fired
+
+
+def eval_rules(rules: list, metrics: dict):
     """Evaluate each rule; publish actuator commands and alerts as needed."""
     ops = {
         '>':  lambda a, b: a > b,
@@ -113,6 +171,22 @@ def eval_rules(rules: list[dict], metrics: dict[str, float]):
         '<=': lambda a, b: a <= b,
         '==': lambda a, b: a == b,
     }
+
+    def _fire(rule, message):
+        action   = rule['action']
+        actuator = action['actuator']
+        command  = action['command']
+        topic = f'greenhouse/actuators/{actuator}/set'
+        print(f'[weather] Rule "{rule.get("name")}" triggered → {topic} {command}', flush=True)
+        mqtt_publish(topic, command)
+        alert = {
+            'type': rule.get('id', 'rule'),
+            'message': message,
+            'severity': 'warning',
+            'rule_id': rule.get('id'),
+        }
+        mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
+
     for rule in rules:
         if not rule.get('enabled', True):
             continue
@@ -121,33 +195,47 @@ def eval_rules(rules: list[dict], metrics: dict[str, float]):
             metric   = trigger['metric']
             op_name  = trigger['op']
             thresh   = float(trigger['value'])
-            action   = rule['action']
-            actuator = action['actuator']
-            command  = action['command']
+            duration_minutes = trigger.get('duration_minutes')
 
+            if duration_minutes:
+                rule_id = rule.get('id', '')
+                cooldown_minutes = rule.get('cooldown_minutes', 0)
+                last = _last_fired.get(rule_id, 0.0)
+                if time.monotonic() - last < cooldown_minutes * 60:
+                    continue
+                zone, sep, bare_metric = metric.partition('/')
+                if not sep:
+                    zone, bare_metric = None, metric
+                try:
+                    conn = sqlite3.connect(f'file:{RECORDER_DB}?mode=ro', uri=True)
+                except Exception as e:
+                    print(f'[weather] WARN: cannot open recorder DB for duration rule '
+                          f'{rule.get("id")}: {e}', flush=True)
+                    continue
+                try:
+                    fired = eval_duration_rule(
+                        conn, zone, bare_metric, op_name, thresh,
+                        int(duration_minutes), int(time.time()))
+                finally:
+                    conn.close()
+                if fired:
+                    _last_fired[rule_id] = time.monotonic()
+                    _fire(rule, f'{rule.get("name","Rule")} triggered '
+                                f'({metric} {op_name} {thresh} sustained for '
+                                f'{int(duration_minutes)} min)')
+                continue
+
+            # Live-metric rules (unchanged behavior)
             val = metrics.get(metric)
             if val is None:
                 continue
-
             op_fn = ops.get(op_name)
             if op_fn is None:
                 print(f'[weather] WARN: unknown op "{op_name}" in rule {rule.get("id")}', flush=True)
                 continue
-
             if op_fn(val, thresh):
-                topic = f'greenhouse/actuators/{actuator}/set'
-                print(f'[weather] Rule "{rule.get("name")}" triggered → {topic} {command}', flush=True)
-                mqtt_publish(topic, command)
-
-                # Publish a weather alert so the app can show a notification
-                alert_type = rule.get('id', 'rule')
-                alert = {
-                    'type': alert_type,
-                    'message': f'{rule.get("name","Rule")} triggered ({metric} {op_name} {thresh}, current: {val:.1f})',
-                    'severity': 'warning',
-                    'rule_id': rule.get('id'),
-                }
-                mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
+                _fire(rule, f'{rule.get("name","Rule")} triggered '
+                            f'({metric} {op_name} {thresh}, current: {val:.1f})')
         except Exception as e:
             print(f'[weather] WARN: rule eval error ({rule.get("id")}): {e}', flush=True)
 
@@ -239,7 +327,8 @@ def _handle_reload(sig, frame):
 
 signal.signal(signal.SIGTERM, _handle_signal)
 signal.signal(signal.SIGINT,  _handle_signal)
-signal.signal(signal.SIGUSR1, _handle_reload)
+if hasattr(signal, 'SIGUSR1'):
+    signal.signal(signal.SIGUSR1, _handle_reload)
 
 INTERVAL = int(os.environ.get('WEATHER_INTERVAL', 1800))  # seconds
 
