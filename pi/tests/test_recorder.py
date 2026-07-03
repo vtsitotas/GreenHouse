@@ -219,3 +219,77 @@ def test_rollup_prunes_old_raw_and_hourly_rows():
         assert raw_count == 1  # the 100-day-old raw row was pruned, the 1-day-old one kept
         assert hourly_old == 0  # the 800-day-old hourly row was pruned
         conn.close()
+
+
+def test_rollup_and_prune_rolls_back_and_stays_usable_after_failure():
+    import sqlite3
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        one_day = 86400
+        now = 200 * one_day
+        poison_ts = now - 100 * one_day  # older than raw_days=90 -> will be pruned
+
+        # A completed-hour minute row so the rollup INSERT has real work to do
+        # before the later retention DELETE fails, plus the row that will be
+        # pruned by the retention DELETE and trips the poison trigger below.
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'air_temperature'), now - 2 * 3600, 20.0, 20.0, 20.0, 1),
+            (('zone', 'zone1', 'air_temperature'), poison_ts, 5.0, 5.0, 5.0, 1),
+        ])
+
+        # A trigger that raises a real SQLite error the moment the poison row
+        # is deleted — simulating a genuine failure partway through
+        # rollup_and_prune's transaction (after the rollup INSERT has already
+        # run, before COMMIT).
+        conn.execute('''
+            CREATE TRIGGER poison_on_delete BEFORE DELETE ON readings
+            WHEN OLD.ts = %d
+            BEGIN
+              SELECT RAISE(ABORT, 'simulated mid-transaction failure');
+            END
+        ''' % poison_ts)
+
+        raised = False
+        try:
+            recorder.rollup_and_prune(conn, now, raw_days=90, hourly_days=730)
+        except sqlite3.IntegrityError:
+            raised = True
+        assert raised  # the failure must propagate, not be swallowed
+
+        # The whole transaction — including the rollup INSERT that ran
+        # earlier in the same transaction — must have been rolled back.
+        hourly_rows = conn.execute('SELECT COUNT(*) FROM readings_hourly').fetchone()[0]
+        assert hourly_rows == 0
+
+        # A wedged connection would raise OperationalError here ("cannot
+        # start a transaction within a transaction"). It must not.
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'air_temperature'), now, 30.0, 30.0, 30.0, 1),
+        ])  # must not raise
+        conn.close()
+
+
+def test_rollup_uses_weighted_average_not_naive_average():
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        # Unequal n across the two minute buckets: naive AVG(avg) would give
+        # (10.0 + 30.0) / 2 = 20.0, but the correct weighted average
+        # SUM(avg*n)/SUM(n) gives (10*1 + 30*3) / (1+3) = 25.0. The two must
+        # differ, or this test wouldn't catch a regression to naive averaging.
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'air_temperature'), 3600, 10.0, 10.0, 10.0, 1),
+            (('zone', 'zone1', 'air_temperature'), 3660, 30.0, 28.0, 32.0, 3),
+        ])
+        now = 3600 + 3600 + 3600  # well past the hour's end, so it's "completed"
+        recorder.rollup_and_prune(conn, now, raw_days=90, hourly_days=730)
+        rows = conn.execute('SELECT ts, avg, min, max, n FROM readings_hourly').fetchall()
+        assert len(rows) == 1
+        ts, avg, mn, mx, n = rows[0]
+        assert ts == 3600
+        assert avg == 25.0  # weighted: (10*1 + 30*3) / 4 -- naive (10+30)/2 = 20.0 would fail this
+        assert mn == 10.0
+        assert mx == 32.0
+        assert n == 4
+        conn.close()
