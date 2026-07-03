@@ -8,6 +8,7 @@ import json
 import os
 import signal
 import sqlite3
+import threading
 import time
 
 import paho.mqtt.client as mqtt
@@ -40,35 +41,43 @@ class MinuteBucketBuffer:
 
     def __init__(self):
         self._buckets = {}  # (series_key, minute_ts) -> [sum, min, max, n]
+        # add() runs on the paho-mqtt background thread (via on_message),
+        # while flush_ready()/flush_all() run on the main thread's loop.
+        # Without this lock, a concurrent add() + pop() on the same key can
+        # silently lose an update (see task-4-report.md, Finding 2).
+        self._lock = threading.Lock()
 
     def add(self, series_key: tuple, timestamp: int, value: float):
         minute_ts = timestamp - (timestamp % 60)
         key = (series_key, minute_ts)
-        if key not in self._buckets:
-            self._buckets[key] = [value, value, value, 1]
-        else:
-            b = self._buckets[key]
-            b[0] += value
-            b[1] = min(b[1], value)
-            b[2] = max(b[2], value)
-            b[3] += 1
+        with self._lock:
+            if key not in self._buckets:
+                self._buckets[key] = [value, value, value, 1]
+            else:
+                b = self._buckets[key]
+                b[0] += value
+                b[1] = min(b[1], value)
+                b[2] = max(b[2], value)
+                b[3] += 1
 
     def flush_ready(self, now: int) -> list:
         """Return and remove buckets whose minute has fully elapsed."""
         ready = []
-        for key in list(self._buckets.keys()):
-            series_key, minute_ts = key
-            if minute_ts + 60 <= now:
-                total, mn, mx, n = self._buckets.pop(key)
-                ready.append((series_key, minute_ts, total / n, mn, mx, n))
+        with self._lock:
+            for key in list(self._buckets.keys()):
+                series_key, minute_ts = key
+                if minute_ts + 60 <= now:
+                    total, mn, mx, n = self._buckets.pop(key)
+                    ready.append((series_key, minute_ts, total / n, mn, mx, n))
         return ready
 
     def flush_all(self) -> list:
         """Return and remove every bucket regardless of elapsed time (shutdown path)."""
         ready = []
-        for (series_key, minute_ts), (total, mn, mx, n) in self._buckets.items():
-            ready.append((series_key, minute_ts, total / n, mn, mx, n))
-        self._buckets.clear()
+        with self._lock:
+            for (series_key, minute_ts), (total, mn, mx, n) in self._buckets.items():
+                ready.append((series_key, minute_ts, total / n, mn, mx, n))
+            self._buckets.clear()
         return ready
 
 

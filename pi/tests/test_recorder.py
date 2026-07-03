@@ -333,3 +333,86 @@ def test_load_config_merges_file_over_defaults(tmp_path, monkeypatch):
     cfg = recorder.load_config()
     assert cfg['flush_seconds'] == 30
     assert cfg['raw_days'] == 90  # untouched default
+
+
+# ── Finding 2: MinuteBucketBuffer thread-safety ─────────────────────────────
+def test_buffer_add_is_thread_safe_under_concurrent_adds():
+    import threading
+    buf = recorder.MinuteBucketBuffer()
+    n_threads = 8
+    adds_per_thread = 500
+    # A mix of shared keys (contended across threads) and one per-thread
+    # distinct key, so both the "same bucket" and "different bucket" paths
+    # are exercised concurrently.
+    shared_keys = [
+        ('zone', 'zone1', 'air_temperature'),
+        ('weather', None, 'temperature'),
+    ]
+
+    def worker(idx):
+        shared_key = shared_keys[idx % len(shared_keys)]
+        distinct_key = ('zone', f'zone{idx}', 'soil_moisture')
+        for i in range(adds_per_thread):
+            buf.add(shared_key, 1000, float(i))
+            buf.add(distinct_key, 1000, float(i))
+
+    threads = [threading.Thread(target=worker, args=(i,)) for i in range(n_threads)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    ready = buf.flush_all()
+    total_n = sum(r[5] for r in ready)
+    # Every add() call increments some bucket's count by exactly 1. If any
+    # update is silently lost to a race, this sum comes up short. This
+    # asserts on final-state consistency (deterministic), not on timing.
+    assert total_n == n_threads * adds_per_thread * 2
+
+
+def test_buffer_add_is_thread_safe_concurrently_with_flush_ready():
+    import threading
+    # Reproduces the actual race described in the design review: the MQTT
+    # callback thread calling add() on a bucket at the same moment the main
+    # loop's flush_ready() pops that same bucket. A plain "add from N
+    # threads, then flush once after joining" pattern (see the test above)
+    # rarely exposes this race under CPython's default GIL switch interval,
+    # because the add()/pop() critical sections are each only a few
+    # bytecodes wide. Lowering the switch interval for the duration of this
+    # test makes thread interleaving frequent enough to reliably expose a
+    # lost update when the lock is missing -- confirmed locally: this
+    # reproduces lost updates in every run without the lock, and never with
+    # it (see task-4-report.md for the raw counts).
+    buf = recorder.MinuteBucketBuffer()
+    key = ('zone', 'zone1', 'air_temperature')
+    n_adds = 20000
+    stop = threading.Event()
+    collected = []
+
+    def adder():
+        for _ in range(n_adds):
+            buf.add(key, 0, 1.0)  # minute_ts=0 -- already "ready" for any now >= 60
+        stop.set()
+
+    def flusher():
+        while not stop.is_set():
+            collected.extend(buf.flush_ready(now=1_000_000))
+        collected.extend(buf.flush_ready(now=1_000_000))  # final drain
+
+    original_interval = sys.getswitchinterval()
+    sys.setswitchinterval(1e-6)
+    try:
+        t_add = threading.Thread(target=adder)
+        t_flush = threading.Thread(target=flusher)
+        t_add.start()
+        t_flush.start()
+        t_add.join()
+        t_flush.join()
+    finally:
+        sys.setswitchinterval(original_interval)
+
+    total_n = sum(r[5] for r in collected)
+    # Every add() increments some bucket's count by exactly 1. If an update
+    # is silently lost to the add()/flush_ready() race, this sum comes up
+    # short -- a deterministic final-state check, not a timing assertion.
+    assert total_n == n_adds
