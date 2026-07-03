@@ -145,15 +145,12 @@ def eval_duration_rule(conn: sqlite3.Connection, zone, metric: str, op: str,
     if not result:
         return False
     values = [r[0] for r in result]
-    ts_list = [r[1] for r in result]
 
-    # Calculate expected_buckets based on the actual time span of the data
-    if len(ts_list) > 1:
-        time_span = ts_list[-1] - ts_list[0]
-        expected_buckets = max(1, (time_span // 60) + 1)
-    else:
-        # Single reading: expected_buckets = 1
-        expected_buckets = 1
+    # One expected bucket per minute of the requested window — coverage must
+    # be measured against the full requested duration, not against however
+    # dense the returned data happens to be, or the 80% guard can't reject
+    # sparse/startup data (e.g. right after a recorder restart).
+    expected_buckets = duration_minutes
 
     fires, _ = duration_coverage(values, op, threshold, expected_buckets=expected_buckets)
     return fires
