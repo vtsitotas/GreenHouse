@@ -106,6 +106,7 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 
 ## Known issues / TODO
 
+- [ ] **Pick-a-specific-past-date view for history.** Currently the history chart only supports rolling windows (24h/7d/30d/90d back from now) — no way to view a specific past calendar date. The recorder data already supports it (90 days minute-resolution, 2 years hourly); would need `/api/history` to accept an absolute `since`/`until` (or `date=YYYY-MM-DD`) instead of just `hours`, plus a date-picker UI. Good candidate for the next brainstorm→spec→plan cycle.
 - [ ] **Screen-by-screen UX enhancement pass** over the rest of the app (dashboard, control, devices, pairing, settings, weather-forecast chart) — deliberately deferred from this session's spec, same brainstorm→spec→plan cycle as the history chart, one screen at a time.
 - [ ] `pressure` weather metric is published by the simulator but silently dropped by the recorder (not in its tracked metric set) — no history for it.
 - [ ] `weather.json` write-permission bug: the app's GPS/location-picker push to the Pi fails silently (service runs as `pi`, file owned `root:root`) — location/interval changes don't actually persist across a Pi reboot.
