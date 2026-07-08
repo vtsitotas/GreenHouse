@@ -104,13 +104,41 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 
 ---
 
-## Known issues / TODO
+## Full backlog
 
-- [ ] **Pick-a-specific-past-date view for history.** Currently the history chart only supports rolling windows (24h/7d/30d/90d back from now) — no way to view a specific past calendar date. The recorder data already supports it (90 days minute-resolution, 2 years hourly); would need `/api/history` to accept an absolute `since`/`until` (or `date=YYYY-MM-DD`) instead of just `hours`, plus a date-picker UI. Good candidate for the next brainstorm→spec→plan cycle.
-- [ ] **Screen-by-screen UX enhancement pass** over the rest of the app (dashboard, control, devices, pairing, settings, weather-forecast chart) — deliberately deferred from this session's spec, same brainstorm→spec→plan cycle as the history chart, one screen at a time.
+The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-25-greenhouse-app-connectivity-design.md` §2). Status against that scope, plus everything found since:
+
+**Slice status:**
+- 1 App + Connectivity — ✅ done
+- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, **not field-validated on real sensor hardware** (simulator only); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
+- 3 Storage + History — ✅ done, reimplemented as a local SQLite recorder (not InfluxDB) + this session's chart feature
+- 4 Automation + Alerts — done differently: in-app duration-based rules (Weather screen → Rules tab, fully editable from the app) + `flutter_local_notifications`, instead of Node-RED/Telegram
+- 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **not started**; current remote access is single-tenant HiveMQ Cloud + local notifications only
+- 6 Field Hardening (solar/18650, IP65 enclosures, cellular fallback) — **not started**; see `docs/EDGE_NODE_POWER_OPTIMIZATION.md` for the existing plan doc
+
+**Bridging / firmware:**
+- [ ] Bridge firmware (`firmware/bridge_esp32/bridge_esp32.ino`) publishes without `retain=true` — zone cards can show empty after a broker restart until the next packet arrives. Small, isolated fix.
+- [ ] Multi-hop sensor mesh / relay bridging for far-away nodes (range extension beyond one ESP-NOW hop) — not started, tracked as a separate design track.
+- [ ] Real-hardware field test of the ESP-NOW → bridge → MQTT path — everything so far has only been validated against `tools/simulator.py`.
+
+**ML / analytics — nothing implemented yet:**
+- [ ] "ML watering prediction" ("water likely needed in 2 days") — original nice-to-have, never scoped.
+- [ ] Nightly export of recorder data to an external store (Postgres/Supabase) for monthly stats and weather-forecast-accuracy comparisons (predicted vs. actual, using the already-stored `greenhouse/weather/forecast` data). Deliberately deferred in the sensor-database spec — push, don't depend on pull, keep the Pi decoupled from the external service's uptime.
+
+**Security — mostly done, two explicit exceptions:**
+- ✅ Per-unit TLS certs, per-unit random OS password, captive-portal auto-popup, dead factory-provisioning code removed — all verified on real hardware.
+- [ ] `/pair` and `/api/history*` are unauthenticated. Fine for LAN-only/thesis use; would need a PIN/QR/token before any public or multi-customer deployment.
+
+**App feature gaps:**
+- [ ] **Pick-a-specific-past-date view for history.** Currently only rolling windows (24h/7d/30d/90d back from now) — no fixed-calendar-date picker. Recorder data already supports it (90d minute-resolution, 2yr hourly); needs `/api/history` to accept an absolute `since`/`until` (or `date=YYYY-MM-DD`) plus a date-picker UI. Good next brainstorm→spec→plan candidate.
+- [ ] **Screen-by-screen UX enhancement pass** over the rest of the app (dashboard, control, devices, pairing, settings, weather-forecast chart) — same brainstorm→spec→plan cycle as the history chart, one screen at a time.
 - [ ] `pressure` weather metric is published by the simulator but silently dropped by the recorder (not in its tracked metric set) — no history for it.
 - [ ] `weather.json` write-permission bug: the app's GPS/location-picker push to the Pi fails silently (service runs as `pi`, file owned `root:root`) — location/interval changes don't actually persist across a Pi reboot.
+- [ ] Nice-to-haves from the original vision, all unstarted: ESP32-CAM plant time-lapse, CSV export, a smartwatch/widget glance.
+
+**Housekeeping:**
 - [ ] `debugPrint()` calls in `mqtt_connection.dart` / `connection_provider.dart` — remove before any demo.
+- [ ] `WEATHER_INTERVAL` is still set to its 30s debug value on `greenhouse-weather.service` — reset to a production-appropriate interval before field deployment.
 - [ ] Golden image + **clone path still unproven on a 2nd physical unit**.
 - [ ] iOS completely untested (Android only; thesis device is a Redmi Note 13 Pro+).
 - [ ] Minor: no direct test exercises the forecast-timeout/failure fallback path in `historyWithPredictionProvider` (verified correct by code review, just not test-proven).
