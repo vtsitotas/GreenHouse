@@ -1,4 +1,5 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/history_point.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/services/history_service.dart';
@@ -36,6 +37,24 @@ final historyPointsProvider =
     FutureProvider.family<List<HistoryPoint>, HistoryQuery>((ref, query) async {
   final config = await ref.read(pairingServiceProvider).loadConfig();
   if (config == null) return [];
+
+  // The HTTP /api/history endpoint only exists on the LAN — HiveMQ Cloud
+  // only bridges MQTT, not HTTP. When connected remotely, fetch history via
+  // an MQTT request/response round-trip instead.
+  final status = ref.watch(connectionStatusProvider).valueOrNull;
+  if (status == ConnectionStatus.remote) {
+    final data = await ref.read(repositoryProvider).fetchHistoryViaMqtt(
+          zone: query.zone,
+          kind: query.kind,
+          metric: query.metric,
+          hours: query.hours,
+        );
+    if (data == null || data['error'] != null) {
+      throw Exception('History fetch failed via MQTT');
+    }
+    return HistoryService.parsePoints(data);
+  }
+
   final service = ref.read(historyServiceProvider);
   return service.fetchPoints(
     lanHost: config.lanHost,

@@ -32,6 +32,12 @@ SUBSCRIBE_TOPICS = [
     'greenhouse/weather/+',
 ]
 
+# Lets the app fetch chart data over MQTT when it's on the HiveMQ Cloud path
+# (remote) instead of LAN, where the portal's HTTP /api/history isn't
+# reachable — HiveMQ only bridges MQTT, not HTTP.
+HISTORY_REQUEST_TOPIC = 'greenhouse/history/request'
+HISTORY_RESPONSE_PREFIX = 'greenhouse/history/response/'
+
 # ── Minute-bucket buffer ─────────────────────────────────────────────────────
 class MinuteBucketBuffer:
     """Accumulates readings into per-(series, minute) avg/min/max/count buckets.
@@ -196,6 +202,49 @@ def rollup_and_prune(conn: sqlite3.Connection, now: int, raw_days: int, hourly_d
     conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
+# ── MQTT history request/response (mirrors portal.py's /api/history) ────────
+def _history_db_ro(db_path: str) -> sqlite3.Connection:
+    return sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
+
+
+def _query_points(conn: sqlite3.Connection, kind, zone, metric: str, hours: float) -> dict:
+    table = 'readings' if hours <= 48 else 'readings_hourly'
+    resolution = 'minute' if table == 'readings' else 'hour'
+    cutoff = int(time.time() - hours * 3600)
+    row = conn.execute(
+        'SELECT id FROM series WHERE kind=? AND zone IS ? AND metric=?',
+        (kind, zone, metric)).fetchone()
+    if row is None:
+        return {'zone': zone, 'metric': metric, 'resolution': resolution, 'points': []}
+    series_id = row[0]
+    pts = conn.execute(
+        f'SELECT ts, avg, min, max FROM {table} WHERE series_id=? AND ts >= ? ORDER BY ts',
+        (series_id, cutoff)).fetchall()
+    return {
+        'zone': zone, 'metric': metric, 'resolution': resolution,
+        'points': [[p[0], p[1], p[2], p[3]] for p in pts],
+    }
+
+
+def _handle_history_request(client, db_path: str, raw_payload: bytes) -> None:
+    try:
+        req = json.loads(raw_payload.decode())
+        req_id = req['id']
+    except Exception:
+        return  # malformed request — nothing sane to respond to, no id to reply on
+    try:
+        conn = _history_db_ro(db_path)
+        try:
+            response = _query_points(
+                conn, req.get('kind'), req.get('zone'), req.get('metric'),
+                float(req.get('hours', 24)))
+        finally:
+            conn.close()
+    except Exception as e:
+        response = {'error': str(e)}
+    client.publish(HISTORY_RESPONSE_PREFIX + req_id, json.dumps(response), qos=1, retain=False)
+
+
 # ── Topic parsing ─────────────────────────────────────────────────────────────
 _ZONE_METRIC_GROUPS = {'air', 'soil', 'light'}
 _WEATHER_METRICS = {'temperature', 'humidity', 'wind_kmh', 'uv_index', 'rain_mm_1h'}
@@ -290,9 +339,14 @@ def run():
     def on_connect(client, userdata, flags, rc, properties=None):
         for topic in SUBSCRIBE_TOPICS:
             client.subscribe(topic)
-        print(f'[recorder] Connected, subscribed to {len(SUBSCRIBE_TOPICS)} topic patterns', flush=True)
+        client.subscribe(HISTORY_REQUEST_TOPIC)
+        print(f'[recorder] Connected, subscribed to {len(SUBSCRIBE_TOPICS)} topic patterns '
+              f'+ {HISTORY_REQUEST_TOPIC}', flush=True)
 
     def on_message(client, userdata, msg):
+        if msg.topic == HISTORY_REQUEST_TOPIC:
+            _handle_history_request(client, cfg['db_path'], msg.payload)
+            return
         if msg.retain:
             return  # skip stale retained replay on (re)connect
         parsed = parse_topic(msg.topic)
