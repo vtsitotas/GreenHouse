@@ -57,4 +57,63 @@ void main() {
       expect(clampFloorFor('temperature'), isNull);
     });
   });
+
+  group('predictFromForecast', () {
+    final forecast = {
+      'times': [
+        '2026-07-08T10:00:00',
+        '2026-07-08T11:00:00',
+        '2026-07-08T12:00:00',
+      ],
+      'temps': [20.0, 21.0, 22.0],
+      'precip': [0.0, 0.5, 1.0],
+    };
+
+    test('maps temperature forecast within the (after, until] window', () {
+      final result = predictFromForecast(
+        forecast: forecast,
+        metric: 'temperature',
+        after: DateTime.parse('2026-07-08T10:00:00'),
+        until: DateTime.parse('2026-07-08T12:00:00'),
+      );
+      expect(result.length, 2);
+      expect(result[0].avg, 21.0);
+      expect(result[1].avg, 22.0);
+    });
+
+    test('maps rain forecast using the precip array', () {
+      final result = predictFromForecast(
+        forecast: forecast,
+        metric: 'rain_mm_1h',
+        after: DateTime.parse('2026-07-08T10:00:00'),
+        until: DateTime.parse('2026-07-08T12:00:00'),
+      );
+      expect(result.map((p) => p.avg), [0.5, 1.0]);
+    });
+
+    test('returns empty list for a metric with no forecast series', () {
+      final result = predictFromForecast(
+        forecast: forecast,
+        metric: 'wind_kmh',
+        after: DateTime.parse('2026-07-08T10:00:00'),
+        until: DateTime.parse('2026-07-08T12:00:00'),
+      );
+      expect(result, isEmpty);
+    });
+
+    test('skips malformed timestamps instead of throwing', () {
+      final broken = {
+        'times': ['not-a-date', '2026-07-08T11:00:00'],
+        'temps': [99.0, 21.0],
+      };
+      final result = predictFromForecast(
+        forecast: broken,
+        metric: 'temperature',
+        after: DateTime.parse('2026-07-08T10:00:00'),
+        until: DateTime.parse('2026-07-08T12:00:00'),
+      );
+      expect(result.length, 1);
+      expect(result[0].avg, 21.0);
+    });
+  });
 }

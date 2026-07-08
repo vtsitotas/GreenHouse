@@ -48,3 +48,40 @@ List<HistoryPoint> predictTrend(
   }
   return out;
 }
+
+/// Maps the app-wide weather forecast payload (times/temps/precip arrays,
+/// as published on `greenhouse/weather/forecast`) into HistoryPoint-shaped
+/// predictions for [metric], restricted to the (after, until] window.
+/// [metric] must be 'temperature' or 'rain_mm_1h'; anything else returns [].
+List<HistoryPoint> predictFromForecast({
+  required Map<String, dynamic> forecast,
+  required String metric,
+  required DateTime after,
+  required DateTime until,
+}) {
+  final key = switch (metric) {
+    'temperature' => 'temps',
+    'rain_mm_1h' => 'precip',
+    _ => null,
+  };
+  if (key == null) return [];
+
+  final times = (forecast['times'] as List?) ?? const [];
+  final values = (forecast[key] as List?) ?? const [];
+  final n = times.length < values.length ? times.length : values.length;
+
+  final out = <HistoryPoint>[];
+  for (var i = 0; i < n; i++) {
+    DateTime t;
+    try {
+      t = DateTime.parse(times[i] as String);
+    } catch (_) {
+      continue;
+    }
+    if (t.isAfter(after) && !t.isAfter(until)) {
+      final v = (values[i] as num).toDouble();
+      out.add(HistoryPoint(time: t, avg: v, min: v, max: v));
+    }
+  }
+  return out;
+}
