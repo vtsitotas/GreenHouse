@@ -707,7 +707,7 @@ class _RuleCard extends StatelessWidget {
             Switch(
               value: rule.enabled,
               onChanged: onToggle,
-              activeThumbColor: AppColors.brand,
+              activeColor: AppColors.brand,
             ),
           ],
         ),
