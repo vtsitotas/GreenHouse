@@ -36,8 +36,8 @@ void main() {
       routes: [
         GoRoute(
           path: '/',
-          builder: (_, __) => Scaffold(
-            body: ZoneCard(zone: 'zone1', readings: const {'air/temperature': 24.5}),
+          builder: (_, __) => const Scaffold(
+            body: ZoneCard(zone: 'zone1', readings: {'air/temperature': 24.5}),
           ),
         ),
         GoRoute(
@@ -62,8 +62,8 @@ void main() {
       routes: [
         GoRoute(
           path: '/',
-          builder: (_, __) => Scaffold(
-            body: ZoneCard(zone: 'zone1', readings: const {'soil/moisture': 45.0}),
+          builder: (_, __) => const Scaffold(
+            body: ZoneCard(zone: 'zone1', readings: {'soil/moisture': 45.0}),
           ),
         ),
         GoRoute(

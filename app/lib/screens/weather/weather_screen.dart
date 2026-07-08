@@ -141,11 +141,11 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
       ),
     );
 
-    if (confirmed == true && mounted) {
+    if (confirmed == true && context.mounted) {
       final lat = double.parse(latCtrl.text);
       final lon = double.parse(lonCtrl.text);
       await ref.read(repositoryProvider).publishLocation(lat, lon, intervalSeconds: intervalSeconds);
-      if (mounted) {
+      if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Settings saved. Will apply on the next weather cycle.')),
         );
