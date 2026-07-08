@@ -98,6 +98,7 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `pi/scripts/weather.py` | Open-Meteo polling, automation rules engine, forecast publish |
 | `pi/portal/portal.py` | Flask :80 — WiFi setup, `/pair`, `/api/history`, `/api/history/series` |
 | `pi/tools/simulator.py` | Fake sensor data generator — use when no real edge nodes are attached |
+| `pi/scripts/hivemq_bridge.py` | HiveMQ Cloud bridge (paho-mqtt) — replaces Mosquitto's native bridge, which never worked (see below) |
 | `deploy.ps1` | One command: scp + install + selftest on any Pi — **use this, not manual scp** |
 | `app/lib/screens/history/history_screen.dart` | The chart screen (fl_chart), this session's main feature |
 | `app/lib/utils/history_prediction.dart` | Trend-extrapolation + forecast-overlay prediction logic |
@@ -115,6 +116,8 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - 4 Automation + Alerts — done differently: in-app duration-based rules (Weather screen → Rules tab, fully editable from the app) + `flutter_local_notifications`, instead of Node-RED/Telegram
 - 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **not started**; current remote access is single-tenant HiveMQ Cloud + local notifications only
 - 6 Field Hardening (solar/18650, IP65 enclosures, cellular fallback) — **not started**; see `docs/EDGE_NODE_POWER_OPTIMIZATION.md` for the existing plan doc
+
+**Fixed this session (2026-07-08, later):** Mosquitto's native `connection` bridge to HiveMQ Cloud had never actually worked — 0 successful handshakes across 9 days of logs, a real Mosquitto bridge-code incompatibility with this HiveMQ cluster (not a quota/account issue). Any prior appearance of "remote access working" was the app displaying a stale retained value, not live data. Replaced with `greenhouse-hivemq-bridge.service` (small paho-mqtt forwarder script) — verified live two-way delivery, stable connection, automated round-trip check added to `selftest.sh` (now 26/26).
 
 **Bridging / firmware:**
 - [ ] Bridge firmware (`firmware/bridge_esp32/bridge_esp32.ino`) publishes without `retain=true` — zone cards can show empty after a broker restart until the next packet arrives. Small, isolated fix.
