@@ -25,6 +25,13 @@ class HistoryService {
       throw Exception('History fetch failed: ${resp.statusCode}');
     }
     final data = jsonDecode(resp.body) as Map<String, dynamic>;
+    return parsePoints(data);
+  }
+
+  /// Shared parsing for the `{points: [[ts, avg, min, max], ...]}` shape
+  /// returned by both the HTTP /api/history endpoint and the MQTT
+  /// greenhouse/history/response/<id> payload.
+  static List<HistoryPoint> parsePoints(Map<String, dynamic> data) {
     final points = (data['points'] as List).cast<List<dynamic>>();
     return points.map(HistoryPoint.fromJson).toList();
   }

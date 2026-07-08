@@ -23,6 +23,7 @@ class GreenhouseRepository {
   final _alertsCtrl    = StreamController<WeatherAlert>.broadcast();
   final _forecastCtrl  = StreamController<Map<String, dynamic>>.broadcast();
   final _rulesCtrl     = StreamController<List<WeatherRule>>.broadcast();
+  final _historyRespCtrl = StreamController<HistoryResponseRaw>.broadcast();
 
   List<WeatherRule> _rules = [];
   Map<String, dynamic>? _lastForecast;
@@ -95,6 +96,8 @@ class GreenhouseRepository {
         _rules = WeatherRule.listFromJson(event.payload);
         _rulesCtrl.add(List.from(_rules));
       } catch (_) {}
+    } else if (event is HistoryResponseRaw) {
+      _historyRespCtrl.add(event);
     }
   }
 
@@ -126,6 +129,48 @@ class GreenhouseRepository {
   Future<void> publishLocation(double lat, double lon, {int intervalSeconds = 1800}) async {
     final payload = '{"latitude":$lat,"longitude":$lon,"timezone":"auto","interval_seconds":$intervalSeconds}';
     await connection.publishRaw('greenhouse/weather/location/set', payload, retain: true);
+  }
+
+  /// Fetches history points over MQTT (greenhouse/history/request ->
+  /// greenhouse/history/response/<id>) instead of the LAN-only HTTP
+  /// /api/history endpoint. Used when connected via the HiveMQ Cloud
+  /// bridge, since HiveMQ only carries MQTT — not the Pi's HTTP portal.
+  /// Returns null on timeout or a malformed response.
+  Future<Map<String, dynamic>?> fetchHistoryViaMqtt({
+    String? zone,
+    String? kind,
+    required String metric,
+    double hours = 24,
+  }) async {
+    final id = 'h${DateTime.now().microsecondsSinceEpoch}';
+    final payload = jsonEncode({
+      'id': id,
+      'type': 'points',
+      if (zone != null) 'zone': zone,
+      if (kind != null) 'kind': kind,
+      'metric': metric,
+      'hours': hours,
+    });
+
+    final completer = Completer<Map<String, dynamic>?>();
+    late final StreamSubscription<HistoryResponseRaw> sub;
+    sub = _historyRespCtrl.stream.listen((event) {
+      if (event.id != id) return;
+      sub.cancel();
+      if (completer.isCompleted) return;
+      try {
+        completer.complete(jsonDecode(event.payload) as Map<String, dynamic>);
+      } catch (_) {
+        completer.complete(null);
+      }
+    });
+
+    await connection.publishRaw('greenhouse/history/request', payload);
+
+    return completer.future.timeout(const Duration(seconds: 8), onTimeout: () {
+      sub.cancel();
+      return null;
+    });
   }
 
   Future<void> disconnect() async {

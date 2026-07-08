@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:greenhouse_app/connection/greenhouse_connection.dart';
@@ -6,6 +7,7 @@ import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
+import 'package:greenhouse_app/models/weather_events.dart';
 import 'package:greenhouse_app/repository/greenhouse_repository.dart';
 
 class MockConnection extends Mock implements GreenhouseConnection {}
@@ -44,6 +46,8 @@ void main() {
     when(() => conn.connect(any())).thenAnswer((_) async {});
     when(() => conn.disconnect()).thenAnswer((_) async {});
     when(() => conn.sendCommand(any(), any())).thenAnswer((_) async {});
+    when(() => conn.publishRaw(any(), any(), retain: any(named: 'retain')))
+        .thenAnswer((_) async {});
     repo = GreenhouseRepository(connection: conn);
   });
 
@@ -67,6 +71,27 @@ void main() {
     eventsCtrl.add(SensorReading(zone: 'zone1', metric: 'air/temperature', value: 25.0, receivedAt: DateTime.now()));
     final snapshot = await future;
     expect(snapshot['zone1']?['air/temperature'], 25.0);
+  });
+
+  test('fetchHistoryViaMqtt requests over MQTT and resolves the matching response', () async {
+    repo.connect(_config);
+
+    final resultFuture = repo.fetchHistoryViaMqtt(
+        zone: 'zone1', kind: 'zone', metric: 'air_temperature', hours: 24);
+
+    // Let the request's publishRaw() call land so we can read the id it used.
+    await Future(() {});
+    final capturedPayload = verify(
+      () => conn.publishRaw('greenhouse/history/request', captureAny(), retain: any(named: 'retain')),
+    ).captured.single as String;
+    final requestId = (jsonDecode(capturedPayload) as Map<String, dynamic>)['id'] as String;
+
+    eventsCtrl.add(HistoryResponseRaw(
+        requestId, jsonEncode({'zone': 'zone1', 'metric': 'air_temperature', 'points': [[1000, 20.0, 19.0, 21.0]]})));
+
+    final result = await resultFuture;
+    expect(result?['zone'], 'zone1');
+    expect(result?['points'], [[1000, 20.0, 19.0, 21.0]]);
   });
 
   test('merges node status and battery into same nodeId entry', () async {

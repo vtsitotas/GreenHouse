@@ -13,3 +13,13 @@ class RulesPayloadRaw {
   final String payload;
   const RulesPayloadRaw(this.payload);
 }
+
+/// Carries the raw JSON payload from greenhouse/history/response/<id> —
+/// the MQTT-based history fetch used when the app is on the HiveMQ Cloud
+/// path (remote) rather than the LAN, where the HTTP /api/history endpoint
+/// isn't reachable.
+class HistoryResponseRaw {
+  final String id;
+  final String payload;
+  const HistoryResponseRaw(this.id, this.payload);
+}
