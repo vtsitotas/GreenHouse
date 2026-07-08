@@ -63,7 +63,11 @@ class WeatherCard extends ConsumerWidget {
                   const _AlertBadge('Rain', Colors.lightBlue),
                 if (isHot)
                   const _AlertBadge('Heat', Colors.orange),
-                const SizedBox(width: 4),
+                IconButton(
+                  icon: const Icon(Icons.show_chart, color: Colors.white70, size: 18),
+                  tooltip: 'View history',
+                  onPressed: () => context.push('/history/weather/temperature'),
+                ),
                 const Icon(Icons.arrow_forward_ios, color: Colors.white54, size: 14),
               ]),
               const SizedBox(height: 10),
