@@ -6,15 +6,28 @@ import 'package:greenhouse_app/services/pairing_service.dart';
 final historyServiceProvider = Provider((_) => HistoryService());
 
 class HistoryQuery {
-  final String zone;
+  final String? zone;
+  final String kind;
   final String metric;
-  const HistoryQuery({required this.zone, required this.metric});
+  final double hours;
+
+  const HistoryQuery({
+    this.zone,
+    String? kind,
+    required this.metric,
+    this.hours = 24,
+  }) : kind = kind ?? (zone != null ? 'zone' : 'weather');
 
   @override
   bool operator ==(Object other) =>
-      other is HistoryQuery && other.zone == zone && other.metric == metric;
+      other is HistoryQuery &&
+      other.zone == zone &&
+      other.kind == kind &&
+      other.metric == metric &&
+      other.hours == hours;
+
   @override
-  int get hashCode => Object.hash(zone, metric);
+  int get hashCode => Object.hash(zone, kind, metric, hours);
 }
 
 final historyPointsProvider =
@@ -25,7 +38,8 @@ final historyPointsProvider =
   return service.fetchPoints(
     lanHost: config.lanHost,
     zone: query.zone,
+    kind: query.kind,
     metric: query.metric,
-    hours: 24,
+    hours: query.hours,
   );
 });
