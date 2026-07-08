@@ -241,8 +241,12 @@ class _HistoryChart extends StatelessWidget {
       ...actual.map((p) => p.max),
       ...predicted.map((p) => p.avg),
     ];
-    final minV = allValues.reduce(math.min);
-    final maxV = allValues.reduce(math.max);
+    var minV = allValues.reduce(math.min);
+    var maxV = allValues.reduce(math.max);
+    if ((maxV - minV).abs() < 0.01) {
+      minV -= 1;
+      maxV += 1;
+    }
     final range = (maxV - minV).abs().clamp(1.0, double.infinity);
 
     final minSpots = actual.map((p) => FlSpot(xFor(p.time), p.min)).toList();
@@ -297,9 +301,22 @@ class _HistoryChart extends StatelessWidget {
           horizontalInterval: range / 4,
           getDrawingHorizontalLine: (_) =>
               FlLine(color: Theme.of(context).dividerColor.withAlpha(80), strokeWidth: 1),
+          getDrawingVerticalLine: (_) =>
+              FlLine(color: Theme.of(context).dividerColor.withAlpha(80), strokeWidth: 1),
         ),
         borderData: FlBorderData(show: false),
         lineBarsData: bars,
+        extraLinesData: ExtraLinesData(
+          verticalLines: [
+            if (predicted.isNotEmpty)
+              VerticalLine(
+                x: xFor(actual.last.time),
+                color: Theme.of(context).dividerColor.withAlpha(120),
+                strokeWidth: 1,
+                dashArray: const [4, 4],
+              ),
+          ],
+        ),
         // Shades the area between the max line (index 1) and the min line
         // (index 0) to render the min-max band. This lives on LineChartData
         // in this fl_chart version, not on the individual LineChartBarData
@@ -340,6 +357,10 @@ class _HistoryChart extends StatelessWidget {
         lineTouchData: LineTouchData(
           touchTooltipData: LineTouchTooltipData(
             getTooltipItems: (spots) => spots.map((s) {
+              // Bars 0 and 1 are the invisible min/max lines used only to
+              // draw the shaded band; skip their tooltip entries so taps
+              // only show the avg (and prediction) line.
+              if (s.barIndex == 0 || s.barIndex == 1) return null;
               final time = actual.first.time.add(Duration(seconds: s.x.round()));
               final isPrediction = s.barIndex == predictedBarIndex;
               final label = isPrediction
