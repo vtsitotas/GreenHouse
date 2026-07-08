@@ -58,7 +58,11 @@ bash "$REPO/scripts/gen_certs.sh"
 
 echo "==> Configuring Mosquitto..."
 cp "$REPO/mosquitto/mosquitto.conf"      /etc/mosquitto/conf.d/greenhouse.conf
-cp "$REPO/mosquitto/hivemq-bridge.conf"  /etc/mosquitto/conf.d/hivemq-bridge.conf
+# NB: no native Mosquitto `connection` bridge here — it never completes a
+# handshake against our HiveMQ Cloud cluster (verified: 0 CONNACKs over 9
+# days of logs). greenhouse-hivemq-bridge.service replaces it with a small
+# paho-mqtt forwarder, which connects fine.
+rm -f /etc/mosquitto/conf.d/hivemq-bridge.conf
 
 echo "==> Writing HiveMQ config for portal..."
 cat > /etc/greenhouse/hivemq.json << 'EOF'
@@ -85,6 +89,7 @@ cp "$REPO"/systemd/greenhouse-ap.service             /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-hivemq-bridge.service  /etc/systemd/system/
 
 # Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
 mkdir -p /etc/systemd/system/mosquitto.service.d
@@ -94,7 +99,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge >/dev/null 2>&1
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.
@@ -151,6 +156,7 @@ systemctl restart mosquitto
 systemctl restart greenhouse-portal
 systemctl restart greenhouse-weather
 systemctl restart greenhouse-recorder
+systemctl restart greenhouse-hivemq-bridge
 
 echo ""
 echo "==> Done. Verify with:  sudo bash $REPO/scripts/selftest.sh"

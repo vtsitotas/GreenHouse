@@ -6,12 +6,12 @@ ok(){ echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 no(){ echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 echo "== services enabled =="
-for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder mosquitto; do
+for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge mosquitto; do
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
 echo "== services active =="
-for s in greenhouse-portal greenhouse-recorder mosquitto; do
+for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge mosquitto; do
   systemctl is-active "$s" >/dev/null 2>&1 && ok "$s running" || no "$s not running"
 done
 
@@ -39,6 +39,45 @@ if timeout 10 mosquitto_pub -h greenhouse.local -p 8883 --cafile /etc/mosquitto/
 else
   no "TLS publish failed"
 fi
+
+echo "== hivemq bridge round-trip =="
+python3 - <<'PYEOF'
+import json, ssl, time, sys
+import paho.mqtt.client as mqtt
+
+cfg = json.load(open('/etc/greenhouse/hivemq.json'))
+topic = f'greenhouse/selftest/{int(time.time())}'
+seen = {'ok': False}
+
+def on_message(client, userdata, msg):
+    if msg.payload == b'ok':
+        seen['ok'] = True
+
+remote = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id='greenhouse-selftest-remote')
+remote.username_pw_set(cfg['username'], cfg['password'])
+remote.tls_set(ca_certs='/etc/ssl/certs/ca-certificates.crt', tls_version=ssl.PROTOCOL_TLSv1_2)
+remote.on_message = on_message
+remote.connect(cfg['host'], cfg['port'], keepalive=10)
+remote.subscribe(topic, qos=1)
+remote.loop_start()
+time.sleep(1)
+
+local = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id='greenhouse-selftest-local')
+local.connect('127.0.0.1', 1883, keepalive=10)
+local.publish(topic, 'ok', qos=1)
+local.disconnect()
+
+time.sleep(5)
+remote.loop_stop()
+remote.disconnect()
+
+if seen['ok']:
+    print('       [ OK ] local publish reached HiveMQ Cloud via bridge')
+else:
+    print('       [FAIL] local publish did not reach HiveMQ within 5s', file=sys.stderr)
+    sys.exit(1)
+PYEOF
+[ $? -eq 0 ] && ok "hivemq bridge forwarding local -> cloud" || no "hivemq bridge not forwarding (check greenhouse-hivemq-bridge.service)"
 
 echo "== portal =="
 curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/pair | grep -qE '200|403' && ok "portal responding on :80" || no "portal not responding on :80"

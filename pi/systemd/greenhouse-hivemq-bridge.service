@@ -1,0 +1,22 @@
+[Unit]
+Description=Greenhouse HiveMQ Cloud Bridge (paho-mqtt, replaces broken Mosquitto native bridge)
+After=network.target mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/hivemq_bridge.py
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target
