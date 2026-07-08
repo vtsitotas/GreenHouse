@@ -24,6 +24,6 @@ void main() {
     ));
     expect(find.text('Connect to your greenhouse'), findsOneWidget);
     expect(find.byType(TextFormField), findsWidgets);
-    expect(find.text('Scan QR from Pi'), findsOneWidget);
+    expect(find.text('Scan QR code'), findsOneWidget);
   });
 }

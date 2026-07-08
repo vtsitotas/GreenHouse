@@ -55,8 +55,15 @@ void main() {
 
   test('aggregates sensor readings by zone and metric', () async {
     repo.connect(_config);
-    // Listen BEFORE adding the event — broadcast streams drop events with no listener.
-    final future = repo.readings.first;
+    // `readings` yields a cached snapshot immediately on subscribe, before any
+    // pushed event is processed, so `.first` alone would race the event.
+    // Wait for a snapshot that actually reflects the pushed reading instead.
+    final future = repo.readings.firstWhere(
+        (m) => m['zone1']?['air/temperature'] != null);
+    // Let the async* generator's execution reach its `yield* _readingsCtrl.stream`
+    // subscription before pushing — otherwise this broadcast-stream update fires
+    // into the race window before anyone is listening for it, and is lost.
+    await Future(() {});
     eventsCtrl.add(SensorReading(zone: 'zone1', metric: 'air/temperature', value: 25.0, receivedAt: DateTime.now()));
     final snapshot = await future;
     expect(snapshot['zone1']?['air/temperature'], 25.0);
@@ -64,14 +71,15 @@ void main() {
 
   test('merges node status and battery into same nodeId entry', () async {
     repo.connect(_config);
-    final future = repo.nodes.first;
+    // Same cached-snapshot race as above — wait for the merged state instead
+    // of assuming `.first` lines up with a specific pushed event.
+    final future = repo.nodes.firstWhere((m) => m['node1']?.batteryPercent != null);
+    // Same race as above — give the generator a tick to subscribe to the live
+    // stream before pushing, or the update is lost to the broadcast controller.
+    await Future(() {});
     eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'online'));
     eventsCtrl.add(NodeStatus.fromMqttBattery('node1', '75.0'));
-    await future; // first status event resolves the future
-    // Battery arrives after; give it a tick then check current state via a second emission
-    final nodesFuture = repo.nodes.first;
-    eventsCtrl.add(NodeStatus.fromMqttBattery('node1', '75.0'));
-    final nodes = await nodesFuture;
+    final nodes = await future;
     expect(nodes['node1']?.isOnline, isTrue);
     expect(nodes['node1']?.batteryPercent, 75.0);
   });
