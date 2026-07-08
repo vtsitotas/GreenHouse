@@ -22,6 +22,7 @@ dependencies:
   flutter_local_notifications: ^17.0.0
   timezone: ^0.9.0
   geolocator: ^13.0.2
+  fl_chart: ^1.1.0
 
 dev_dependencies:
   flutter_test:
@@ -31,3 +32,14 @@ dev_dependencies:
 
 flutter:
   uses-material-design: true
+
+# fl_chart 1.1.0 calls Matrix4 extension methods (translateByDouble/
+# scaleByDouble) that only exist from vector_math 2.1.5 onward, but this
+# Flutter SDK (3.32.4) pins vector_math to exactly 2.1.4 in its own
+# pubspec.yaml. vector_math 2.4.0+ requires Dart SDK >=3.10, which is newer
+# than this Flutter SDK's bundled Dart (3.8.1). 2.3.0 is the highest
+# vector_math release compatible with both constraints. Safe to remove this
+# override once the Flutter SDK here is upgraded past whatever version pins
+# a vector_math with the needed Matrix4 methods natively.
+dependency_overrides:
+  vector_math: 2.3.0
