@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:mocktail/mocktail.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/history_point.dart';
+import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/providers/history_provider.dart';
 import 'package:greenhouse_app/services/history_service.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
@@ -65,5 +66,52 @@ void main() {
           metric: 'temperature',
           hours: 168,
         )).called(1);
+  });
+
+  group('historyWithPredictionProvider', () {
+    HistoryPoint pt(int epochSeconds, double avg) => HistoryPoint(
+          time: DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000),
+          avg: avg,
+          min: avg,
+          max: avg,
+        );
+
+    test('returns no prediction when fewer than 2 actual points', () async {
+      final container = ProviderContainer(overrides: [
+        historyPointsProvider.overrideWith((ref, query) async => [pt(0, 20)]),
+      ]);
+      addTearDown(container.dispose);
+      const query = HistoryQuery(zone: 'zone1', metric: 'air_temperature', hours: 24);
+      final data = await container.read(historyWithPredictionProvider(query).future);
+      expect(data.actual.length, 1);
+      expect(data.predicted, isEmpty);
+    });
+
+    test('uses forecast overlay for weather temperature when available', () async {
+      final container = ProviderContainer(overrides: [
+        historyPointsProvider.overrideWith((ref, query) async => [pt(0, 20), pt(60, 21)]),
+        forecastProvider.overrideWith((ref) => Stream.value({
+              'times': [DateTime.fromMillisecondsSinceEpoch(120000).toUtc().toIso8601String()],
+              'temps': [25.0],
+              'precip': [0.0],
+            })),
+      ]);
+      addTearDown(container.dispose);
+      const query = HistoryQuery(zone: null, kind: 'weather', metric: 'temperature', hours: 24);
+      final data = await container.read(historyWithPredictionProvider(query).future);
+      expect(data.predicted, isNotEmpty);
+      expect(data.predicted.first.avg, 25.0);
+    });
+
+    test('falls back to trend extrapolation for zone metrics (no forecast)', () async {
+      final container = ProviderContainer(overrides: [
+        historyPointsProvider.overrideWith((ref, query) async => [pt(0, 20), pt(60, 22)]),
+      ]);
+      addTearDown(container.dispose);
+      const query = HistoryQuery(zone: 'zone1', metric: 'soil_moisture', hours: 24);
+      final data = await container.read(historyWithPredictionProvider(query).future);
+      expect(data.predicted, isNotEmpty);
+      expect(data.predicted.first.avg, greaterThan(22.0));
+    });
   });
 }
