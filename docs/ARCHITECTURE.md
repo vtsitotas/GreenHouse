@@ -1,0 +1,172 @@
+# Αρχιτεκτονική Συστήματος — Διαγράμματα Ροής
+
+**Τελευταία ενημέρωση:** 2026-07-08
+
+Δύο διαγράμματα Mermaid για κατανόηση/παρουσίαση του συστήματος (π.χ. στη διπλωματική):
+το πρώτο δείχνει την αρχιτεκτονική και τη ροή δεδομένων σε **κανονική λειτουργία**,
+το δεύτερο τη ροή **πρώτης εγκατάστασης & ζεύξης** (setup mode). Είναι σκόπιμα
+χωριστά — είναι δύο διαφορετικές καταστάσεις του συστήματος και σε ένα ενιαίο
+διάγραμμα μπερδεύονται.
+
+Σημειώσεις ακρίβειας (λάθη που κυκλοφορούν σε παλιότερα σχέδια/έγγραφα):
+
+- Η εφαρμογή συνδέεται με **MQTT TCP TLS στη θύρα 8883** — ΟΧΙ με WebSockets στην
+  9001 (δοκιμασμένο και σπασμένο: bug του `mqtt_client` 10.x με Mosquitto 2.x).
+- Η γέφυρα (gateway) είναι **ασύρματη** (ESP-NOW → WiFi/MQTT). Η σύνδεση USB serial
+  στο Pi ήταν παλιό σχέδιο και δεν υπάρχει.
+- Οι κόμβοι αισθητήρων μιλούν **απευθείας στη γέφυρα** (single-hop ESP-NOW).
+  Multi-hop αναμετάδοση κόμβου-σε-κόμβο είναι μελλοντική επέκταση (διακεκομμένη
+  γραμμή στο διάγραμμα).
+- Η απομακρυσμένη πρόσβαση γίνεται μέσω **HiveMQ Cloud** (MQTT bridge) — όχι
+  Tailscale, όχι port forwarding.
+- Το portal τρέχει στη **θύρα 80** και έχει δύο ρόλους: captive portal στην
+  εγκατάσταση, και `/pair` + `/api/history` σε κανονική λειτουργία.
+
+---
+
+## 1. Αρχιτεκτονική & ροή δεδομένων (κανονική λειτουργία)
+
+```mermaid
+flowchart LR
+    classDef hw fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
+    classDef sw fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef db fill:#fffde7,stroke:#f9a825,stroke-width:2px;
+    classDef cloud fill:#fff3e0,stroke:#f57c00,stroke-width:2px;
+    classDef client fill:#e8f5e9,stroke:#388e3c,stroke-width:2px;
+
+    subgraph Field ["Θερμοκήπιο — κόμβοι μπαταρίας / ηλιακού"]
+        direction TB
+        Node1["Κόμβος Ζώνης 1 — ESP32-C3<br/>θερμ./υγρασία αέρα,<br/>υγρασία εδάφους, φωτεινότητα"]:::hw
+        NodeN["Κόμβος Ζώνης N — ESP32-C3<br/>(ίδιοι αισθητήρες ανά ζώνη)"]:::hw
+    end
+
+    subgraph LAN ["Τοπικό δίκτυο (τροφοδοσία από πρίζα)"]
+        direction TB
+        Bridge["Γέφυρα ESP32 (Gateway)<br/>δέκτης ESP-NOW ➜ εκδότης MQTT"]:::hw
+        subgraph Pi ["Raspberry Pi Zero W — τοπικός διακομιστής"]
+            direction TB
+            Broker["Mosquitto MQTT Broker<br/>8883 TLS + auth (εξωτερικά)<br/>1883 μόνο loopback (εσωτερικά)"]:::sw
+            Recorder["greenhouse-recorder<br/>καταγραφή ιστορικού αισθητήρων"]:::sw
+            HistDB[("SQLite<br/>ανά λεπτό: 90 ημέρες<br/>ανά ώρα: 2 έτη")]:::db
+            Weather["greenhouse-weather<br/>πρόγνωση Open-Meteo, κανόνες<br/>αυτοματισμού, ειδοποιήσεις"]:::sw
+            Portal["greenhouse-portal — Flask :80<br/>ζεύξη /pair, ιστορικό /api/history,<br/>captive portal 1ης εγκατάστασης"]:::sw
+        end
+    end
+
+    subgraph Cloud ["Internet / Cloud"]
+        HiveMQ["HiveMQ Cloud<br/>MQTT broker αναμετάδοσης<br/>για πρόσβαση εκτός σπιτιού"]:::cloud
+    end
+
+    subgraph Phone ["Εφαρμογή κινητού — Flutter (Android)"]
+        AppUI["Dashboard · Έλεγχος · Συσκευές<br/>Καιρός + Κανόνες · Ρυθμίσεις<br/>Ιστορικό: γραφήματα με ζώνη min-max,<br/>επιλογή μετρικής/περιόδου, πρόβλεψη"]:::client
+    end
+
+    Node1 -->|"ESP-NOW · low power<br/>(οι κόμβοι δεν μπαίνουν ποτέ στο WiFi)"| Bridge
+    NodeN -->|"ESP-NOW"| Bridge
+    NodeN -.->|"μελλοντικά: multi-hop<br/>αναμετάδοση κόμβου-σε-κόμβο"| Node1
+
+    Bridge -->|"MQTT μέσω τοπικού WiFi"| Broker
+    Broker -->|"συνδρομή σε topics<br/>αισθητήρων (loopback)"| Recorder
+    Recorder -->|"buckets ανά λεπτό,<br/>συμπύκνωση ανά ώρα"| HistDB
+    HistDB -->|"ερωτήματα<br/>ιστορικού"| Portal
+    Weather <-->|"μετρήσεις καιρού, κανόνες,<br/>εντολές actuators (loopback)"| Broker
+
+    Broker <-->|"MQTT TLS :8883<br/>(εντός δικτύου — live δεδομένα)"| AppUI
+    Portal -->|"HTTP :80 — ζεύξη &<br/>δεδομένα γραφημάτων (μόνο LAN)"| AppUI
+    Broker <-->|"MQTT bridge<br/>(αμφίδρομη αναμετάδοση topics)"| HiveMQ
+    HiveMQ <-->|"MQTT TLS<br/>(εκτός σπιτιού)"| AppUI
+```
+
+Σημειώσεις:
+
+- Το οικιακό router παραλείπεται σκόπιμα ως κόμβος — είναι απλώς το μεταφορικό
+  μέσο του LAN και της σύνδεσης στο Internet, δεν προσθέτει πληροφορία στη ροή.
+- Τα γραφήματα ιστορικού δουλεύουν **μόνο εντός LAN** (το HTTP :80 δεν
+  αναμεταδίδεται μέσω HiveMQ) — γνωστός περιορισμός, καταγεγραμμένος στο backlog
+  (MQTT-based history RPC ως μελλοντική λύση).
+- Η πρόβλεψη στο γράφημα έχει δύο λειτουργίες: πραγματική πρόγνωση Open-Meteo για
+  θερμοκρασία/βροχή (καιρός), γραμμική παρέκταση τάσης για όλα τα υπόλοιπα.
+
+## 2. Βάση δεδομένων ιστορικού (SQLite στο Pi)
+
+Η ροή καταγραφής είναι σχεδιασμένη γύρω από τους περιορισμούς του Pi Zero W και
+της κάρτας SD: **ποτέ δεν γράφεται μεμονωμένη μέτρηση στον δίσκο**. Οι μετρήσεις
+συσσωρεύονται στη RAM σε «κουβάδες» του ενός λεπτού και γράφονται μαζικά — μία
+συναλλαγή ανά λεπτό αντί για μία εγγραφή ανά πακέτο (οι κόμβοι στέλνουν κάθε 5″,
+άρα ~12× λιγότερες εγγραφές στην SD).
+
+```mermaid
+flowchart TB
+    classDef sw fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
+    classDef db fill:#fffde7,stroke:#f9a825,stroke-width:2px;
+    classDef mem fill:#e0f2f1,stroke:#00796b,stroke-width:2px;
+
+    MQTT["MQTT topics αισθητήρων<br/>greenhouse/{ζώνη}/air/temperature κ.λπ.<br/>+ greenhouse/weather/*"]:::sw
+
+    subgraph Rec ["greenhouse-recorder (Python, systemd service)"]
+        direction TB
+        Buffer["Buffer στη RAM<br/>κουβάδες ανά (σειρά, λεπτό):<br/>avg / min / max / πλήθος"]:::mem
+        Flush["Μαζική εγγραφή κάθε 60″<br/>(μία συναλλαγή SQLite)"]:::sw
+        Rollup["Ωριαία συμπύκνωση + καθαρισμός<br/>(1 φορά/ώρα, με watermark<br/>ώστε καμία ώρα να μη χαθεί)"]:::sw
+    end
+
+    subgraph DB ["SQLite — /var/lib/greenhouse/greenhouse.db (WAL mode)"]
+        direction TB
+        Series[("series<br/>id · kind (zone/weather)<br/>· zone · metric")]:::db
+        Readings[("readings — ανά λεπτό<br/>series_id · ts · avg/min/max/n<br/>διατήρηση: 90 ημέρες")]:::db
+        Hourly[("readings_hourly — ανά ώρα<br/>ίδια στήλες<br/>διατήρηση: 2 έτη")]:::db
+    end
+
+    API["portal /api/history<br/>έως 48h → πίνακας λεπτού<br/>πάνω από 48h → πίνακας ώρας"]:::sw
+
+    MQTT --> Buffer
+    Buffer --> Flush
+    Flush --> Readings
+    Readings --> Rollup
+    Rollup -->|"σταθμισμένος μέσος όρος,<br/>min/max ανά ώρα"| Hourly
+    Rollup -->|"διαγραφή εγγραφών<br/>εκτός διατήρησης"| Readings
+    Series -.->|"foreign key<br/>(ακέραιο id αντί για κείμενο<br/>σε κάθε γραμμή)"| Readings
+    Series -.-> Hourly
+    Readings --> API
+    Hourly --> API
+```
+
+Σημειώσεις:
+
+- Κάθε γραμμή κρατά **avg/min/max/πλήθος** ανά λεπτό — αρκεί για γραφήματα και
+  κανόνες αυτοματισμού, χωρίς την ανάλυση (και τον όγκο) των ακατέργαστων πακέτων.
+- Το `series_id` (ακέραιος) αντί για επανάληψη κειμένου `zone`/`metric` σε κάθε
+  γραμμή μειώνει περίπου στο μισό το μέγεθος γραμμής και κάνει το ερώτημα
+  εύρους `(series_id, ts BETWEEN …)` ένα απλό b-tree scan.
+- WAL mode + `synchronous=NORMAL`: ανθεκτικότητα σε διακοπή ρεύματος με ελάχιστη
+  φθορά της SD.
+- Αν αποτύχει μια εγγραφή/συμπύκνωση (π.χ. κλειδωμένη βάση), γίνεται rollback και
+  η υπηρεσία συνεχίζει — χάνεται το πολύ ~1 λεπτό μετρήσεων, ποτέ η υπηρεσία.
+
+## 3. Πρώτη εγκατάσταση & ζεύξη (setup mode)
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant U as Χρήστης (κινητό)
+    participant Pi as Raspberry Pi
+    participant W as Οικιακό WiFi
+
+    Note over Pi: 1η εκκίνηση — χωρίς αποθηκευμένο WiFi
+    Pi->>Pi: Εκπομπή hotspot «Greenhouse-XXXX»
+    U->>Pi: Σύνδεση στο hotspot → captive portal (φόρμα WiFi)
+    U->>Pi: Αποστολή SSID + κωδικού
+    Pi->>W: Επανεκκίνηση & σύνδεση στο οικιακό WiFi
+    U->>Pi: «Find my greenhouse» — εύρεση μέσω mDNS (greenhouse.local)
+    Pi-->>U: GET /pair → διαπιστευτήρια MQTT + αποτύπωμα TLS (παράθυρο 10′)
+    U->>Pi: Σύνδεση MQTT TLS :8883 → live dashboard
+```
+
+Σημειώσεις:
+
+- Κάθε μονάδα Pi παράγει στην πρώτη εκκίνηση **δικά της** μοναδικά: TLS
+  πιστοποιητικά, κωδικό MQTT, κωδικό λειτουργικού, και SSID `Greenhouse-XXXX`
+  (από τη MAC) — γι' αυτό το κλωνοποιημένο SD image είναι ασφαλές για μαζική
+  παραγωγή.
+- Το παράθυρο ζεύξης (`/pair`) μένει ανοιχτό 600 δευτερόλεπτα μετά την εκκίνηση
+  του portal· ξανανοίγει με `sudo systemctl restart greenhouse-portal`.
