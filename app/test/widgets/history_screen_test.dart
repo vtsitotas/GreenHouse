@@ -22,7 +22,8 @@ void main() {
       child: const MaterialApp(home: HistoryScreen(zone: 'zone1', metric: 'air_temperature')),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('22.0°C'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const Key('current-value'))).data, '22.0°C');
     expect(find.text('Last 24 Hours'), findsOneWidget);
   });
 
@@ -37,11 +38,13 @@ void main() {
       child: const MaterialApp(home: HistoryScreen(zone: 'zone1', metric: 'air_temperature')),
     ));
     await tester.pumpAndSettle();
-    expect(find.text('20.0°C'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const Key('current-value'))).data, '20.0°C');
 
     await tester.tap(find.text('Humidity'));
     await tester.pumpAndSettle();
-    expect(find.text('55.0%'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const Key('current-value'))).data, '55.0%');
   });
 
   testWidgets('switching range chip loads a different window and label', (tester) async {
@@ -60,7 +63,8 @@ void main() {
     await tester.tap(find.text('7d'));
     await tester.pumpAndSettle();
     expect(find.text('Last 7 Days'), findsOneWidget);
-    expect(find.text('18.0°C'), findsOneWidget);
+    expect(
+        tester.widget<Text>(find.byKey(const Key('current-value'))).data, '18.0°C');
   });
 
   testWidgets('shows empty-state message when there is no data', (tester) async {

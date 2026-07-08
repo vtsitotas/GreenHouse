@@ -175,6 +175,7 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             textBaseline: TextBaseline.alphabetic,
                             children: [
                               Text('${latest.avg.toStringAsFixed(1)}$unit',
+                                  key: const Key('current-value'),
                                   style: Theme.of(context)
                                       .textTheme
                                       .headlineMedium
@@ -315,14 +316,8 @@ class _HistoryChart extends StatelessWidget {
               showTitles: true,
               reservedSize: 46,
               interval: range / 4,
-              // No unit suffix here: with few data points, a gridline value
-              // can coincide exactly with the current-value headline (e.g.
-              // both show "22.0"), and appending the unit would make the two
-              // Text widgets literally identical, breaking single-widget
-              // finders (and being ambiguous for screen readers). The unit
-              // is already shown once, prominently, in the headline above.
               getTitlesWidget: (value, meta) => Text(
-                value.toStringAsFixed(1),
+                '${value.toStringAsFixed(1)}$unit',
                 style: const TextStyle(fontSize: 10),
               ),
             ),
