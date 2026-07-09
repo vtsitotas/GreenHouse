@@ -39,10 +39,15 @@
 // ── Keys (16 bytes each, network-wide — spec Non-goals: no per-pair keys) ─────
 // Shared-key model: defends against a nearby stranger device injecting/reading
 // data; does NOT defend against key extraction from a captured node.
+// Random 128-bit key material (openssl rand -hex 16) — NOT human-readable
+// text. A readable placeholder string here would be low-entropy and
+// guessable, defeating the point of turning encryption on at all.
 static const uint8_t MESH_PMK[16] =
-  { 'g','h','-','m','e','s','h','-','p','m','k','-','0','0','0','1' };
+  { 0x5C, 0x1B, 0x28, 0x53, 0x4F, 0x68, 0x9B, 0x34,
+    0xD4, 0xEB, 0xE2, 0x91, 0x49, 0xD5, 0xFA, 0x26 };
 static const uint8_t MESH_LMK[16] =
-  { 'g','h','-','m','e','s','h','-','l','m','k','-','0','0','0','1' };
+  { 0xD4, 0xEB, 0xFC, 0x75, 0x61, 0xF6, 0x42, 0x3F,
+    0xF9, 0x07, 0x1E, 0x2D, 0xB5, 0xC8, 0x39, 0x83 };
 
 // ── Trusted nodes ─────────────────────────────────────────────────────────────
 // Every real device in the network, bridge included (zone = nullptr for the
