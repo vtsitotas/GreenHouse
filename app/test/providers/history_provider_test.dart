@@ -26,6 +26,24 @@ void main() {
     expect(a == c, isFalse);
   });
 
+  test('HistoryQuery.isCustomRange is true only when both since and until are set', () {
+    final since = DateTime.fromMillisecondsSinceEpoch(0);
+    final until = DateTime.fromMillisecondsSinceEpoch(1000);
+    expect(const HistoryQuery(metric: 'temperature').isCustomRange, isFalse);
+    expect(HistoryQuery(metric: 'temperature', since: since).isCustomRange, isFalse);
+    expect(HistoryQuery(metric: 'temperature', since: since, until: until).isCustomRange, isTrue);
+  });
+
+  test('HistoryQuery equality also considers since and until', () {
+    final since = DateTime.fromMillisecondsSinceEpoch(0);
+    final until = DateTime.fromMillisecondsSinceEpoch(1000);
+    final a = HistoryQuery(metric: 'temperature', since: since, until: until);
+    final b = HistoryQuery(metric: 'temperature', since: since, until: until);
+    final c = HistoryQuery(metric: 'temperature', since: since, until: until.add(const Duration(seconds: 1)));
+    expect(a, b);
+    expect(a == c, isFalse);
+  });
+
   test('historyPointsProvider passes kind/hours/zone through to HistoryService', () async {
     final mockService = MockHistoryService();
     final mockPairing = MockPairingService();
@@ -65,6 +83,51 @@ void main() {
           kind: 'weather',
           metric: 'temperature',
           hours: 168,
+        )).called(1);
+  });
+
+  test('historyPointsProvider forwards since/until to HistoryService for a custom range', () async {
+    final mockService = MockHistoryService();
+    final mockPairing = MockPairingService();
+    when(() => mockPairing.loadConfig()).thenAnswer((_) async => const ConnectionConfig(
+          lanHost: 'greenhouse.local',
+          remoteHost: '',
+          port: 8883,
+          tlsFingerprint: '',
+          username: '',
+          password: '',
+          remoteUsername: '',
+          remotePassword: '',
+        ));
+    when(() => mockService.fetchPoints(
+          lanHost: any(named: 'lanHost'),
+          zone: any(named: 'zone'),
+          kind: any(named: 'kind'),
+          metric: any(named: 'metric'),
+          hours: any(named: 'hours'),
+          since: any(named: 'since'),
+          until: any(named: 'until'),
+        )).thenAnswer((_) async => []);
+
+    final container = ProviderContainer(overrides: [
+      historyServiceProvider.overrideWithValue(mockService),
+      pairingServiceProvider.overrideWithValue(mockPairing),
+    ]);
+    addTearDown(container.dispose);
+
+    final since = DateTime.fromMillisecondsSinceEpoch(1000000);
+    final until = DateTime.fromMillisecondsSinceEpoch(2000000);
+    final query = HistoryQuery(zone: 'zone1', metric: 'air_temperature', since: since, until: until);
+    await container.read(historyPointsProvider(query).future);
+
+    verify(() => mockService.fetchPoints(
+          lanHost: 'greenhouse.local',
+          zone: 'zone1',
+          kind: 'zone',
+          metric: 'air_temperature',
+          hours: 24,
+          since: since,
+          until: until,
         )).called(1);
   });
 
