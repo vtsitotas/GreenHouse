@@ -45,6 +45,38 @@ void main() {
       );
     });
 
+    test('fetchPoints sends since/until instead of hours for a custom range', () async {
+      final client = MockClient((request) async {
+        expect(request.url.queryParameters['since'], '1000');
+        expect(request.url.queryParameters['until'], '2000');
+        expect(request.url.queryParameters.containsKey('hours'), isFalse);
+        return http.Response(jsonEncode({'points': <List<dynamic>>[]}), 200);
+      });
+      final service = HistoryService(client: client);
+      await service.fetchPoints(
+        lanHost: 'greenhouse.local',
+        zone: 'zone1',
+        metric: 'air_temperature',
+        since: DateTime.fromMillisecondsSinceEpoch(1000000),
+        until: DateTime.fromMillisecondsSinceEpoch(2000000),
+      );
+    });
+
+    test('fetchPoints sends hours (not since/until) when no custom range is given', () async {
+      final client = MockClient((request) async {
+        // hours defaults to 24 as a double; Dart's double.toString() renders
+        // it as '24.0' -- this must stay exactly as it was before this task,
+        // since changing wire format for the existing rolling-window path is
+        // out of scope and would be an unrequested behavior change.
+        expect(request.url.queryParameters['hours'], '24.0');
+        expect(request.url.queryParameters.containsKey('since'), isFalse);
+        expect(request.url.queryParameters.containsKey('until'), isFalse);
+        return http.Response(jsonEncode({'points': <List<dynamic>>[]}), 200);
+      });
+      final service = HistoryService(client: client);
+      await service.fetchPoints(lanHost: 'greenhouse.local', zone: 'zone1', metric: 'x');
+    });
+
     test('fetchSeries parses a successful response', () async {
       final client = MockClient((request) async {
         expect(request.url.path, '/api/history/series');

@@ -12,12 +12,17 @@ class HistoryService {
     String? kind,
     required String metric,
     double hours = 24,
+    DateTime? since,
+    DateTime? until,
   }) async {
+    final isCustomRange = since != null && until != null;
     final params = <String, String>{
       'metric': metric,
-      'hours': hours.toString(),
       if (zone != null) 'zone': zone,
       if (kind != null) 'kind': kind,
+      if (isCustomRange) 'since': (since.millisecondsSinceEpoch ~/ 1000).toString(),
+      if (isCustomRange) 'until': (until.millisecondsSinceEpoch ~/ 1000).toString(),
+      if (!isCustomRange) 'hours': hours.toString(),
     };
     final uri = Uri.http(lanHost, '/api/history', params);
     final resp = await client.get(uri);
