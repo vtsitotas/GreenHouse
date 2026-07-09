@@ -1,11 +1,23 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-08 (history-chart feature session)
-**Status:** ✅ Zero-touch setup, weather automation, multi-zone sensor mesh firmware, and full sensor-history + chart feature all complete and merged to `main`. App installed and tested on real hardware (Pi Zero W + Redmi Note 13 Pro+).
+**Last updated:** 2026-07-09 (dynamic mesh relay session)
+**Status:** ✅ Zero-touch setup, weather automation, sensor-history + chart feature, and now **dynamic multi-hop ESP-NOW mesh relay firmware** all complete and committed to `main`. Firmware is code-complete and reviewed but **not yet flashed to real hardware** — compile verification and the hardware bench test are the user's next step (no Arduino toolchain in the dev sandbox). App/Pi-side previously tested on real hardware (Pi Zero W + Redmi Note 13 Pro+); unaffected by this session.
 
 ---
 
-## TL;DR of this session
+## TL;DR of this session (2026-07-09)
+
+Built a **dynamic multi-hop ESP-NOW mesh relay** for the sensor firmware, replacing the pure star topology (every edge node → hardcoded bridge MAC) that shipped in the earlier "multi-zone sensor mesh" commit. Full plain-language explainer: `docs/MESH_RELAY_EXPLAINED.md`. Full technical spec/plan: `docs/superpowers/specs/2026-07-09-dynamic-mesh-relay-design.md` / `docs/superpowers/plans/2026-07-09-dynamic-mesh-relay.md`.
+
+**What it does:** sensor nodes discover neighbors via periodic broadcast beacons, pick the lowest-hop-count trusted neighbor as their "parent" (RSSI tiebreak, RPL-inspired strict-rank rule so routing loops can't form), relay each other's readings toward the bridge, use a trickle-style adaptive beacon interval (2s when unstable, backs off to 60s once settled), encrypt sensor data (not beacons — an ESP-NOW platform limitation) via a shared network-wide key, buffer readings locally if isolated, and self-heal (re-route) if a relay node dies or moves. The bridge now looks up MQTT zone by the packet's *origin* MAC (not the immediate sender, which may now be a relay), publishes sensor readings with `retain=true` (was `false` — closes an old backlog item about zone cards going blank after a broker restart), and tracks per-node online/offline status.
+
+Built via brainstorm → design spec → implementation plan (written by a Fable 5 agent) → subagent-driven-development (4 tasks, each with implementer + reviewer subagents) → whole-branch review (Opus). Findings caught and fixed along the way: low-entropy placeholder key material (caught by an independent background security scan), a transient mutual-parent-loop edge case in the loop-safety design (mitigated with an immediate "orphan beacon" on parent loss), and a blocking MQTT-reconnect bug that would have silently stopped the bridge from beaconing during broker outages. A small off-by-default test hook (`MESH_TEST_IGNORE_BRIDGE`) was added afterward to let multi-hop be bench-tested at desk range without needing real physical distance.
+
+**Not done yet:** the code has never been compiled (no `arduino-cli` in the dev sandbox) or run on real hardware — that's the user's next step. See `docs/MESH_RELAY_EXPLAINED.md` and the plan's Task 5 for the bench-test checklist.
+
+---
+
+## Previous session (2026-07-08)
 
 Two things happened:
 
@@ -63,8 +75,9 @@ ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -
 
 ```
 ┌─────────── FIELD / GREENHOUSE ───────────┐
-│  ESP-NOW sensor nodes → ESP32 bridge      │  (firmware done, not yet
-│     → MQTT publish to Pi                  │   field-tested on real HW)
+│  ESP-NOW sensor nodes, dynamic multi-hop  │  (firmware done, not yet
+│    mesh relay → ESP32 bridge              │   field-tested on real HW —
+│     → MQTT publish to Pi                  │   see docs/MESH_RELAY_EXPLAINED.md)
 └──────────────────┬─────────────────────────┘
                     │ MQTT (loopback 1883, internal services)
 ┌───────────────────▼───────────────────────────────┐
@@ -99,6 +112,7 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `pi/portal/portal.py` | Flask :80 — WiFi setup, `/pair`, `/api/history`, `/api/history/series` |
 | `pi/tools/simulator.py` | Fake sensor data generator — use when no real edge nodes are attached |
 | `pi/scripts/hivemq_bridge.py` | HiveMQ Cloud bridge (paho-mqtt) — replaces Mosquitto's native bridge, which never worked (see below) |
+| `firmware/libraries/GreenhouseMesh/` | Shared mesh-relay library (`mesh_config.h` keys/trusted-nodes/tuning, `mesh_node.h` routing/relay logic) — 2026-07-09 session, see `docs/MESH_RELAY_EXPLAINED.md` |
 | `deploy.ps1` | One command: scp + install + selftest on any Pi — **use this, not manual scp** |
 | `app/lib/screens/history/history_screen.dart` | The chart screen (fl_chart), this session's main feature |
 | `app/lib/utils/history_prediction.dart` | Trend-extrapolation + forecast-overlay prediction logic |
@@ -111,7 +125,7 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 
 **Slice status:**
 - 1 App + Connectivity — ✅ done
-- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, **not field-validated on real sensor hardware** (simulator only); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
+- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, including 2026-07-09's dynamic multi-hop relay upgrade (was pure star topology before); **not field-validated on real sensor hardware** (simulator only, and the new relay code has never even been compiled — no toolchain in the dev sandbox); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
 - 3 Storage + History — ✅ done, reimplemented as a local SQLite recorder (not InfluxDB) + this session's chart feature
 - 4 Automation + Alerts — done differently: in-app duration-based rules (Weather screen → Rules tab, fully editable from the app) + `flutter_local_notifications`, instead of Node-RED/Telegram
 - 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **not started**; current remote access is single-tenant HiveMQ Cloud + local notifications only
