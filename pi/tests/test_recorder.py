@@ -309,6 +309,8 @@ def test_parse_topic_weather_metrics():
         ('weather', None, 'temperature')
     assert recorder.parse_topic('greenhouse/weather/rain_mm_1h') == \
         ('weather', None, 'rain_mm_1h')
+    assert recorder.parse_topic('greenhouse/weather/pressure') == \
+        ('weather', None, 'pressure')
 
 
 def test_parse_topic_ignores_unknown_topics():
