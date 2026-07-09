@@ -36,6 +36,9 @@ void mqttPublish(const char* topic, const char* payload, bool retain) {
   Serial.printf("  → %s  %s%s\n", topic, payload, retain ? "  (retained)" : "");
 }
 
+// One-time blocking connect, used only in setup() before the mesh starts
+// beaconing. loop() never calls this — it uses reconnectMQTTNonBlocking()
+// below instead, so a broker outage after boot doesn't stop beaconing.
 void reconnectMQTT() {
   while (!mqtt.connected()) {
     Serial.print("[mqtt] connecting... ");
@@ -46,9 +49,6 @@ void reconnectMQTT() {
     } else {
       Serial.printf("failed rc=%d, retry in 5s\n", mqtt.state());
       delay(5000);
-      // Note: while MQTT is down this loop also pauses rank-0 beacons, so
-      // children go unrouted and buffer their readings — which is exactly
-      // the right behavior during a broker outage.
     }
   }
 }
