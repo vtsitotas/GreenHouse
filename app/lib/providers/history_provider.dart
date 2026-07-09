@@ -84,7 +84,10 @@ typedef HistoryData = ({List<HistoryPoint> actual, List<HistoryPoint> predicted}
 final historyWithPredictionProvider =
     FutureProvider.family<HistoryData, HistoryQuery>((ref, query) async {
   final actual = await ref.watch(historyPointsProvider(query).future);
-  if (actual.length < 2) {
+  // Prediction extrapolates forward from "now" — meaningless for a custom
+  // past date range, since what happened next is already known data, not a
+  // forecast. Custom ranges show only the real recorded points.
+  if (query.isCustomRange || actual.length < 2) {
     return (actual: actual, predicted: <HistoryPoint>[]);
   }
 
