@@ -93,6 +93,10 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
     return;
   }
   const char* zone = TRUSTED_NODES[idx].zone;
+  // NOTE: liveness tracking is data-only, not beacon-based. A run of consecutive
+  // DHT NaN failures on a node can cause a false "offline" report even though the
+  // node is alive and beaconing normally. This is a known, accepted limitation for
+  // this project's scope, not a bug.
   lastSeenMs[idx] = millis();
   nodeOnline[idx] = true;
 
@@ -126,6 +130,7 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
 // distinguishes "node is dead" from "data arriving via a longer path" (which
 // still refreshes lastSeenMs through the relay chain).
 void checkOfflineNodes(uint32_t now) {
+  if (!mqtt.connected()) return;  // don't flip nodeOnline[] until we can actually publish the transition
   if (now - lastOfflineCheckMs < 1000) return;
   lastOfflineCheckMs = now;
   for (int i = 0; i < TRUSTED_NODE_COUNT; i++) {
