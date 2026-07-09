@@ -1,11 +1,26 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-09 (dynamic mesh relay session)
-**Status:** ✅ Zero-touch setup, weather automation, sensor-history + chart feature, and now **dynamic multi-hop ESP-NOW mesh relay firmware** all complete and committed to `main`. Firmware is code-complete and reviewed but **not yet flashed to real hardware** — compile verification and the hardware bench test are the user's next step (no Arduino toolchain in the dev sandbox). App/Pi-side previously tested on real hardware (Pi Zero W + Redmi Note 13 Pro+); unaffected by this session.
+**Last updated:** 2026-07-09 (history custom date-range picker session)
+**Status:** ✅ Zero-touch setup, weather automation, sensor-history + chart feature, dynamic multi-hop ESP-NOW mesh relay firmware, and now a **custom date-range picker for the history chart** all complete, merged to `main`, and pushed to GitHub. **Fully deployed and verified live end-to-end this session:** app reinstalled + reconnected on the Redmi Note 13 Pro+ via "Find my greenhouse", Pi redeployed via `deploy.ps1` (selftest 26/26), and the new `since`/`until` history API confirmed working against real recorded data on the physical unit. Mesh relay firmware from the previous session still hasn't been compiled/flashed to real hardware (unrelated to this session).
 
 ---
 
-## TL;DR of this session (2026-07-09)
+## TL;DR of this session (2026-07-09, history custom date-range picker)
+
+Added a **custom date-range picker** to the history chart, so users can pick an arbitrary past date range (or single day) instead of only the rolling 24h/7d/30d/90d windows. Spec: `docs/superpowers/specs/2026-07-09-history-custom-date-range-design.md`. Plan: `docs/superpowers/plans/2026-07-09-history-custom-date-range.md`.
+
+**What changed:**
+- **Backend dedup:** the query logic duplicated between `portal.py`'s HTTP `/api/history` and `recorder.py`'s MQTT `_handle_history_request` was extracted into `pi/shared/history_query.py::query_points()`, extended to accept an absolute `since`/`until` window (unix epoch seconds) alongside the existing relative `hours` window. Both transports now share one implementation.
+- **App side:** `HistoryQuery`, `HistoryService.fetchPoints`, and `GreenhouseRepository.fetchHistoryViaMqtt` all gained `since`/`until` support, threaded through `historyPointsProvider`. The prediction/forecast overlay is suppressed for custom ranges (extrapolating from an arbitrary past end-date isn't a real forecast). The history screen gained a 5th "Custom…" chip that opens `showDateRangePicker`.
+- Also fixed two small pre-existing bugs found in an earlier brainstorm this session: the `pressure` weather metric was silently dropped by the recorder (added to its tracked metric set), and `weather.json` was root-owned while `greenhouse-weather.service` runs as `pi` (location pushes from the app were failing silently) — now `chown pi:pi` in `install.sh`.
+
+**Process:** brainstorm → design spec → 9-task implementation plan → subagent-driven-development. **Notable hiccup:** several early background implementer subagents (dispatched without an isolated-worktree flag) wrote files or committed directly against the `main` branch checkout instead of the prepared isolated worktree, despite being given absolute paths — caught each time, `main` was reset to its pre-session state, and the remaining tasks were implemented directly by the controller instead of via background subagents. A final whole-branch review (Opus) then caught one real Important bug: `query_points()` picked minute- vs. hour-resolution purely by requested *span*, not by how old the range was, so a short (≤48h) custom range more than ~90 days back would silently return empty even though the hourly rollup still had the data. Fixed by tightening the date-picker's `firstDate` bound to 90 days (was 730) instead of teaching the query function about retention config — the simpler, thesis-appropriate fix. Also unified a validation inconsistency between the two transports (`since`/`until` must be provided together) into `query_points()` itself.
+
+**Verified:** pi test suite 56/56, `flutter analyze` clean, `flutter test` 61/61, release APK builds, installed + tested live on the Redmi Note 13 Pro+ over the local network (via a portal restart to reopen the pairing window), Pi redeployed via `deploy.ps1` (selftest 26/26 after a transient HiveMQ-bridge-recheck retry), and the new `since`/`until` `/api/history` params confirmed returning real data against the physical unit's recorder DB. Also discovered and fixed in passing: the sensor simulator (`pi/tools/simulator.py`) wasn't running (no real edge nodes attached either), so zone1/2/3 history was ~25h stale — restarted it (`systemd-run --unit=greenhouse-sim`) so live/history data flows again for demo purposes. This is a transient systemd-run unit, not persistent across reboot — re-run the Quick Start snippet below if it's not running in a future session.
+
+---
+
+## Previous session (2026-07-09, dynamic mesh relay)
 
 Built a **dynamic multi-hop ESP-NOW mesh relay** for the sensor firmware, replacing the pure star topology (every edge node → hardcoded bridge MAC) that shipped in the earlier "multi-zone sensor mesh" commit. Full plain-language explainer: `docs/MESH_RELAY_EXPLAINED.md`. Full technical spec/plan: `docs/superpowers/specs/2026-07-09-dynamic-mesh-relay-design.md` / `docs/superpowers/plans/2026-07-09-dynamic-mesh-relay.md`.
 
@@ -45,8 +60,8 @@ ssh pi@greenhouse.local
 
 # Verify the Pi
 ssh pi@greenhouse.local "sudo bash /home/pi/greenhouse/scripts/selftest.sh"
-# Expect 23/23. If "portal not responding" shows up, it's usually just
-# mid-restart (~20s to rebind port 80) — rerun a few seconds later.
+# Expect 26/26 (as of 2026-07-09). If "portal not responding" shows up, it's
+# usually just mid-restart (~20s to rebind port 80) — rerun a few seconds later.
 
 # Reopen the pairing window (it auto-expires after 600s uptime)
 ssh pi@greenhouse.local "sudo systemctl restart greenhouse-portal"
@@ -54,6 +69,10 @@ ssh pi@greenhouse.local "sudo systemctl restart greenhouse-portal"
 # Redeploy the Pi side after code changes — from repo root, NOT manual scp:
 .\deploy.ps1                          # defaults to greenhouse.local
 .\deploy.ps1 -PiHost 192.168.1.54     # or target a specific IP
+
+# No real sensors attached? The simulator isn't a persistent service --
+# restart it if zone1/2/3 history looks stale:
+ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -c 'python3 /home/pi/greenhouse/tools/simulator.py --interval 10'"
 
 # Build + install the app (phone via USB)
 export PATH="$PATH:/c/Users/billy/flutter/bin"   # Git Bash
@@ -114,8 +133,9 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `pi/scripts/hivemq_bridge.py` | HiveMQ Cloud bridge (paho-mqtt) — replaces Mosquitto's native bridge, which never worked (see below) |
 | `firmware/libraries/GreenhouseMesh/` | Shared mesh-relay library (`mesh_config.h` keys/trusted-nodes/tuning, `mesh_node.h` routing/relay logic) — 2026-07-09 session, see `docs/MESH_RELAY_EXPLAINED.md` |
 | `deploy.ps1` | One command: scp + install + selftest on any Pi — **use this, not manual scp** |
-| `app/lib/screens/history/history_screen.dart` | The chart screen (fl_chart), this session's main feature |
+| `app/lib/screens/history/history_screen.dart` | The chart screen (fl_chart) + custom date-range chip (2026-07-09) |
 | `app/lib/utils/history_prediction.dart` | Trend-extrapolation + forecast-overlay prediction logic |
+| `pi/shared/history_query.py` | Shared `query_points()` used by both `portal.py` (HTTP) and `recorder.py` (MQTT) — 2026-07-09, closes an old duplication gap |
 
 ---
 
@@ -149,11 +169,11 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - [ ] `/pair` and `/api/history*` are unauthenticated. Fine for LAN-only/thesis use; would need a PIN/QR/token before any public or multi-customer deployment.
 
 **App feature gaps:**
-- [ ] **Pick-a-specific-past-date view for history.** Currently only rolling windows (24h/7d/30d/90d back from now) — no fixed-calendar-date picker. Recorder data already supports it (90d minute-resolution, 2yr hourly); needs `/api/history` to accept an absolute `since`/`until` (or `date=YYYY-MM-DD`) plus a date-picker UI. Good next brainstorm→spec→plan candidate.
+- [x] ~~Pick-a-specific-past-date view for history~~ — done 2026-07-09. A "Custom…" chip on the history screen opens a date-range picker (bounded to 90 days back, matching minute-resolution retention); both `/api/history` (HTTP) and the MQTT history request now accept absolute `since`/`until`. See this session's TL;DR above.
 - [ ] **Screen-by-screen UX enhancement pass** over the rest of the app (dashboard, control, devices, pairing, settings, weather-forecast chart) — same brainstorm→spec→plan cycle as the history chart, one screen at a time.
-- [ ] `pressure` weather metric is published by the simulator but silently dropped by the recorder (not in its tracked metric set) — no history for it.
-- [ ] `weather.json` write-permission bug: the app's GPS/location-picker push to the Pi fails silently (service runs as `pi`, file owned `root:root`) — location/interval changes don't actually persist across a Pi reboot.
-- [ ] Nice-to-haves from the original vision, all unstarted: ESP32-CAM plant time-lapse, CSV export, a smartwatch/widget glance.
+- [x] ~~`pressure` weather metric silently dropped by the recorder~~ — fixed 2026-07-09 (added to `_WEATHER_METRICS`). Note: `weather.py` (the real Open-Meteo service) still doesn't publish real pressure data, only `simulator.py` does — recording it is now correct, but there's no real pressure source yet.
+- [x] ~~`weather.json` write-permission bug~~ — fixed 2026-07-09 (`chown pi:pi` in `install.sh`).
+- [ ] Nice-to-haves from the original vision, all unstarted: ESP32-CAM plant time-lapse, CSV export, a smartwatch/widget glance. (ESP32-CAM was floated again this session as a possible next feature but not pursued — user chose the date-range picker + bug fixes instead.)
 
 **Housekeeping:**
 - [ ] `debugPrint()` calls in `mqtt_connection.dart` / `connection_provider.dart` — remove before any demo.
