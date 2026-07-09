@@ -8,10 +8,14 @@ import json
 import os
 import signal
 import sqlite3
+import sys
 import threading
 import time
 
 import paho.mqtt.client as mqtt
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from history_query import query_points
 
 RECORDER_CFG = '/etc/greenhouse/recorder.json'
 MQTT_HOST = '127.0.0.1'
@@ -202,28 +206,9 @@ def rollup_and_prune(conn: sqlite3.Connection, now: int, raw_days: int, hourly_d
     conn.execute('PRAGMA wal_checkpoint(TRUNCATE)')
 
 
-# ── MQTT history request/response (mirrors portal.py's /api/history) ────────
+# ── MQTT history request/response (shared query logic with portal.py) ──────
 def _history_db_ro(db_path: str) -> sqlite3.Connection:
     return sqlite3.connect(f'file:{db_path}?mode=ro', uri=True)
-
-
-def _query_points(conn: sqlite3.Connection, kind, zone, metric: str, hours: float) -> dict:
-    table = 'readings' if hours <= 48 else 'readings_hourly'
-    resolution = 'minute' if table == 'readings' else 'hour'
-    cutoff = int(time.time() - hours * 3600)
-    row = conn.execute(
-        'SELECT id FROM series WHERE kind=? AND zone IS ? AND metric=?',
-        (kind, zone, metric)).fetchone()
-    if row is None:
-        return {'zone': zone, 'metric': metric, 'resolution': resolution, 'points': []}
-    series_id = row[0]
-    pts = conn.execute(
-        f'SELECT ts, avg, min, max FROM {table} WHERE series_id=? AND ts >= ? ORDER BY ts',
-        (series_id, cutoff)).fetchall()
-    return {
-        'zone': zone, 'metric': metric, 'resolution': resolution,
-        'points': [[p[0], p[1], p[2], p[3]] for p in pts],
-    }
 
 
 def _handle_history_request(client, db_path: str, raw_payload: bytes) -> None:
@@ -235,9 +220,13 @@ def _handle_history_request(client, db_path: str, raw_payload: bytes) -> None:
     try:
         conn = _history_db_ro(db_path)
         try:
-            response = _query_points(
+            since = req.get('since')
+            until = req.get('until')
+            response = query_points(
                 conn, req.get('kind'), req.get('zone'), req.get('metric'),
-                float(req.get('hours', 24)))
+                hours=float(req.get('hours', 24)),
+                since=float(since) if since is not None else None,
+                until=float(until) if until is not None else None)
         finally:
             conn.close()
     except Exception as e:

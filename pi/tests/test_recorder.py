@@ -3,6 +3,11 @@ import sys, os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 import recorder
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+import history_query
+
+import json
+
 
 def test_buffer_averages_multiple_readings_in_same_minute():
     buf = recorder.MinuteBucketBuffer()
@@ -476,3 +481,70 @@ def test_rollup_tick_logs_and_does_not_raise_on_failure(monkeypatch, capsys):
         out = capsys.readouterr().out
         assert '[recorder] ERROR' in out
         conn.close()
+
+
+# ── MQTT history request/response (now backed by the shared query_points) ──
+class _FakeMqttClient:
+    def __init__(self):
+        self.published = []
+
+    def publish(self, topic, payload, qos=0, retain=False):
+        self.published.append((topic, payload, qos, retain))
+
+
+def _seed_history_db(db_path, now):
+    conn = recorder.init_db(db_path)
+    series_ids = {}
+    recorder.write_buckets(conn, series_ids, [
+        (('zone', 'zone1', 'air_temperature'), now - 60, 22.0, 21.0, 23.0, 2),
+    ])
+    return conn
+
+
+def test_handle_history_request_hours_mode_publishes_points(monkeypatch, tmp_path):
+    db_path = str(tmp_path / 'test.db')
+    now = 100000
+    _seed_history_db(db_path, now).close()
+    monkeypatch.setattr(history_query.time, 'time', lambda: now)
+    client = _FakeMqttClient()
+    payload = json.dumps({'id': 'req1', 'kind': 'zone', 'zone': 'zone1',
+                           'metric': 'air_temperature', 'hours': 1}).encode()
+    recorder._handle_history_request(client, db_path, payload)
+    assert len(client.published) == 1
+    topic, body, qos, retain = client.published[0]
+    assert topic == 'greenhouse/history/response/req1'
+    assert retain is False
+    data = json.loads(body)
+    assert len(data['points']) == 1
+
+
+def test_handle_history_request_since_until_mode_bounds_points(tmp_path):
+    db_path = str(tmp_path / 'test.db')
+    now = 100000
+    _seed_history_db(db_path, now).close()
+    client = _FakeMqttClient()
+    payload = json.dumps({
+        'id': 'req2', 'kind': 'zone', 'zone': 'zone1', 'metric': 'air_temperature',
+        'since': now - 90, 'until': now - 30,
+    }).encode()
+    recorder._handle_history_request(client, db_path, payload)
+    data = json.loads(client.published[0][1])
+    assert len(data['points']) == 1
+    assert data['points'][0][0] == now - 60
+
+
+def test_handle_history_request_malformed_payload_does_not_raise(tmp_path):
+    db_path = str(tmp_path / 'test.db')
+    client = _FakeMqttClient()
+    recorder._handle_history_request(client, db_path, b'not json')  # must not raise
+    assert client.published == []  # no id to reply on -- nothing published
+
+
+def test_handle_history_request_query_error_publishes_error_payload(tmp_path):
+    db_path = str(tmp_path / 'test.db')  # never created -- query will fail
+    client = _FakeMqttClient()
+    payload = json.dumps({'id': 'req3', 'kind': 'zone', 'zone': 'zone1',
+                           'metric': 'air_temperature'}).encode()
+    recorder._handle_history_request(client, db_path, payload)
+    data = json.loads(client.published[0][1])
+    assert 'error' in data
