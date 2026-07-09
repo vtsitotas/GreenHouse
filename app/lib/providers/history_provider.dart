@@ -13,13 +13,21 @@ class HistoryQuery {
   final String kind;
   final String metric;
   final double hours;
+  final DateTime? since;
+  final DateTime? until;
 
   const HistoryQuery({
     this.zone,
     String? kind,
     required this.metric,
     this.hours = 24,
+    this.since,
+    this.until,
   }) : kind = kind ?? (zone != null ? 'zone' : 'weather');
+
+  /// True when this query is an absolute custom range (since+until), rather
+  /// than the rolling `hours`-back-from-now window.
+  bool get isCustomRange => since != null && until != null;
 
   @override
   bool operator ==(Object other) =>
@@ -27,10 +35,12 @@ class HistoryQuery {
       other.zone == zone &&
       other.kind == kind &&
       other.metric == metric &&
-      other.hours == hours;
+      other.hours == hours &&
+      other.since == since &&
+      other.until == until;
 
   @override
-  int get hashCode => Object.hash(zone, kind, metric, hours);
+  int get hashCode => Object.hash(zone, kind, metric, hours, since, until);
 }
 
 final historyPointsProvider =
@@ -48,6 +58,8 @@ final historyPointsProvider =
           kind: query.kind,
           metric: query.metric,
           hours: query.hours,
+          since: query.since,
+          until: query.until,
         );
     if (data == null || data['error'] != null) {
       throw Exception('History fetch failed via MQTT');
@@ -62,6 +74,8 @@ final historyPointsProvider =
     kind: query.kind,
     metric: query.metric,
     hours: query.hours,
+    since: query.since,
+    until: query.until,
   );
 });
 
