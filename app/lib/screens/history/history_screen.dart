@@ -35,6 +35,7 @@ const _monthNames = [
 ];
 String _twoDigits(int n) => n.toString().padLeft(2, '0');
 String _timeLabel(DateTime t) => '${_twoDigits(t.hour)}:${_twoDigits(t.minute)}';
+String _dateLabel(DateTime t) => '${_monthNames[t.month - 1]} ${t.day}';
 
 const _zoneMetrics = ['air_temperature', 'air_humidity', 'soil_moisture', 'light_lux'];
 const _zoneLabels = {
@@ -67,6 +68,9 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   late final String? _zone;
   late String _metric;
   double _hours = 24;
+  bool _customSelected = false;
+  DateTime? _since;
+  DateTime? _until;
 
   @override
   void initState() {
@@ -86,7 +90,26 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     return '$zoneLabel — ${_labelFor(_metric)}';
   }
 
+  String _customRangeLabel(DateTime since, DateTime until) {
+    final sameDay =
+        since.year == until.year && since.month == until.month && since.day == until.day;
+    return sameDay ? _dateLabel(since) : '${_dateLabel(since)} – ${_dateLabel(until)}';
+  }
+
+  String get _customChipLabel =>
+      (_since != null && _until != null) ? _customRangeLabel(_since!, _until!) : 'Custom…';
+
+  /// Span this query effectively covers, in hours -- `_hours` for a rolling
+  /// window, or the picked custom range's real span otherwise. Drives the
+  /// same label/axis-formatting thresholds `_hours` alone used to.
+  double get _effectiveHours => (_customSelected && _since != null && _until != null)
+      ? _until!.difference(_since!).inSeconds / 3600.0
+      : _hours;
+
   String get _rangeLabel {
+    if (_customSelected && _since != null && _until != null) {
+      return _customRangeLabel(_since!, _until!);
+    }
     final tag = _ranges.firstWhere((r) => r.$1 == _hours, orElse: () => (_hours, '')).$2;
     return switch (tag) {
       '24h' => 'Last 24 Hours',
@@ -98,14 +121,39 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
   }
 
   String _axisTimeLabel(DateTime t) {
-    if (_hours <= 24) return _timeLabel(t);
-    if (_hours <= 168) return '${_weekdayNames[t.weekday - 1]} ${_timeLabel(t)}';
-    return '${_monthNames[t.month - 1]} ${t.day}';
+    final h = _effectiveHours;
+    if (h <= 24) return _timeLabel(t);
+    if (h <= 168) return '${_weekdayNames[t.weekday - 1]} ${_timeLabel(t)}';
+    return _dateLabel(t);
+  }
+
+  Future<void> _pickCustomRange() async {
+    final now = DateTime.now();
+    // Defaults to today->today so "Save" is immediately actionable without
+    // navigating the calendar grid first (also makes this flow easy to
+    // widget-test deterministically).
+    final initial = (_since != null && _until != null)
+        ? DateTimeRange(start: _since!, end: _until!)
+        : DateTimeRange(start: now, end: now);
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: now.subtract(const Duration(days: 730)),
+      lastDate: now,
+      initialDateRange: initial,
+    );
+    if (picked == null) return;
+    setState(() {
+      _customSelected = true;
+      _since = DateTime(picked.start.year, picked.start.month, picked.start.day);
+      _until = DateTime(picked.end.year, picked.end.month, picked.end.day, 23, 59, 59);
+    });
   }
 
   @override
   Widget build(BuildContext context) {
-    final query = HistoryQuery(zone: _zone, kind: _kind, metric: _metric, hours: _hours);
+    final query = (_customSelected && _since != null && _until != null)
+        ? HistoryQuery(zone: _zone, kind: _kind, metric: _metric, since: _since, until: _until)
+        : HistoryQuery(zone: _zone, kind: _kind, metric: _metric, hours: _hours);
     final dataAsync = ref.watch(historyWithPredictionProvider(query));
     final unit = _unitFor(_metric);
 
@@ -130,13 +178,21 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             padding: const EdgeInsets.fromLTRB(16, 0, 16, 8),
             child: Wrap(
               spacing: 8,
-              children: _ranges
-                  .map((r) => ChoiceChip(
-                        label: Text(r.$2),
-                        selected: r.$1 == _hours,
-                        onSelected: (_) => setState(() => _hours = r.$1),
-                      ))
-                  .toList(),
+              children: [
+                ..._ranges.map((r) => ChoiceChip(
+                      label: Text(r.$2),
+                      selected: !_customSelected && r.$1 == _hours,
+                      onSelected: (_) => setState(() {
+                        _customSelected = false;
+                        _hours = r.$1;
+                      }),
+                    )),
+                ChoiceChip(
+                  label: Text(_customChipLabel),
+                  selected: _customSelected,
+                  onSelected: (_) => _pickCustomRange(),
+                ),
+              ],
             ),
           ),
           Expanded(
@@ -181,7 +237,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                       .headlineMedium
                                       ?.copyWith(fontWeight: FontWeight.bold)),
                               const SizedBox(width: 8),
-                              Text('now', style: Theme.of(context).textTheme.bodySmall),
+                              Text(
+                                _customSelected && _until != null
+                                    ? 'on ${_dateLabel(_until!)}'
+                                    : 'now',
+                                style: Theme.of(context).textTheme.bodySmall,
+                              ),
                             ],
                           ),
                           Text(

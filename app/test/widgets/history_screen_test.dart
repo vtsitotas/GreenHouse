@@ -102,4 +102,33 @@ void main() {
     expect(find.text('Wind'), findsOneWidget);
     expect(find.text('Rain'), findsOneWidget);
   });
+
+  testWidgets('Custom chip opens a date-range picker and switches to a since/until query',
+      (tester) async {
+    HistoryQuery? lastQuery;
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        historyWithPredictionProvider.overrideWith((ref, query) async {
+          lastQuery = query;
+          return (actual: [_pt(0, 20.0), _pt(60, 21.0)], predicted: <HistoryPoint>[]);
+        }),
+      ],
+      child: const MaterialApp(home: HistoryScreen(zone: 'zone1', metric: 'air_temperature')),
+    ));
+    await tester.pumpAndSettle();
+    expect(lastQuery!.isCustomRange, isFalse);
+    expect(find.text('Last 24 Hours'), findsOneWidget);
+
+    await tester.tap(find.text('Custom…'));
+    await tester.pumpAndSettle();
+    // The range picker opens pre-populated with today→today (see Step 3),
+    // so tapping Save immediately confirms a valid single-day range without
+    // needing to navigate the calendar grid.
+    await tester.tap(find.text('Save'));
+    await tester.pumpAndSettle();
+
+    expect(lastQuery!.isCustomRange, isTrue);
+    expect(find.text('Last 24 Hours'), findsNothing);
+    expect(find.text('now'), findsNothing); // header no longer claims a past date is "now"
+  });
 }
