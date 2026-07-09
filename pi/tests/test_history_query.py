@@ -91,3 +91,29 @@ def test_since_until_overrides_hours_when_both_given():
             hours=1, since=now - 100 * 3600, until=now)
         assert result['resolution'] == 'hour'
         conn.close()
+
+
+def test_since_without_until_raises_value_error():
+    with tempfile.TemporaryDirectory() as d:
+        db_path = os.path.join(d, 'test.db')
+        conn = _seed_db(db_path, now=100000)
+        try:
+            history_query.query_points(conn, 'zone', 'zone1', 'air_temperature', since=1000)
+        except ValueError as e:
+            assert 'since and until must be provided together' in str(e)
+        else:
+            raise AssertionError('expected ValueError')
+        conn.close()
+
+
+def test_until_without_since_raises_value_error():
+    with tempfile.TemporaryDirectory() as d:
+        db_path = os.path.join(d, 'test.db')
+        conn = _seed_db(db_path, now=100000)
+        try:
+            history_query.query_points(conn, 'zone', 'zone1', 'air_temperature', until=2000)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError('expected ValueError')
+        conn.close()

@@ -548,3 +548,18 @@ def test_handle_history_request_query_error_publishes_error_payload(tmp_path):
     recorder._handle_history_request(client, db_path, payload)
     data = json.loads(client.published[0][1])
     assert 'error' in data
+
+
+def test_handle_history_request_since_without_until_publishes_error(tmp_path):
+    db_path = str(tmp_path / 'test.db')
+    now = 100000
+    _seed_history_db(db_path, now).close()
+    client = _FakeMqttClient()
+    # Only 'since' given, no 'until' -- query_points() now rejects this
+    # instead of silently falling back to the hours-only default.
+    payload = json.dumps({'id': 'req4', 'kind': 'zone', 'zone': 'zone1',
+                           'metric': 'air_temperature', 'since': now - 90}).encode()
+    recorder._handle_history_request(client, db_path, payload)
+    data = json.loads(client.published[0][1])
+    assert 'error' in data
+    assert 'since and until must be provided together' in data['error']
