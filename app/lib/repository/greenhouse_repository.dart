@@ -141,7 +141,10 @@ class GreenhouseRepository {
     String? kind,
     required String metric,
     double hours = 24,
+    DateTime? since,
+    DateTime? until,
   }) async {
+    final isCustomRange = since != null && until != null;
     final id = 'h${DateTime.now().microsecondsSinceEpoch}';
     final payload = jsonEncode({
       'id': id,
@@ -149,7 +152,9 @@ class GreenhouseRepository {
       if (zone != null) 'zone': zone,
       if (kind != null) 'kind': kind,
       'metric': metric,
-      'hours': hours,
+      if (isCustomRange) 'since': since.millisecondsSinceEpoch ~/ 1000,
+      if (isCustomRange) 'until': until.millisecondsSinceEpoch ~/ 1000,
+      if (!isCustomRange) 'hours': hours,
     });
 
     final completer = Completer<Map<String, dynamic>?>();
