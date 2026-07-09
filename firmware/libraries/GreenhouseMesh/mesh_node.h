@@ -146,6 +146,11 @@ static void meshBeaconTick(uint32_t now) {
 }
 
 // ── Parent management ─────────────────────────────────────────────────────────
+// Drop parent and immediately broadcast an "orphan beacon" to shrink the race
+// window where neighbors (including former children) might still see this node
+// as a valid parent. The de-dup cache and TTL=4 remain as a backstop against
+// transient mutual-parent loops, but this immediate broadcast shrinks the window
+// from up to a full trickle interval down to radio propagation delay.
 static void meshDropParent(const char* why) {
   Serial.printf("[mesh] parent lost (%s) — unrouted, rediscovering\n", why);
   meshParentIdx  = -1;
@@ -153,6 +158,8 @@ static void meshDropParent(const char* why) {
   meshMyRank     = MESH_RANK_UNROUTED;
   meshParentRssi = -128;
   meshTrickleReset();
+  meshSendBeaconNow(MESH_RANK_UNROUTED, meshBeaconIntervalMs);
+  meshLastBeaconMs = millis();
 }
 
 static void meshAdoptParent(int idx, const MeshBeacon* b, int rssi, uint32_t now) {
