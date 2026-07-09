@@ -94,6 +94,49 @@ void main() {
     expect(result?['points'], [[1000, 20.0, 19.0, 21.0]]);
   });
 
+  test('fetchHistoryViaMqtt sends since/until instead of hours for a custom range', () async {
+    repo.connect(_config);
+
+    final resultFuture = repo.fetchHistoryViaMqtt(
+      zone: 'zone1',
+      kind: 'zone',
+      metric: 'air_temperature',
+      since: DateTime.fromMillisecondsSinceEpoch(1000000),
+      until: DateTime.fromMillisecondsSinceEpoch(2000000),
+    );
+
+    await Future(() {});
+    final capturedPayload = verify(
+      () => conn.publishRaw('greenhouse/history/request', captureAny(), retain: any(named: 'retain')),
+    ).captured.single as String;
+    final request = jsonDecode(capturedPayload) as Map<String, dynamic>;
+    expect(request['since'], 1000);
+    expect(request['until'], 2000);
+    expect(request.containsKey('hours'), isFalse);
+
+    eventsCtrl.add(HistoryResponseRaw(request['id'] as String, jsonEncode({'points': <List<dynamic>>[]})));
+    await resultFuture;
+  });
+
+  test('fetchHistoryViaMqtt still sends hours (not since/until) for a normal rolling window', () async {
+    repo.connect(_config);
+
+    final resultFuture = repo.fetchHistoryViaMqtt(
+        zone: 'zone1', kind: 'zone', metric: 'air_temperature', hours: 168);
+
+    await Future(() {});
+    final capturedPayload = verify(
+      () => conn.publishRaw('greenhouse/history/request', captureAny(), retain: any(named: 'retain')),
+    ).captured.single as String;
+    final request = jsonDecode(capturedPayload) as Map<String, dynamic>;
+    expect(request['hours'], 168);
+    expect(request.containsKey('since'), isFalse);
+    expect(request.containsKey('until'), isFalse);
+
+    eventsCtrl.add(HistoryResponseRaw(request['id'] as String, jsonEncode({'points': <List<dynamic>>[]})));
+    await resultFuture;
+  });
+
   test('merges node status and battery into same nodeId entry', () async {
     repo.connect(_config);
     // Same cached-snapshot race as above — wait for the merged state instead
