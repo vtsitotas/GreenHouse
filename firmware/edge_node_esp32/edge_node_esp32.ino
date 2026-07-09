@@ -3,6 +3,8 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <DHT.h>
+#include <mesh_config.h>
+#include <mesh_node.h>
 
 // ── Pin definitions (ESP32 WROOM-32) ─────────────────────────────────────────
 #define DHT_DATA_PIN   4   // GPIO4
@@ -16,25 +18,21 @@
 #define SOIL_DRY_VAL  3163
 #define SOIL_WET_VAL  1529
 
-// ── Bridge MAC address ────────────────────────────────────────────────────────
-uint8_t bridgeMac[] = { 0x20, 0x6E, 0xF1, 0x6C, 0x6B, 0x50 };
-
 // ── Network (channel scan only — never connects) ──────────────────────────────
 #define WIFI_SSID "TP-Link_14A6"
 
-// ── Send interval ─────────────────────────────────────────────────────────────
-#define SEND_INTERVAL_MS 5000
-
-// ── Shared struct (must match bridge exactly) ─────────────────────────────────
-typedef struct {
-  float temperature;
-  float humidity;
-  float soil_moisture;  // 0–100 %
-} SensorPacket;
+// ── Timing ────────────────────────────────────────────────────────────────────
+#define SEND_INTERVAL_MS  5000   // must match MESH_EXPECTED_REPORT_INTERVAL_MS
+#define SENSOR_WARMUP_MS  2000   // sensor power-up settle time
 
 DHT dht(DHT_DATA_PIN, DHT22);
-esp_now_peer_info_t peer;
-int failCount = 0;
+
+// Non-blocking sensor cycle — see the C3 variant for rationale.
+enum SensorPhase { PHASE_IDLE, PHASE_WARMUP };
+SensorPhase phase        = PHASE_IDLE;
+uint32_t    phaseStartMs = 0;
+uint32_t    lastCycleMs  = 0;
+uint32_t    lastRescanMs = 0;
 
 int32_t getWiFiChannel(const char* ssid) {
   int32_t n = WiFi.scanNetworks();
@@ -52,12 +50,19 @@ float soilPercent(int raw) {
 }
 
 void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
-  if (status == ESP_NOW_SEND_SUCCESS) {
-    Serial.println("[esp-now] send OK");
-    failCount = 0;
-  } else {
-    Serial.println("[esp-now] send FAIL");
-    failCount++;
+  meshNotifyTxStatus(status == ESP_NOW_SEND_SUCCESS);
+}
+
+void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
+  uint32_t now = millis();
+  int rssi = info->rx_ctrl ? info->rx_ctrl->rssi : -127;
+  if (len == sizeof(MeshBeacon)) {
+    MeshBeacon b;
+    memcpy(&b, data, sizeof(b));
+    if (b.magic == MESH_MAGIC) meshHandleBeacon(info->src_addr, &b, rssi, now);
+  } else if (len == sizeof(MeshDataPacket)) {
+    // Some child picked us as its parent — relay its packet toward the bridge.
+    meshRelayData(info->src_addr, data, len);
   }
 }
 
@@ -86,48 +91,67 @@ void setup() {
     ESP.restart();
   }
   esp_now_register_send_cb(onDataSent);
-
-  memcpy(peer.peer_addr, bridgeMac, 6);
-  peer.channel = ch;
-  peer.encrypt  = false;
-  esp_now_add_peer(&peer);
+  esp_now_register_recv_cb(onDataRecv);
+  meshInit(0);  // channel 0 = follow current radio channel (survives re-scans)
 
   Serial.printf("[edge] MAC: %s\n", WiFi.macAddress().c_str());
-  Serial.println("[edge] ready");
+  Serial.println("[edge] unrouted — listening for trusted beacons");
 }
 
 void loop() {
-  digitalWrite(DHT_PWR_PIN,  HIGH);
-  digitalWrite(SOIL_PWR_PIN, HIGH);
-  delay(2000);
+  uint32_t now = millis();
 
-  SensorPacket pkt;
-  pkt.temperature   = dht.readTemperature();
-  pkt.humidity      = dht.readHumidity();
-  pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
+  meshBeaconTick(now);          // own beacon on the trickle schedule
+  meshCheckParentTimeout(now);  // self-heal: drop a silent parent
 
-  digitalWrite(DHT_PWR_PIN,  LOW);
-  digitalWrite(SOIL_PWR_PIN, LOW);
+  switch (phase) {
+    case PHASE_IDLE:
+      if (now - lastCycleMs >= SEND_INTERVAL_MS) {
+        digitalWrite(DHT_PWR_PIN,  HIGH);
+        digitalWrite(SOIL_PWR_PIN, HIGH);
+        phaseStartMs = now;
+        phase = PHASE_WARMUP;
+      }
+      break;
 
-  if (isnan(pkt.temperature) || isnan(pkt.humidity)) {
-    Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO4");
+    case PHASE_WARMUP:
+      if (now - phaseStartMs >= SENSOR_WARMUP_MS) {
+        SensorPacket pkt;
+        pkt.temperature   = dht.readTemperature();
+        pkt.humidity      = dht.readHumidity();
+        pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));  // read while powered
+
+        digitalWrite(DHT_PWR_PIN,  LOW);
+        digitalWrite(SOIL_PWR_PIN, LOW);
+        lastCycleMs = now;
+        phase = PHASE_IDLE;
+
+        if (isnan(pkt.temperature) || isnan(pkt.humidity)) {
+          Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO4");
+        } else {
+          Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
+                        pkt.temperature, pkt.humidity, pkt.soil_moisture);
+          meshSendReading(&pkt);  // to parent, or buffered while unrouted
+        }
+      }
+      break;
+  }
+
+  // Continuously unrouted for a minute → maybe the router changed channels.
+  // Re-scan and retune (peers use channel 0, so no re-registration needed).
+  if (!meshHasParent()) {
+    if (now - lastRescanMs >= MESH_RESCAN_AFTER_MS) {
+      lastRescanMs = now;
+      Serial.println("[esp-now] unrouted too long — re-scanning WiFi channel");
+      int32_t ch = getWiFiChannel(WIFI_SSID);
+      esp_wifi_set_promiscuous(true);
+      esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+      esp_wifi_set_promiscuous(false);
+      Serial.printf("[esp-now] tuned to ch%d\n", ch);
+    }
   } else {
-    pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
-    Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
-                  pkt.temperature, pkt.humidity, pkt.soil_moisture);
-    esp_now_send(bridgeMac, (uint8_t*)&pkt, sizeof(pkt));
+    lastRescanMs = now;
   }
 
-  if (failCount >= 3) {
-    Serial.println("[esp-now] re-scanning channel...");
-    int32_t ch = getWiFiChannel(WIFI_SSID);
-    esp_wifi_set_promiscuous(true);
-    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
-    esp_wifi_set_promiscuous(false);
-    peer.channel = ch;
-    esp_now_mod_peer(&peer);
-    failCount = 0;
-  }
-
-  delay(SEND_INTERVAL_MS);
+  delay(10);  // yield; keeps the loop responsive without busy-spinning
 }
