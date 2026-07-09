@@ -119,6 +119,9 @@ echo "==> Writing default weather location config (Athens — edit /etc/greenhou
   "timezone": "Europe/Athens"
 }
 EOF
+# greenhouse-weather.service runs as User=pi and rewrites this file when the
+# app pushes a new location — must be writable by pi, not just root.
+chown pi:pi /etc/greenhouse/weather.json
 
 echo "==> Writing default automation rules config..."
 [ -f /etc/greenhouse/rules.json ] || cat > /etc/greenhouse/rules.json << 'EOF'

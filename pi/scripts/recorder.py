@@ -247,7 +247,7 @@ def _handle_history_request(client, db_path: str, raw_payload: bytes) -> None:
 
 # ── Topic parsing ─────────────────────────────────────────────────────────────
 _ZONE_METRIC_GROUPS = {'air', 'soil', 'light'}
-_WEATHER_METRICS = {'temperature', 'humidity', 'wind_kmh', 'uv_index', 'rain_mm_1h'}
+_WEATHER_METRICS = {'temperature', 'humidity', 'wind_kmh', 'uv_index', 'rain_mm_1h', 'pressure'}
 
 
 def parse_topic(topic: str):
