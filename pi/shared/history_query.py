@@ -14,7 +14,13 @@ def query_points(conn, kind, zone, metric, *, hours=24, since=None, until=None):
     Pass since/until (unix epoch seconds) together for an absolute range --
     they take precedence over hours when both are given. Otherwise hours
     selects a window ending now, exactly as before this function existed.
+
+    Raises ValueError if only one of since/until is given -- both callers
+    (the HTTP route and the MQTT handler) inherit this check instead of
+    each deciding independently what a lone bound means.
     """
+    if (since is None) != (until is None):
+        raise ValueError('since and until must be provided together')
     if since is not None and until is not None:
         span_seconds = until - since
         cutoff = int(since)

@@ -137,7 +137,14 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
         : DateTimeRange(start: now, end: now);
     final picked = await showDateRangePicker(
       context: context,
-      firstDate: now.subtract(const Duration(days: 730)),
+      // Bounded to 90 days, not the recorder's full 2-year hourly-rollup
+      // retention: the Pi picks minute- vs hour-resolution by requested
+      // *span*, not by how old the range is, so a short (<=48h) range
+      // older than the 90-day raw-data retention would silently come back
+      // empty even though the hourly rollup still has the data. Keeping
+      // the bound at 90 days guarantees every offered date has minute
+      // data, whatever span the user picks.
+      firstDate: now.subtract(const Duration(days: 90)),
       lastDate: now,
       initialDateRange: initial,
     );
