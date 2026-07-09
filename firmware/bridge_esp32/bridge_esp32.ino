@@ -28,6 +28,7 @@ uint32_t lastSeenMs[TRUSTED_NODE_COUNT];
 bool     nodeOnline[TRUSTED_NODE_COUNT];
 uint32_t lastBeaconMs       = 0;
 uint32_t lastOfflineCheckMs = 0;
+uint32_t lastMqttAttemptMs  = 0;
 
 void mqttPublish(const char* topic, const char* payload, bool retain) {
   if (!mqtt.connected()) return;
@@ -49,6 +50,23 @@ void reconnectMQTT() {
       // children go unrouted and buffer their readings — which is exactly
       // the right behavior during a broker outage.
     }
+  }
+}
+
+// Non-blocking reconnect attempt for loop() — unlike reconnectMQTT() (used
+// once in setup()), this never blocks, so beaconing and offline-checking
+// keep running every iteration even during a broker outage.
+void reconnectMQTTNonBlocking(uint32_t now) {
+  if (mqtt.connected()) return;
+  if (now - lastMqttAttemptMs < 5000) return;
+  lastMqttAttemptMs = now;
+  Serial.print("[mqtt] connecting... ");
+  String id = "gh-bridge-";
+  id += String((uint32_t)ESP.getEfuseMac(), HEX);
+  if (mqtt.connect(id.c_str(), MQTT_USER, MQTT_PASS)) {
+    Serial.println("OK");
+  } else {
+    Serial.printf("failed rc=%d, retry in 5s\n", mqtt.state());
   }
 }
 
@@ -166,10 +184,13 @@ void setup() {
 }
 
 void loop() {
-  if (!mqtt.connected()) reconnectMQTT();
-  mqtt.loop();
-
   uint32_t now = millis();
+
+  if (!mqtt.connected()) {
+    reconnectMQTTNonBlocking(now);
+  } else {
+    mqtt.loop();
+  }
 
   // Rank-0 anchor beacon: fixed short interval, no trickle — mains-powered,
   // so there is no cost pressure (spec: Architecture).
