@@ -15,9 +15,13 @@ import json
 import os
 import sqlite3
 import subprocess
+import sys
 import time
 
 from flask import Flask, abort, jsonify, redirect, render_template, request
+
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from history_query import query_points
 
 _START_TIME = time.time()
 _PAIR_WINDOW = 600  # seconds the /pair endpoint stays open after boot
@@ -230,36 +234,24 @@ def history():
     zone = request.args.get("zone")
     kind = request.args.get("kind") or ("zone" if zone else None)
     metric = request.args.get("metric")
+    since_raw = request.args.get("since")
+    until_raw = request.args.get("until")
     try:
         hours = float(request.args.get("hours", 24))
+        since = float(since_raw) if since_raw is not None else None
+        until = float(until_raw) if until_raw is not None else None
     except ValueError:
-        return jsonify({"error": "hours must be a number"}), 400
+        return jsonify({"error": "hours/since/until must be numbers"}), 400
     if not metric or not kind:
         return jsonify({"error": "metric and (zone or kind) are required"}), 400
+    if (since is None) != (until is None):
+        return jsonify({"error": "since and until must be provided together"}), 400
 
-    table = "readings" if hours <= 48 else "readings_hourly"
-    resolution = "minute" if table == "readings" else "hour"
-    cutoff = int(time.time() - hours * 3600)
     try:
         conn = _history_db()
-        row = conn.execute(
-            "SELECT id FROM series WHERE kind=? AND zone IS ? AND metric=?",
-            (kind, zone, metric)).fetchone()
-        if row is None:
-            conn.close()
-            return jsonify({"zone": zone, "metric": metric,
-                             "resolution": resolution, "points": []})
-        series_id = row[0]
-        pts = conn.execute(
-            f"SELECT ts, avg, min, max FROM {table} WHERE series_id=? AND ts >= ? ORDER BY ts",
-            (series_id, cutoff)).fetchall()
+        result = query_points(conn, kind, zone, metric, hours=hours, since=since, until=until)
         conn.close()
-        return jsonify({
-            "zone": zone,
-            "metric": metric,
-            "resolution": resolution,
-            "points": [[p[0], p[1], p[2], p[3]] for p in pts],
-        })
+        return jsonify(result)
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 
