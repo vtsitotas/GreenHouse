@@ -188,6 +188,17 @@ static void meshHandleBeacon(const uint8_t* srcMac, const MeshBeacon* b,
     return;
   }
 
+#ifdef MESH_TEST_IGNORE_BRIDGE
+  // TEST-ONLY, bench-testing aid — not part of the design. Only the bridge
+  // ever advertises rank 0, so this makes the node pretend it never hears
+  // the bridge at all, forcing it to relay through another edge node
+  // instead — a deterministic way to test multi-hop routing on a desk,
+  // without needing real physical distance or a weakened signal. Define
+  // this macro in exactly one edge sketch before #include <mesh_node.h>,
+  // reflash just that board, test, then remove it and reflash back.
+  if (b->rank == 0) return;
+#endif
+
   if (meshNeighborLastHeard[idx] == 0) meshTrickleReset();  // new neighbor seen
   meshNeighborLastHeard[idx] = now;
 
