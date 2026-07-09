@@ -176,5 +176,29 @@ void main() {
       expect(data.predicted, isNotEmpty);
       expect(data.predicted.first.avg, greaterThan(22.0));
     });
+
+    test('never predicts for a custom (since/until) range, even with enough points', () async {
+      final since = DateTime.fromMillisecondsSinceEpoch(0);
+      final until = DateTime.fromMillisecondsSinceEpoch(120000);
+      final container = ProviderContainer(overrides: [
+        historyPointsProvider.overrideWith((ref, query) async => [pt(0, 20), pt(60, 22), pt(120, 24)]),
+      ]);
+      addTearDown(container.dispose);
+      final query = HistoryQuery(zone: 'zone1', metric: 'air_temperature', since: since, until: until);
+      final data = await container.read(historyWithPredictionProvider(query).future);
+      expect(data.actual.length, 3);
+      expect(data.predicted, isEmpty);
+    });
+
+    test('still predicts for a normal rolling-window query with enough points (regression check)',
+        () async {
+      final container = ProviderContainer(overrides: [
+        historyPointsProvider.overrideWith((ref, query) async => [pt(0, 20), pt(60, 22)]),
+      ]);
+      addTearDown(container.dispose);
+      const query = HistoryQuery(zone: 'zone1', metric: 'soil_moisture', hours: 24);
+      final data = await container.read(historyWithPredictionProvider(query).future);
+      expect(data.predicted, isNotEmpty);
+    });
   });
 }
