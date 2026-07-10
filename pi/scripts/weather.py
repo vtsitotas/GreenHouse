@@ -15,6 +15,9 @@ import urllib.request
 import urllib.error
 from datetime import datetime, timezone
 
+sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+from push import send_push
+
 # ── Config paths ────────────────────────────────────────────────────────────
 WEATHER_CFG = '/etc/greenhouse/weather.json'
 RULES_CFG   = '/etc/greenhouse/rules.json'
@@ -183,6 +186,7 @@ def eval_rules(rules: list, metrics: dict):
             'rule_id': rule.get('id'),
         }
         mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
+        send_push(rule.get('name', 'Rule'), message)
 
     for rule in rules:
         if not rule.get('enabled', True):
@@ -280,6 +284,7 @@ def maybe_send_daily_summary(data: dict, metrics: dict[str, float]):
             'severity': 'info',
         }
         mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
+        send_push("Today's forecast", summary_msg)
         _last_summary_date = today
         print(f'[weather] Daily summary sent: {summary_msg}', flush=True)
     except Exception as e:
@@ -304,6 +309,7 @@ def maybe_send_frost_alert(data: dict):
                 'severity': 'warning',
             }
             mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
+            send_push('Frost warning', alert['message'])
             _last_frost_alert = today
             print(f'[weather] Frost alert sent: min_t={min_t}', flush=True)
     except Exception as e:
