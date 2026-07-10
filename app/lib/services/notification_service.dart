@@ -33,15 +33,19 @@ class NotificationService {
     await android?.requestNotificationsPermission();
   }
 
-  /// Show a plain info notification (e.g. daily summary).
+  /// Show a notification (weather alerts, daily summaries, and — since FCM
+  /// messages are the sole remaining notification path — anything the Pi
+  /// pushes). High importance so the Android channel (created lazily on
+  /// first use, and fixed at that importance thereafter) shows a heads-up
+  /// banner for frost/rule alerts, matching the old showAlert() behavior.
   Future<void> showInfo(String title, String body) async {
     if (!_initialized) return;
     const androidDetails = AndroidNotificationDetails(
       _channelId,
       _channelName,
       channelDescription: _channelDesc,
-      importance: Importance.defaultImportance,
-      priority: Priority.defaultPriority,
+      importance: Importance.high,
+      priority: Priority.high,
       icon: '@mipmap/ic_launcher',
     );
     const details = NotificationDetails(
