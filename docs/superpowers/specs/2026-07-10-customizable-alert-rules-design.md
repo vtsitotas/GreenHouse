@@ -135,7 +135,7 @@ push are independent channels.
 
 These aren't rules, so they get a small settings blob synced the same
 lightweight way `_pull_location_from_mqtt()` already works: the app
-publishes retained JSON to `greenhouse/settings/notifications/set`:
+publishes retained JSON to `greenhouse/settings/notifications`:
 
 ```json
 {"frost_forecast": true, "daily_summary": true}
@@ -201,9 +201,26 @@ dialog).
 
 A new "Alert settings" area (above or alongside the rules list) holds two
 toggles: "Frost forecast alerts" and "Daily weather summary" — publishing
-to `greenhouse/settings/notifications/set` (retained) via a new
+to `greenhouse/settings/notifications` (retained) via a new
 `GreenhouseRepository.publishNotificationSettings(...)` method, mirroring
 the existing `publishLocation()`/`publishRules()` pattern.
+
+### Planning-time discovery: rule edits never actually reached the Pi
+
+While writing the implementation plan, inspecting `greenhouse/rules/update`'s
+handling on the Pi turned up a pre-existing bug, unrelated to anything in
+this spec: `weather.py` has no persistent MQTT client (only CLI-based
+`mosquitto_pub`/`mosquitto_sub` polling for the handful of topics it
+explicitly checks), and `rules/update` was never one of them. The app's
+`publishRules()` call — and the "Changes sync to the Pi immediately" message
+next to the rules list — has therefore never actually updated
+`rules.json` on the Pi; edits only lived in the app's own local state until
+the next refresh discarded them. Since this feature's entire premise is
+that rule edits/creates persist, this is fixed as this plan's first task,
+using the exact pattern already proven for location sync: `publishRules()`
+gains `retain: true` (matching `publishLocation()`), and `weather.py` gains
+a `_pull_rules_from_mqtt()` poller (matching `_pull_location_from_mqtt()`
+exactly) that writes the retained payload to `RULES_CFG` on disk.
 
 ## Error Handling
 
