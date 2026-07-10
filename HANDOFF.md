@@ -1,11 +1,46 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-10 (repo cleanup session)
-**Status:** ✅ Zero-touch setup, weather automation, sensor-history + chart feature, dynamic multi-hop ESP-NOW mesh relay firmware, and custom date-range picker for the history chart all complete, merged to `main`, and pushed to GitHub. This session was housekeeping only — no feature or behavior changes. Mesh relay firmware still hasn't been compiled/flashed to real hardware (unrelated to this session).
+**Last updated:** 2026-07-10 (FCM push notifications + customizable alert rules session)
+**Status:** ✅ All previous features still complete. This session adds real push notifications (FCM) that work even when the app is closed/backgrounded, fixes a pre-existing bug where rule edits from the app never actually reached the Pi, and replaces the old hardcoded frost/daily-summary alerts with a fully customizable rule builder (any zone/metric/operator/threshold/duration, optional actuator action, optional per-rule notification). Branch `worktree-fcm-push-notifications`, not yet merged to `main` — see "Next step" below.
 
 ---
 
-## TL;DR of this session (2026-07-10, repo cleanup)
+## TL;DR of this session (2026-07-10, FCM push + customizable alert rules)
+
+Two features, each via brainstorm → design spec → implementation plan → subagent-driven-development → live bench-test on the real Pi Zero W + real phone.
+
+### 1. FCM push notifications
+Spec: `docs/superpowers/specs/2026-07-10-fcm-push-notifications-design.md`. Plan: `docs/superpowers/plans/2026-07-10-fcm-push-notifications.md`.
+
+Weather/rule alerts previously only reached the phone via an in-app MQTT listener — so nothing arrived if the app was closed or backgrounded. Added `pi/shared/push.py` (Firebase Admin SDK `send_push()`, reads registered device tokens from a retained MQTT topic) called alongside every existing alert's MQTT publish in `weather.py`; the app registers/refreshes its FCM token via `FcmTokenService` and handles foreground messages through the existing `NotificationService`.
+
+**Bench-tested live and confirmed working**: foreground, fully force-stopped, and mobile-data-only (WiFi off) all received a real push. Three real bugs found and fixed during that bench test:
+- `firebase-admin`'s pip install crashed the Pi Zero W twice — `/tmp` is a ~214MB tmpfs too small for grpcio's ~190MB wheel, and pip was falling back to a multi-hour from-source build that swap-thrashed the board. Fixed with a `TMPDIR` redirect + `--prefer-binary`, baked into `install.sh`.
+- The Firebase service-account key was root-owned but `greenhouse-weather.service` runs as `pi` — pushes were silently failing (caught by existing error handling, so weather.py never crashed, but zero pushes ever sent). Fixed with `chown pi:pi`/`chmod 600`, self-healing on every `install.sh` run.
+- A real Riverpod bug in `app.dart`: `next.whenData(...)` inside a `ref.listenManual` callback crashed with `NoSuchMethodError` in the release build, so `registerToken()` never ran. Fixed by switching to `next.value`. Two other pre-existing `.whenData()` call sites (`control_screen.dart`, `weather_screen.dart`) may share the same latent risk — not touched, out of scope.
+
+### 2. Customizable alert rules
+Spec: `docs/superpowers/specs/2026-07-10-customizable-alert-rules-design.md`. Plan: `docs/superpowers/plans/2026-07-10-customizable-alert-rules.md`.
+
+User wanted per-zone dry/humid duration alerts (e.g. "zone 1 soil dry for 2 days"), then explicitly asked to make rule-building fully general instead of hardcoding six new rules — "each farmer or plant wants it different." Result: any rule (zone-or-weather metric, operator, threshold, optional sustained-duration, optional actuator action, optional per-rule notification toggle) is now buildable from the app via a new rule-builder dialog (Weather → Rules tab → "Add rule"), plus a settings card to toggle the two built-in system alerts (frost forecast, daily summary) independently.
+
+**Found while writing the plan (unrelated pre-existing bug, fixed as Task 1):** rule edits from the app never actually reached the Pi. `weather.py` has no persistent MQTT client — only CLI-based polling for a fixed set of topics — and `rules/update` was never one of them, so `publishRules()` (and the "changes sync immediately" UI copy) had silently never worked; edits only lived in the app's local state. Fixed with the same retain+poll pattern already proven for location sync (`publishRules()` gains `retain: true`, `weather.py` gains `_pull_rules_from_mqtt()`).
+
+All 8 implementation tasks done, each independently reviewed (Task 8 and the final whole-branch review done directly by the controller after the Agent-tool review dispatch hit a session-limit error, not via a subagent). Fresh test run at final review: 79 Pi tests + 84 Flutter tests passed, `flutter analyze` clean.
+
+**Deployed and bench-tested:** `deploy.ps1` to the bench Pi, `selftest.sh` 26/26 (one transient false-alarm on first run — services still restarting, ~20-30s to rebind port 80 — resolved by re-running once systemctl showed both services up). Updated APK built and installed on the phone (`adb install -r`, in-place update, pairing preserved), pairing window reopened via a portal restart. The interactive click-through of the rule builder itself (Add rule → confirm it lands in the Pi's `rules.json`) was queued as the next manual step but not completed by the user within this session — worth doing at the start of the next session if not already done.
+
+**Also, in passing:** a real credential (`google-services.json` / a Firebase service-account key) briefly landed in the git-tracked tree during this session; `app/android/.gitignore` was updated to exclude both patterns before anything was pushed.
+
+---
+
+## Next step
+
+Merge `worktree-fcm-push-notifications` to `main` and push, once the interactive rule-builder bench-test (see above) is confirmed. Not done automatically this session since that manual confirmation was still outstanding when doc/memory updates were requested.
+
+---
+
+## Previous session (2026-07-10, repo cleanup)
 
 Pure documentation/housekeeping pass — no code changes, nothing redeployed. Removed stale and superseded files that had accumulated across sessions:
 
@@ -148,6 +183,10 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `app/lib/screens/history/history_screen.dart` | The chart screen (fl_chart) + custom date-range chip (2026-07-09) |
 | `app/lib/utils/history_prediction.dart` | Trend-extrapolation + forecast-overlay prediction logic |
 | `pi/shared/history_query.py` | Shared `query_points()` used by both `portal.py` (HTTP) and `recorder.py` (MQTT) — 2026-07-09, closes an old duplication gap |
+| `pi/shared/push.py` | FCM push helper — `send_push()`, reads registered device tokens from a retained MQTT topic — 2026-07-10 |
+| `app/lib/services/fcm_token_service.dart` | Registers/refreshes the device's FCM token over MQTT (retained) — 2026-07-10 |
+| `app/lib/screens/weather/rule_form_dialog.dart` | The customizable rule builder dialog (any zone/metric/operator/threshold/duration/action/notify) — 2026-07-10 |
+| `app/lib/models/weather_rule.dart` | Rule model — zone+metric split, optional action, optional duration, per-rule notify flag — rewritten 2026-07-10 |
 
 ---
 
@@ -159,8 +198,8 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - 1 App + Connectivity — ✅ done
 - 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, including 2026-07-09's dynamic multi-hop relay upgrade (was pure star topology before); **not field-validated on real sensor hardware** (simulator only, and the new relay code has never even been compiled — no toolchain in the dev sandbox); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
 - 3 Storage + History — ✅ done, reimplemented as a local SQLite recorder (not InfluxDB) + this session's chart feature
-- 4 Automation + Alerts — done differently: in-app duration-based rules (Weather screen → Rules tab, fully editable from the app) + `flutter_local_notifications`, instead of Node-RED/Telegram
-- 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **not started**; current remote access is single-tenant HiveMQ Cloud + local notifications only
+- 4 Automation + Alerts — ✅ done, and this session made it fully customizable: in-app rule builder (any zone/metric/operator/threshold/duration/action, Weather screen → Rules tab → "Add rule") instead of six hardcoded thresholds, plus a real fix for rule edits never having reached the Pi (see this session's TL;DR above)
+- 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **partially done this session**: FCM push notifications now work (app closed/backgrounded still gets real alerts) via `pi/shared/push.py` + a retained-token registry topic; multi-customer accounts/device registry still **not started** — current remote access is still single-tenant HiveMQ Cloud
 - 6 Field Hardening (solar/18650, IP65 enclosures, cellular fallback) — **not started**; see `docs/EDGE_NODE_POWER_OPTIMIZATION.md` for the existing plan doc
 
 **Fixed this session (2026-07-08, later):** Mosquitto's native `connection` bridge to HiveMQ Cloud had never actually worked — 0 successful handshakes across 9 days of logs, a real Mosquitto bridge-code incompatibility with this HiveMQ cluster (not a quota/account issue). Any prior appearance of "remote access working" was the app displaying a stale retained value, not live data. Replaced with `greenhouse-hivemq-bridge.service` (small paho-mqtt forwarder script) — verified live two-way delivery, stable connection, automated round-trip check added to `selftest.sh` (now 26/26).
@@ -185,7 +224,10 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - [ ] **Screen-by-screen UX enhancement pass** over the rest of the app (dashboard, control, devices, pairing, settings, weather-forecast chart) — same brainstorm→spec→plan cycle as the history chart, one screen at a time.
 - [x] ~~`pressure` weather metric silently dropped by the recorder~~ — fixed 2026-07-09 (added to `_WEATHER_METRICS`). Note: `weather.py` (the real Open-Meteo service) still doesn't publish real pressure data, only `simulator.py` does — recording it is now correct, but there's no real pressure source yet.
 - [x] ~~`weather.json` write-permission bug~~ — fixed 2026-07-09 (`chown pi:pi` in `install.sh`).
-- [ ] Nice-to-haves from the original vision, all unstarted: ESP32-CAM plant time-lapse, CSV export, a smartwatch/widget glance. (ESP32-CAM was floated again this session as a possible next feature but not pursued — user chose the date-range picker + bug fixes instead.)
+- [x] ~~Alerts don't arrive when the app is closed~~ — fixed 2026-07-10 via FCM push notifications. See this session's TL;DR above.
+- [x] ~~Hardcoded frost/daily-summary-only alerts, no per-sensor dry/humid duration rules~~ — fixed 2026-07-10 via the customizable rule builder (any zone/metric/operator/threshold/duration/action). See this session's TL;DR above.
+- [x] ~~Rule edits from the app didn't actually reach the Pi~~ — fixed 2026-07-10 (pre-existing bug found while writing the alert-rules plan; `publishRules()` now uses the retain+poll pattern proven for location sync).
+- [ ] Nice-to-haves from the original vision, all unstarted: ESP32-CAM plant time-lapse, CSV export, a smartwatch/widget glance. (ESP32-CAM was floated again this session as a possible next feature but the FCM/alert-rules bug fixes were prioritized instead.)
 
 **Housekeeping:**
 - [ ] `debugPrint()` calls in `mqtt_connection.dart` / `connection_provider.dart` — remove before any demo.
