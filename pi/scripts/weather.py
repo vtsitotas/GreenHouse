@@ -200,12 +200,13 @@ def eval_rules(rules: list, metrics: dict):
     }
 
     def _fire(rule, message):
-        action   = rule['action']
-        actuator = action['actuator']
-        command  = action['command']
-        topic = f'greenhouse/actuators/{actuator}/set'
-        print(f'[weather] Rule "{rule.get("name")}" triggered → {topic} {command}', flush=True)
-        mqtt_publish(topic, command)
+        action = rule.get('action')
+        if action:
+            actuator = action['actuator']
+            command  = action['command']
+            topic = f'greenhouse/actuators/{actuator}/set'
+            print(f'[weather] Rule "{rule.get("name")}" triggered → {topic} {command}', flush=True)
+            mqtt_publish(topic, command)
         alert = {
             'type': rule.get('id', 'rule'),
             'message': message,
@@ -213,7 +214,8 @@ def eval_rules(rules: list, metrics: dict):
             'rule_id': rule.get('id'),
         }
         mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
-        send_push(rule.get('name', 'Rule'), message)
+        if rule.get('notify', True):
+            send_push(rule.get('name', 'Rule'), message)
 
     for rule in rules:
         if not rule.get('enabled', True):
