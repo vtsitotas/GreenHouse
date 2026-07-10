@@ -131,6 +131,14 @@ class GreenhouseRepository {
     await connection.publishRaw('greenhouse/weather/location/set', payload, retain: true);
   }
 
+  /// Registers this device's current FCM token with the Pi, retained per
+  /// device so weather.py (and later camera motion alerts) can look up
+  /// every currently-registered device on demand.
+  Future<void> registerFcmToken(String deviceId, String token) async {
+    await connection.publishRaw(
+        'greenhouse/app/fcm_token/$deviceId', token, retain: true);
+  }
+
   /// Fetches history points over MQTT (greenhouse/history/request ->
   /// greenhouse/history/response/<id>) instead of the LAN-only HTTP
   /// /api/history endpoint. Used when connected via the HiveMQ Cloud
