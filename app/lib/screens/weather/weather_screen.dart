@@ -2,10 +2,13 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:geolocator/geolocator.dart';
+import 'package:greenhouse_app/models/notification_settings.dart';
 import 'package:greenhouse_app/models/weather_alert.dart';
 import 'package:greenhouse_app/models/weather_rule.dart';
+import 'package:greenhouse_app/providers/actuators_provider.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/providers/readings_provider.dart';
+import 'package:greenhouse_app/screens/weather/rule_form_dialog.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
 
 // ── WeatherScreen ────────────────────────────────────────────────────────────
@@ -550,6 +553,39 @@ class _RulesTab extends ConsumerWidget {
   }
 }
 
+class _AlertSettingsCard extends ConsumerWidget {
+  const _AlertSettingsCard();
+
+  @override
+  Widget build(BuildContext context, WidgetRef ref) {
+    final settingsAsync = ref.watch(notificationSettingsProvider);
+    final settings = settingsAsync.value ?? const NotificationSettings(frostForecast: true, dailySummary: true);
+
+    void publish(NotificationSettings updated) =>
+        ref.read(repositoryProvider).publishNotificationSettings(updated);
+
+    return Card(
+      margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+      child: Column(
+        children: [
+          SwitchListTile(
+            key: const Key('alert-settings-frost-switch'),
+            title: const Text('Frost forecast alerts'),
+            value: settings.frostForecast,
+            onChanged: (v) => publish(settings.copyWith(frostForecast: v)),
+          ),
+          SwitchListTile(
+            key: const Key('alert-settings-daily-switch'),
+            title: const Text('Daily weather summary'),
+            value: settings.dailySummary,
+            onChanged: (v) => publish(settings.copyWith(dailySummary: v)),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
 class _RulesList extends ConsumerStatefulWidget {
   final List<WeatherRule> rules;
   const _RulesList({required this.rules});
@@ -581,41 +617,61 @@ class _RulesListState extends ConsumerState<_RulesList> {
     ref.read(repositoryProvider).publishRules(updated);
   }
 
-  void _editThreshold(int index) async {
-    final rule = _rules[index];
-    final ctrl = TextEditingController(text: rule.value.toString());
-    final result = await showDialog<double>(
-      context: context,
-      builder: (_) => AlertDialog(
-        title: Text('Edit: ${rule.name}'),
-        content: Column(
-          mainAxisSize: MainAxisSize.min,
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Text('Condition: ${rule.metricLabel} ${rule.op}', style: const TextStyle(fontSize: 13)),
-            const SizedBox(height: 8),
-            TextField(
-              controller: ctrl,
-              keyboardType: const TextInputType.numberWithOptions(decimal: true, signed: true),
-              decoration: const InputDecoration(labelText: 'Threshold value', border: OutlineInputBorder()),
-            ),
-          ],
-        ),
-        actions: [
-          TextButton(onPressed: () => Navigator.pop(context), child: const Text('Cancel')),
-          FilledButton(
-            onPressed: () {
-              final v = double.tryParse(ctrl.text);
-              if (v != null) Navigator.pop(context, v);
-            },
-            child: const Text('Save'),
-          ),
-        ],
-      ),
+  void _toggleNotify(int index, bool notify) {
+    final updated = List<WeatherRule>.from(_rules);
+    updated[index] = updated[index].copyWith(notify: notify);
+    setState(() => _rules = updated);
+    ref.read(repositoryProvider).publishRules(updated);
+  }
+
+  void _delete(int index) {
+    final updated = List<WeatherRule>.from(_rules)..removeAt(index);
+    setState(() => _rules = updated);
+    ref.read(repositoryProvider).publishRules(updated);
+  }
+
+  // `mustInclude` guarantees the dropdown's current value is always among
+  // its own items — otherwise editing a rule whose zone/actuator is no
+  // longer live (e.g. a sensor that's gone offline) would crash the
+  // DropdownButtonFormField's value/items assertion.
+  List<String> _knownZones({String? mustInclude}) {
+    final readings = ref.read(readingsProvider).value ?? {};
+    final zones = readings.keys.where((z) => z != 'weather').toSet();
+    if (mustInclude != null) zones.add(mustInclude);
+    return zones.toList()..sort();
+  }
+
+  List<String> _knownActuators({String? mustInclude}) {
+    final actuators = ref.read(actuatorsProvider).value ?? {};
+    final ids = actuators.keys.toSet();
+    if (mustInclude != null) ids.add(mustInclude);
+    return ids.toList()..sort();
+  }
+
+  void _addRule() async {
+    final result = await showRuleFormDialog(
+      context,
+      zones: _knownZones(),
+      actuatorIds: _knownActuators(),
+    );
+    if (result != null) {
+      final updated = List<WeatherRule>.from(_rules)..add(result);
+      setState(() => _rules = updated);
+      ref.read(repositoryProvider).publishRules(updated);
+    }
+  }
+
+  void _editRule(int index) async {
+    final existing = _rules[index];
+    final result = await showRuleFormDialog(
+      context,
+      existing: existing,
+      zones: _knownZones(mustInclude: existing.zone),
+      actuatorIds: _knownActuators(mustInclude: existing.actuatorId),
     );
     if (result != null) {
       final updated = List<WeatherRule>.from(_rules);
-      updated[index] = updated[index].copyWith(value: result);
+      updated[index] = result;
       setState(() => _rules = updated);
       ref.read(repositoryProvider).publishRules(updated);
     }
@@ -625,8 +681,9 @@ class _RulesListState extends ConsumerState<_RulesList> {
   Widget build(BuildContext context) {
     return Column(
       children: [
+        const _AlertSettingsCard(),
         Padding(
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+          padding: const EdgeInsets.fromLTRB(16, 0, 16, 4),
           child: Row(children: [
             const Icon(Icons.info_outline, size: 16, color: Colors.grey),
             const SizedBox(width: 6),
@@ -635,9 +692,9 @@ class _RulesListState extends ConsumerState<_RulesList> {
                   style: TextStyle(fontSize: 12, color: Colors.grey[600])),
             ),
             TextButton.icon(
-              icon: const Icon(Icons.refresh, size: 16),
-              label: const Text('Refresh'),
-              onPressed: () => ref.read(repositoryProvider).requestRules(),
+              icon: const Icon(Icons.add, size: 16),
+              label: const Text('Add rule'),
+              onPressed: _addRule,
             ),
           ]),
         ),
@@ -648,7 +705,9 @@ class _RulesListState extends ConsumerState<_RulesList> {
             itemBuilder: (context, i) => _RuleCard(
               rule: _rules[i],
               onToggle: (v) => _toggle(i, v),
-              onEdit: () => _editThreshold(i),
+              onToggleNotify: (v) => _toggleNotify(i, v),
+              onEdit: () => _editRule(i),
+              onDelete: () => _delete(i),
             ),
           ),
         ),
@@ -660,8 +719,16 @@ class _RulesListState extends ConsumerState<_RulesList> {
 class _RuleCard extends StatelessWidget {
   final WeatherRule rule;
   final ValueChanged<bool> onToggle;
+  final ValueChanged<bool> onToggleNotify;
   final VoidCallback onEdit;
-  const _RuleCard({required this.rule, required this.onToggle, required this.onEdit});
+  final VoidCallback onDelete;
+  const _RuleCard({
+    required this.rule,
+    required this.onToggle,
+    required this.onToggleNotify,
+    required this.onEdit,
+    required this.onDelete,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -674,7 +741,7 @@ class _RuleCard extends StatelessWidget {
               ? AppColors.brand.withAlpha(30)
               : Colors.grey.withAlpha(30),
           child: Icon(
-            _ruleIcon(rule.triggerMetric),
+            _ruleIcon(rule.metric),
             color: rule.enabled ? AppColors.brand : Colors.grey,
             size: 20,
           ),
@@ -689,10 +756,15 @@ class _RuleCard extends StatelessWidget {
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text('When ${rule.metricLabel} ${rule.op} ${rule.value}',
+              Text('${rule.zoneLabel}: ${rule.metricLabel} ${rule.op} ${rule.value}'
+                  '${rule.durationMinutes != null ? " for ${rule.durationMinutes} min" : ""}',
                   style: const TextStyle(fontSize: 12)),
-              Text('→ ${rule.actuatorId}: ${rule.command}',
-                  style: TextStyle(fontSize: 12, color: Colors.grey[600])),
+              Text(
+                rule.actuatorId != null
+                    ? '→ ${rule.actuatorId}: ${rule.command}'
+                    : '→ alert only',
+                style: TextStyle(fontSize: 12, color: Colors.grey[600]),
+              ),
             ],
           ),
         ),
@@ -701,8 +773,20 @@ class _RuleCard extends StatelessWidget {
           children: [
             IconButton(
               icon: const Icon(Icons.edit_outlined, size: 18),
-              tooltip: 'Edit threshold',
+              tooltip: 'Edit rule',
               onPressed: onEdit,
+            ),
+            IconButton(
+              icon: const Icon(Icons.delete_outline, size: 18),
+              tooltip: 'Delete rule',
+              onPressed: onDelete,
+            ),
+            IconButton(
+              key: Key('rule-notify-switch-${rule.id}'),
+              icon: Icon(rule.notify ? Icons.notifications_active : Icons.notifications_off,
+                  size: 18, color: rule.notify ? AppColors.brand : Colors.grey),
+              tooltip: rule.notify ? 'Notifications on' : 'Notifications off',
+              onPressed: () => onToggleNotify(!rule.notify),
             ),
             Switch(
               value: rule.enabled,
@@ -718,12 +802,15 @@ class _RuleCard extends StatelessWidget {
 
   IconData _ruleIcon(String metric) {
     switch (metric) {
-      case 'temperature': return Icons.thermostat;
-      case 'rain_mm_1h':  return Icons.umbrella;
-      case 'humidity':    return Icons.water_drop;
-      case 'wind_kmh':    return Icons.air;
-      case 'uv_index':    return Icons.wb_sunny;
-      default:            return Icons.rule;
+      case 'temperature':
+      case 'air_temperature': return Icons.thermostat;
+      case 'rain_mm_1h':      return Icons.umbrella;
+      case 'humidity':
+      case 'air_humidity':    return Icons.water_drop;
+      case 'soil_moisture':   return Icons.grass;
+      case 'wind_kmh':        return Icons.air;
+      case 'uv_index':        return Icons.wb_sunny;
+      default:                return Icons.rule;
     }
   }
 }
