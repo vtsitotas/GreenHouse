@@ -4,6 +4,7 @@ __pycache__/
 
 # Scratch / staging
 _dart_staging/
+deleted/
 
 # SD-card images (large binaries — keep out of git)
 *.img

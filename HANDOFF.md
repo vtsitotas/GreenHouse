@@ -1,11 +1,23 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-09 (history custom date-range picker session)
-**Status:** ✅ Zero-touch setup, weather automation, sensor-history + chart feature, dynamic multi-hop ESP-NOW mesh relay firmware, and now a **custom date-range picker for the history chart** all complete, merged to `main`, and pushed to GitHub. **Fully deployed and verified live end-to-end this session:** app reinstalled + reconnected on the Redmi Note 13 Pro+ via "Find my greenhouse", Pi redeployed via `deploy.ps1` (selftest 26/26), and the new `since`/`until` history API confirmed working against real recorded data on the physical unit. Mesh relay firmware from the previous session still hasn't been compiled/flashed to real hardware (unrelated to this session).
+**Last updated:** 2026-07-10 (repo cleanup session)
+**Status:** ✅ Zero-touch setup, weather automation, sensor-history + chart feature, dynamic multi-hop ESP-NOW mesh relay firmware, and custom date-range picker for the history chart all complete, merged to `main`, and pushed to GitHub. This session was housekeeping only — no feature or behavior changes. Mesh relay firmware still hasn't been compiled/flashed to real hardware (unrelated to this session).
 
 ---
 
-## TL;DR of this session (2026-07-09, history custom date-range picker)
+## TL;DR of this session (2026-07-10, repo cleanup)
+
+Pure documentation/housekeeping pass — no code changes, nothing redeployed. Removed stale and superseded files that had accumulated across sessions:
+
+- **Deleted (untracked scratch, not in git history):** `_dart_staging/` (a one-time bootstrap fossil from the original `flutter create`, long superseded by `app/`); three orphaned empty worktree directories left behind by earlier subagent sessions that wrote outside their prepared worktree (see the process incident noted in the 2026-07-09 entry below); `.superpowers/sdd/` (36 scratch task-briefs/reports/diffs from past subagent-driven-dev sessions).
+- **Deleted (tracked, committed as `51a95c6`):** `GREENHOUSE_IOT_HANDOFF.md` (described an abandoned InfluxDB/Node-RED/Grafana/FastAPI architecture, fully superseded by this file + `docs/ARCHITECTURE.md`); `docs/ESP_NOW_BRIDGE_PROGRESS.md` (a dev-bridge test log whose own "next steps" — a USB-serial bridge — were abandoned in favor of the shipped ESP-NOW mesh relay); `INSTRUCTIONS_THEMI.md` (instructions for a different collaborator/path, no longer needed); `RUNBOOK.md` (merged into `INSTRUCTIONS.md`).
+- **Updated:** `INSTRUCTIONS.md` is now the single build/flash doc — gained RUNBOOK's security notes section, the install step now points at `.\deploy.ps1` instead of the stale manual `scp` block, and hardcoded stale selftest pass-counts (16/18) were replaced with generic wording.
+
+Committed and pushed to `main` (`51a95c6`).
+
+---
+
+## Previous session (2026-07-09, history custom date-range picker)
 
 Added a **custom date-range picker** to the history chart, so users can pick an arbitrary past date range (or single day) instead of only the rolling 24h/7d/30d/90d windows. Spec: `docs/superpowers/specs/2026-07-09-history-custom-date-range-design.md`. Plan: `docs/superpowers/plans/2026-07-09-history-custom-date-range.md`.
 
