@@ -215,3 +215,56 @@ def test_pull_rules_from_mqtt_noop_on_no_message(monkeypatch, tmp_path):
     weather._pull_rules_from_mqtt()
 
     assert rules_file.read_text() == '[]'
+
+
+def test_eval_rules_alert_only_rule_does_not_publish_actuator_command(monkeypatch):
+    published = []
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: published.append(a))
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    rule = {
+        'id': 'zone1-dry', 'name': 'Zone 1 soil dry', 'enabled': True,
+        'trigger': {'metric': 'zone1/soil_moisture', 'op': '<', 'value': 15.0, 'duration_minutes': 5},
+    }
+    # duration rules need the recorder DB; use a real one seeded to fire.
+    # eval_rules() computes `now` internally as int(time.time()) (it takes
+    # no `now` parameter, unlike eval_duration_rule's own direct tests
+    # elsewhere in this file) — seed data relative to real current time,
+    # not a fixed fake epoch, or the cutoff filter will never match it.
+    with tempfile.TemporaryDirectory() as d:
+        conn = recorder.init_db(os.path.join(d, 'test.db'))
+        series_ids = {}
+        now = int(time.time())
+        recorder.write_buckets(conn, series_ids, [
+            (('zone', 'zone1', 'soil_moisture'), now - 240, 10.0, 10.0, 10.0, 1),
+            (('zone', 'zone1', 'soil_moisture'), now - 180, 10.0, 10.0, 10.0, 1),
+            (('zone', 'zone1', 'soil_moisture'), now - 120, 10.0, 10.0, 10.0, 1),
+            (('zone', 'zone1', 'soil_moisture'), now - 60,  10.0, 10.0, 10.0, 1),
+        ])
+        conn.close()
+        monkeypatch.setattr(weather, 'RECORDER_DB', os.path.join(d, 'test.db'))
+        conn2 = sqlite3.connect(os.path.join(d, 'test.db'))
+        monkeypatch.setattr(weather.sqlite3, 'connect', lambda *a, **k: conn2)
+        weather.eval_rules([rule], {})
+
+    assert len(pushed) == 1
+    assert pushed[0][0] == 'Zone 1 soil dry'
+    # No actuator command published — only the mqtt alert, no `greenhouse/actuators/...` topic
+    actuator_topics = [p[0] for p in published if p and str(p[0]).startswith('greenhouse/actuators/')]
+    assert actuator_topics == []
+
+
+def test_eval_rules_notify_false_skips_push_but_still_publishes_alert(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    rule = {
+        'id': 'r1', 'name': 'Silent Rule', 'enabled': True, 'notify': False,
+        'trigger': {'metric': 'temperature', 'op': '>', 'value': 30.0},
+        'action': {'actuator': 'fan1', 'command': 'ON'},
+    }
+    weather.eval_rules([rule], {'temperature': 35.0})
+
+    assert pushed == []
