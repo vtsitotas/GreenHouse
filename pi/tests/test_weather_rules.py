@@ -1,6 +1,7 @@
 import os
 import sys
 import tempfile
+from datetime import datetime
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 import weather
@@ -94,3 +95,72 @@ def test_eval_duration_rule_does_not_fire_on_sparse_startup_data():
             duration_minutes=60, now=now)
         assert fired is False  # coverage = 3/60 = 5%, far below the 80% guard
         conn.close()
+
+
+def test_eval_rules_live_metric_sends_push_on_fire(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    rule = {
+        'id': 'r1', 'name': 'High Temp', 'enabled': True,
+        'trigger': {'metric': 'temperature', 'op': '>', 'value': 30.0},
+        'action': {'actuator': 'fan', 'command': 'on'},
+    }
+    weather.eval_rules([rule], {'temperature': 35.0})
+
+    assert len(pushed) == 1
+    title, body = pushed[0]
+    assert title == 'High Temp'
+    assert 'High Temp' in body
+
+
+def test_eval_rules_does_not_push_when_rule_does_not_fire(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    rule = {
+        'id': 'r1', 'name': 'High Temp', 'enabled': True,
+        'trigger': {'metric': 'temperature', 'op': '>', 'value': 30.0},
+        'action': {'actuator': 'fan', 'command': 'on'},
+    }
+    weather.eval_rules([rule], {'temperature': 20.0})
+
+    assert pushed == []
+
+
+def test_maybe_send_daily_summary_sends_push(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    monkeypatch.setattr(weather, '_last_summary_date', None)
+
+    class _FrozenClock:
+        @staticmethod
+        def now():
+            return datetime(2026, 7, 10, 7, 0, 0)
+    monkeypatch.setattr(weather, 'datetime', _FrozenClock)
+
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    data = {'hourly': {
+        'temperature_2m': [20.0] * 24,
+        'precipitation': [0.0] * 24,
+    }}
+    weather.maybe_send_daily_summary(data, {'temperature': 22.0, 'wind_kmh': 5.0})
+
+    assert len(pushed) == 1
+    assert pushed[0][0] == "Today's forecast"
+
+
+def test_maybe_send_frost_alert_sends_push(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    monkeypatch.setattr(weather, '_last_frost_alert', None)
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    data = {'hourly': {'temperature_2m': [-2.0] * 12}}
+    weather.maybe_send_frost_alert(data)
+
+    assert len(pushed) == 1
+    assert pushed[0][0] == 'Frost warning'
