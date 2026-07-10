@@ -14,6 +14,12 @@ class RulesPayloadRaw {
   const RulesPayloadRaw(this.payload);
 }
 
+/// Carries the raw JSON payload from greenhouse/settings/notifications/current.
+class NotificationSettingsRaw {
+  final String payload;
+  const NotificationSettingsRaw(this.payload);
+}
+
 /// Carries the raw JSON payload from greenhouse/history/response/<id> —
 /// the MQTT-based history fetch used when the app is on the HiveMQ Cloud
 /// path (remote) rather than the LAN, where the HTTP /api/history endpoint

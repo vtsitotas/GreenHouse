@@ -109,6 +109,8 @@ class MqttConnection implements GreenhouseConnection {
       _events.add(WeatherForecastRaw(payload));
     } else if (isRulesCurrentTopic(topic)) {
       _events.add(RulesPayloadRaw(payload));
+    } else if (isNotificationSettingsTopic(topic)) {
+      _events.add(NotificationSettingsRaw(payload));
     } else if (isHistoryResponseTopic(topic)) {
       _events.add(HistoryResponseRaw(topic.substring(_historyResponsePrefix.length), payload));
     } else if (isSensorTopic(topic)) {
@@ -172,6 +174,7 @@ class MqttConnection implements GreenhouseConnection {
   static bool isWeatherAlertTopic(String t) => t == 'greenhouse/weather/alert';
   static bool isWeatherForecastTopic(String t) => t == 'greenhouse/weather/forecast';
   static bool isRulesCurrentTopic(String t) => t == 'greenhouse/rules/current';
+  static bool isNotificationSettingsTopic(String t) => t == 'greenhouse/settings/notifications/current';
 
   static const _historyResponsePrefix = 'greenhouse/history/response/';
   static bool isHistoryResponseTopic(String t) => t.startsWith(_historyResponsePrefix);

@@ -5,6 +5,7 @@ import 'package:greenhouse_app/models/actuator_state.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/node_status.dart';
+import 'package:greenhouse_app/models/notification_settings.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
 import 'package:greenhouse_app/models/weather_alert.dart';
 import 'package:greenhouse_app/models/weather_events.dart';
@@ -24,9 +25,11 @@ class GreenhouseRepository {
   final _forecastCtrl  = StreamController<Map<String, dynamic>>.broadcast();
   final _rulesCtrl     = StreamController<List<WeatherRule>>.broadcast();
   final _historyRespCtrl = StreamController<HistoryResponseRaw>.broadcast();
+  final _notificationSettingsCtrl = StreamController<NotificationSettings>.broadcast();
 
   List<WeatherRule> _rules = [];
   Map<String, dynamic>? _lastForecast;
+  NotificationSettings? _notificationSettings;
 
   StreamSubscription<dynamic>? _sub;
 
@@ -64,6 +67,12 @@ class GreenhouseRepository {
     yield* _rulesCtrl.stream;
   }
 
+  /// Fires when notification settings are received / updated.
+  Stream<NotificationSettings> get notificationSettings async* {
+    if (_notificationSettings != null) yield _notificationSettings!;
+    yield* _notificationSettingsCtrl.stream;
+  }
+
   Stream<ConnectionStatus> get connectionStatus => connection.status;
 
   void _handle(dynamic event) {
@@ -95,6 +104,12 @@ class GreenhouseRepository {
       try {
         _rules = WeatherRule.listFromJson(event.payload);
         _rulesCtrl.add(List.from(_rules));
+      } catch (_) {}
+    } else if (event is NotificationSettingsRaw) {
+      try {
+        final settings = NotificationSettings.fromJson(jsonDecode(event.payload) as Map<String, dynamic>);
+        _notificationSettings = settings;
+        _notificationSettingsCtrl.add(settings);
       } catch (_) {}
     } else if (event is HistoryResponseRaw) {
       _historyRespCtrl.add(event);
@@ -141,6 +156,18 @@ class GreenhouseRepository {
   Future<void> registerFcmToken(String deviceId, String token) async {
     await connection.publishRaw(
         'greenhouse/app/fcm_token/$deviceId', token, retain: true);
+  }
+
+  /// Push notification-preference settings to the Pi (retained, matching
+  /// publishRules/publishLocation's retained-for-reliable-polling pattern).
+  Future<void> publishNotificationSettings(NotificationSettings settings) async {
+    _notificationSettings = settings;
+    _notificationSettingsCtrl.add(settings);
+    await connection.publishRaw(
+      'greenhouse/settings/notifications',
+      jsonEncode(settings.toJson()),
+      retain: true,
+    );
   }
 
   /// Fetches history points over MQTT (greenhouse/history/request ->

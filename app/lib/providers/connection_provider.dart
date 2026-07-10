@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/connection/mqtt_connection.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
+import 'package:greenhouse_app/models/notification_settings.dart';
 import 'package:greenhouse_app/models/weather_alert.dart';
 import 'package:greenhouse_app/models/weather_rule.dart';
 import 'package:greenhouse_app/repository/greenhouse_repository.dart';
@@ -39,6 +40,12 @@ final weatherAlertsProvider = StreamProvider<WeatherAlert>((ref) {
 final rulesProvider = StreamProvider<List<WeatherRule>>((ref) {
   ref.watch(connectOnStartProvider);
   return ref.watch(repositoryProvider).rules;
+});
+
+/// Emits the current notification-preference settings from the Pi.
+final notificationSettingsProvider = StreamProvider<NotificationSettings>((ref) {
+  ref.watch(connectOnStartProvider);
+  return ref.watch(repositoryProvider).notificationSettings;
 });
 
 /// Emits 24-hour forecast data from greenhouse/weather/forecast.
