@@ -22,17 +22,32 @@ apt-get install -y -qq \
   mosquitto mosquitto-clients \
   python3-flask \
   python3-paho-mqtt \
+  python3-pip \
   openssl \
   dnsmasq-base \
   iptables \
   rfkill \
   avahi-daemon
 
+echo "==> Installing firebase-admin (for push notifications)..."
+# Not available as an apt package. Trixie's Python is "externally managed"
+# (PEP 668) — --break-system-packages is required for a direct system-wide
+# pip install here, matching this project's existing no-venv convention.
+# Compatibility on the Pi Zero W's ARMv6 image is unverified until bench-tested
+# (see docs/superpowers/specs/2026-07-10-fcm-push-notifications-design.md).
+pip3 install --break-system-packages firebase-admin
+
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
 # boot-time service can be diagnosed after the fact, e.g. on a shipped unit).
 mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto /var/log/journal /var/lib/greenhouse
 chown pi:pi /var/lib/greenhouse
+
+if [ ! -f /etc/greenhouse/firebase-service-account.json ]; then
+  echo "NOTE: /etc/greenhouse/firebase-service-account.json not found."
+  echo "      Push notifications will be skipped until you copy your Firebase"
+  echo "      service-account key there (see the FCM push notifications spec)."
+fi
 
 echo "==> Installing captive-portal DNS config..."
 # NetworkManager's shared-mode dnsmasq reads this; resolves every domain to the
