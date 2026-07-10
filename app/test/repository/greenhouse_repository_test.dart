@@ -8,6 +8,7 @@ import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
 import 'package:greenhouse_app/models/weather_events.dart';
+import 'package:greenhouse_app/models/weather_rule.dart';
 import 'package:greenhouse_app/repository/greenhouse_repository.dart';
 
 class MockConnection extends Mock implements GreenhouseConnection {}
@@ -150,5 +151,21 @@ void main() {
     final nodes = await future;
     expect(nodes['node1']?.isOnline, isTrue);
     expect(nodes['node1']?.batteryPercent, 75.0);
+  });
+
+  test('publishRules retains the message so the Pi can poll and catch it', () async {
+    await repo.publishRules([
+      const WeatherRule(
+        id: 'r1', name: 'Test', enabled: true,
+        triggerMetric: 'temperature', op: '>', value: 30.0,
+        actuatorId: 'fan1', command: 'ON',
+      ),
+    ]);
+
+    verify(() => conn.publishRaw(
+          'greenhouse/rules/update',
+          any(),
+          retain: true,
+        )).called(1);
   });
 }

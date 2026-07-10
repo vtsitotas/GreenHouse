@@ -90,6 +90,33 @@ def _pull_location_from_mqtt():
         print(f'[weather] WARN: location pull: {e}', flush=True)
 
 
+def _pull_rules_from_mqtt():
+    """Check for a retained rules/update message published by the app.
+
+    Mirrors _pull_location_from_mqtt() exactly: rules/update is retained
+    (as of this fix — see greenhouse_repository.dart::publishRules), so
+    polling briefly on every cycle reliably catches the last-published
+    value regardless of exact timing.
+    """
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['mosquitto_sub', '-h', MQTT_HOST, '-p', MQTT_PORT,
+             '-t', 'greenhouse/rules/update', '-C', '1', '-W', '2'],
+            capture_output=True, text=True, timeout=5,
+        )
+        msg = result.stdout.strip()
+        if not msg:
+            return
+        json.loads(msg)  # validate before writing — a malformed payload must not corrupt rules.json
+        with open(RULES_CFG, 'w') as f:
+            f.write(msg)
+        open(RELOAD_FLAG, 'w').close()
+        print('[weather] Rules updated from app', flush=True)
+    except Exception as e:
+        print(f'[weather] WARN: rules pull: {e}', flush=True)
+
+
 def load_location() -> tuple[float, float, int]:
     try:
         with open(WEATHER_CFG) as f:
@@ -350,11 +377,15 @@ def run():
     _load_mqtt_creds()
     print(f'[weather] Starting — interval {INTERVAL}s', flush=True)
     _pull_location_from_mqtt()
+    _pull_rules_from_mqtt()
     publish_rules()
 
     while _running:
         # Pick up location/interval changes published from the app
         _pull_location_from_mqtt()
+        # Pick up rule changes published from the app (retained, so this
+        # reliably catches the last update regardless of exact timing)
+        _pull_rules_from_mqtt()
 
         # Check for a reload flag written by the MQTT rules-update handler
         if os.path.exists(RELOAD_FLAG):
