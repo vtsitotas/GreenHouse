@@ -156,9 +156,9 @@ void main() {
   test('publishRules retains the message so the Pi can poll and catch it', () async {
     await repo.publishRules([
       const WeatherRule(
-        id: 'r1', name: 'Test', enabled: true,
-        triggerMetric: 'temperature', op: '>', value: 30.0,
-        actuatorId: 'fan1', command: 'ON',
+        id: 'r1', name: 'Test', enabled: true, notify: true,
+        zone: null, metric: 'temperature', op: '>', value: 30.0,
+        durationMinutes: null, actuatorId: 'fan1', command: 'ON',
       ),
     ]);
 
