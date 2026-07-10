@@ -160,6 +160,10 @@ EOF
 chown pi:pi /etc/greenhouse/weather.json
 
 echo "==> Writing default automation rules config..."
+# The zone1/2/3 dry+humid rules are alert-only (no "action" key) — they're
+# a starting point using the specific numbers requested for this farm
+# (soil < 15% for 2 days, humidity > 70% for 24h), fully editable/deletable
+# via the app's rule builder like any other rule.
 [ -f /etc/greenhouse/rules.json ] || cat > /etc/greenhouse/rules.json << 'EOF'
 [
   {"id":"rain-close","name":"Close fan on rain","enabled":true,
@@ -170,8 +174,25 @@ echo "==> Writing default automation rules config..."
    "action":{"actuator":"pump1","command":"ON"}},
   {"id":"heat-fan","name":"Heat wave ventilation","enabled":true,
    "trigger":{"metric":"temperature","op":">","value":35},
-   "action":{"actuator":"fan1","command":"ON"}}
+   "action":{"actuator":"fan1","command":"ON"}},
+  {"id":"zone1-dry","name":"Zone 1 soil dry","enabled":true,"notify":true,
+   "trigger":{"metric":"zone1/soil_moisture","op":"<","value":15,"duration_minutes":2880}},
+  {"id":"zone2-dry","name":"Zone 2 soil dry","enabled":true,"notify":true,
+   "trigger":{"metric":"zone2/soil_moisture","op":"<","value":15,"duration_minutes":2880}},
+  {"id":"zone3-dry","name":"Zone 3 soil dry","enabled":true,"notify":true,
+   "trigger":{"metric":"zone3/soil_moisture","op":"<","value":15,"duration_minutes":2880}},
+  {"id":"zone1-humid","name":"Zone 1 too humid","enabled":true,"notify":true,
+   "trigger":{"metric":"zone1/air_humidity","op":">","value":70,"duration_minutes":1440}},
+  {"id":"zone2-humid","name":"Zone 2 too humid","enabled":true,"notify":true,
+   "trigger":{"metric":"zone2/air_humidity","op":">","value":70,"duration_minutes":1440}},
+  {"id":"zone3-humid","name":"Zone 3 too humid","enabled":true,"notify":true,
+   "trigger":{"metric":"zone3/air_humidity","op":">","value":70,"duration_minutes":1440}}
 ]
+EOF
+
+echo "==> Writing default notification settings..."
+[ -f /etc/greenhouse/notification_settings.json ] || cat > /etc/greenhouse/notification_settings.json << 'EOF'
+{"frost_forecast": true, "daily_summary": true}
 EOF
 
 echo "==> Writing default recorder config..."
