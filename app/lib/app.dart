@@ -62,14 +62,28 @@ class _GreenhouseAppState extends ConsumerState<GreenhouseApp>
     super.initState();
     WidgetsBinding.instance.addObserver(this);
     _initNotifications();
+    _initFcm();
   }
 
   Future<void> _initNotifications() async {
     await NotificationService.instance.init();
     await NotificationService.instance.requestPermission();
-    // Listen for incoming weather alerts and show local notifications
-    _alertSub = ref.listenManual(weatherAlertsProvider, (_, next) {
-      next.whenData((alert) => NotificationService.instance.showAlert(alert));
+  }
+
+  void _initFcm() {
+    final fcm = ref.read(fcmTokenServiceProvider);
+    fcm.listenForRefresh();
+    fcm.listenForForegroundMessages(NotificationService.instance.showInfo);
+
+    // Re-register on every successful connect (harmless/idempotent — the
+    // underlying publish is retained) so a token obtained before the first
+    // connection isn't lost.
+    _alertSub = ref.listenManual(connectionStatusProvider, (_, next) {
+      next.whenData((status) {
+        if (status == ConnectionStatus.local || status == ConnectionStatus.remote) {
+          ref.read(fcmTokenServiceProvider).registerToken();
+        }
+      });
     });
   }
 

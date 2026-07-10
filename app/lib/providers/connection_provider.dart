@@ -5,12 +5,16 @@ import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/weather_alert.dart';
 import 'package:greenhouse_app/models/weather_rule.dart';
 import 'package:greenhouse_app/repository/greenhouse_repository.dart';
+import 'package:greenhouse_app/services/fcm_token_service.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 
 final mqttConnectionProvider = Provider((_) => MqttConnection());
 
 final repositoryProvider = Provider((ref) =>
     GreenhouseRepository(connection: ref.watch(mqttConnectionProvider)));
+
+final fcmTokenServiceProvider = Provider(
+    (ref) => FcmTokenService(ref.watch(repositoryProvider)));
 
 final connectOnStartProvider = FutureProvider<void>((ref) async {
   debugPrint('[CONNECT] provider running');
