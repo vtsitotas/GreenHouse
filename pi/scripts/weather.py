@@ -24,6 +24,7 @@ RULES_CFG   = '/etc/greenhouse/rules.json'
 DEVICE_CFG  = '/etc/greenhouse/device.json'
 RELOAD_FLAG = '/tmp/greenhouse-weather-reload'
 RECORDER_DB = '/var/lib/greenhouse/greenhouse.db'
+NOTIFICATION_SETTINGS_CFG = '/etc/greenhouse/notification_settings.json'
 
 # ── Open-Meteo endpoint ──────────────────────────────────────────────────────
 OPEN_METEO_URL = (
@@ -115,6 +116,47 @@ def _pull_rules_from_mqtt():
         print('[weather] Rules updated from app', flush=True)
     except Exception as e:
         print(f'[weather] WARN: rules pull: {e}', flush=True)
+
+
+def _pull_notification_settings():
+    """Check for a retained settings/notifications message published by the app."""
+    import subprocess
+    try:
+        result = subprocess.run(
+            ['mosquitto_sub', '-h', MQTT_HOST, '-p', MQTT_PORT,
+             '-t', 'greenhouse/settings/notifications', '-C', '1', '-W', '2'],
+            capture_output=True, text=True, timeout=5,
+        )
+        msg = result.stdout.strip()
+        if not msg:
+            return
+        data = json.loads(msg)
+        settings = {
+            'frost_forecast': bool(data.get('frost_forecast', True)),
+            'daily_summary':  bool(data.get('daily_summary', True)),
+        }
+        with open(NOTIFICATION_SETTINGS_CFG, 'w') as f:
+            json.dump(settings, f)
+    except Exception as e:
+        print(f'[weather] WARN: notification settings pull: {e}', flush=True)
+
+
+def load_notification_settings() -> dict:
+    try:
+        with open(NOTIFICATION_SETTINGS_CFG) as f:
+            d = json.load(f)
+        return {
+            'frost_forecast': bool(d.get('frost_forecast', True)),
+            'daily_summary':  bool(d.get('daily_summary', True)),
+        }
+    except Exception:
+        return {'frost_forecast': True, 'daily_summary': True}
+
+
+def publish_notification_settings():
+    """Publish current notification settings as retained so app gets them on connect."""
+    settings = load_notification_settings()
+    mqtt_publish('greenhouse/settings/notifications/current', json.dumps(settings), retain=True)
 
 
 def load_location() -> tuple[float, float, int]:
@@ -313,7 +355,8 @@ def maybe_send_daily_summary(data: dict, metrics: dict[str, float]):
             'severity': 'info',
         }
         mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
-        send_push("Today's forecast", summary_msg)
+        if load_notification_settings().get('daily_summary', True):
+            send_push("Today's forecast", summary_msg)
         _last_summary_date = today
         print(f'[weather] Daily summary sent: {summary_msg}', flush=True)
     except Exception as e:
@@ -338,7 +381,8 @@ def maybe_send_frost_alert(data: dict):
                 'severity': 'warning',
             }
             mqtt_publish('greenhouse/weather/alert', json.dumps(alert))
-            send_push('Frost warning', alert['message'])
+            if load_notification_settings().get('frost_forecast', True):
+                send_push('Frost warning', alert['message'])
             _last_frost_alert = today
             print(f'[weather] Frost alert sent: min_t={min_t}', flush=True)
     except Exception as e:
@@ -380,7 +424,9 @@ def run():
     print(f'[weather] Starting — interval {INTERVAL}s', flush=True)
     _pull_location_from_mqtt()
     _pull_rules_from_mqtt()
+    _pull_notification_settings()
     publish_rules()
+    publish_notification_settings()
 
     while _running:
         # Pick up location/interval changes published from the app
@@ -388,6 +434,8 @@ def run():
         # Pick up rule changes published from the app (retained, so this
         # reliably catches the last update regardless of exact timing)
         _pull_rules_from_mqtt()
+        # Pick up notification-settings changes published from the app
+        _pull_notification_settings()
 
         # Check for a reload flag written by the MQTT rules-update handler
         if os.path.exists(RELOAD_FLAG):
