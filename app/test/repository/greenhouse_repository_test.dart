@@ -6,6 +6,7 @@ import 'package:greenhouse_app/connection/greenhouse_connection.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/node_status.dart';
+import 'package:greenhouse_app/models/notification_settings.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
 import 'package:greenhouse_app/models/weather_events.dart';
 import 'package:greenhouse_app/models/weather_rule.dart';
@@ -167,5 +168,25 @@ void main() {
           any(),
           retain: true,
         )).called(1);
+  });
+
+  test('publishNotificationSettings retains the message', () async {
+    await repo.publishNotificationSettings(
+      const NotificationSettings(frostForecast: false, dailySummary: true),
+    );
+
+    verify(() => conn.publishRaw(
+          'greenhouse/settings/notifications',
+          '{"frost_forecast":false,"daily_summary":true}',
+          retain: true,
+        )).called(1);
+  });
+
+  test('notificationSettings stream emits parsed settings from a NotificationSettingsRaw event', () async {
+    final future = repo.notificationSettings.first;
+    eventsCtrl.add(const NotificationSettingsRaw('{"frost_forecast":false,"daily_summary":true}'));
+    final settings = await future;
+    expect(settings.frostForecast, false);
+    expect(settings.dailySummary, true);
   });
 }
