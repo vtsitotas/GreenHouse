@@ -268,3 +268,55 @@ def test_eval_rules_notify_false_skips_push_but_still_publishes_alert(monkeypatc
     weather.eval_rules([rule], {'temperature': 35.0})
 
     assert pushed == []
+
+
+def test_load_notification_settings_defaults_when_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(weather, 'NOTIFICATION_SETTINGS_CFG', str(tmp_path / 'missing.json'))
+    settings = weather.load_notification_settings()
+    assert settings == {'frost_forecast': True, 'daily_summary': True}
+
+
+def test_load_notification_settings_reads_file(tmp_path, monkeypatch):
+    cfg = tmp_path / 'notification_settings.json'
+    cfg.write_text('{"frost_forecast": false, "daily_summary": true}')
+    monkeypatch.setattr(weather, 'NOTIFICATION_SETTINGS_CFG', str(cfg))
+    settings = weather.load_notification_settings()
+    assert settings == {'frost_forecast': False, 'daily_summary': True}
+
+
+def test_maybe_send_frost_alert_respects_frost_forecast_off(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    monkeypatch.setattr(weather, '_last_frost_alert', None)
+    monkeypatch.setattr(weather, 'load_notification_settings',
+                         lambda: {'frost_forecast': False, 'daily_summary': True})
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    data = {'hourly': {'temperature_2m': [-2.0] * 12}}
+    weather.maybe_send_frost_alert(data)
+
+    assert pushed == []  # push suppressed
+    # mqtt alert still fires — verified indirectly: _last_frost_alert still gets set
+    assert weather._last_frost_alert is not None
+
+
+def test_maybe_send_daily_summary_respects_daily_summary_off(monkeypatch):
+    monkeypatch.setattr(weather, 'mqtt_publish', lambda *a, **k: None)
+    monkeypatch.setattr(weather, '_last_summary_date', None)
+    monkeypatch.setattr(weather, 'load_notification_settings',
+                         lambda: {'frost_forecast': True, 'daily_summary': False})
+
+    class _FrozenClock:
+        @staticmethod
+        def now():
+            return datetime(2026, 7, 10, 7, 0, 0)
+    monkeypatch.setattr(weather, 'datetime', _FrozenClock)
+
+    pushed = []
+    monkeypatch.setattr(weather, 'send_push', lambda title, body: pushed.append((title, body)))
+
+    data = {'hourly': {'temperature_2m': [20.0] * 24, 'precipitation': [0.0] * 24}}
+    weather.maybe_send_daily_summary(data, {'temperature': 22.0, 'wind_kmh': 5.0})
+
+    assert pushed == []
+    assert weather._last_summary_date is not None
