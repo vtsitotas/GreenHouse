@@ -111,12 +111,16 @@ class GreenhouseRepository {
   }
 
   /// Send updated rules to the Pi (Pi saves and reloads).
+  /// Retained so weather.py's poller (_pull_rules_from_mqtt) reliably picks
+  /// this up regardless of exact timing, the same reason publishLocation
+  /// retains its message.
   Future<void> publishRules(List<WeatherRule> rules) async {
     _rules = rules;
     _rulesCtrl.add(List.from(_rules));
     await connection.publishRaw(
       'greenhouse/rules/update',
       WeatherRule.listToJson(rules),
+      retain: true,
     );
   }
 

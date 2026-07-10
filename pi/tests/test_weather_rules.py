@@ -1,7 +1,11 @@
 import os
+import sqlite3
+import subprocess
 import sys
 import tempfile
+import time
 from datetime import datetime
+from unittest.mock import MagicMock
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 import weather
@@ -164,3 +168,50 @@ def test_maybe_send_frost_alert_sends_push(monkeypatch):
 
     assert len(pushed) == 1
     assert pushed[0][0] == 'Frost warning'
+
+
+def test_pull_rules_from_mqtt_writes_valid_payload(monkeypatch, tmp_path):
+    rules_file = tmp_path / 'rules.json'
+    rules_file.write_text('[]')
+    monkeypatch.setattr(weather, 'RULES_CFG', str(rules_file))
+
+    new_rules = '[{"id":"r1","name":"Test","enabled":true,"trigger":{"metric":"temperature","op":">","value":30.0}}]'
+    fake_result = MagicMock()
+    fake_result.stdout = new_rules
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: fake_result)
+
+    reload_flag = tmp_path / 'reload'
+    monkeypatch.setattr(weather, 'RELOAD_FLAG', str(reload_flag))
+
+    weather._pull_rules_from_mqtt()
+
+    assert rules_file.read_text() == new_rules
+    assert reload_flag.exists()
+
+
+def test_pull_rules_from_mqtt_ignores_empty_or_invalid_payload(monkeypatch, tmp_path):
+    rules_file = tmp_path / 'rules.json'
+    rules_file.write_text('[]')
+    monkeypatch.setattr(weather, 'RULES_CFG', str(rules_file))
+
+    fake_result = MagicMock()
+    fake_result.stdout = 'not valid json'
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: fake_result)
+
+    weather._pull_rules_from_mqtt()
+
+    assert rules_file.read_text() == '[]'  # unchanged — invalid payload ignored
+
+
+def test_pull_rules_from_mqtt_noop_on_no_message(monkeypatch, tmp_path):
+    rules_file = tmp_path / 'rules.json'
+    rules_file.write_text('[]')
+    monkeypatch.setattr(weather, 'RULES_CFG', str(rules_file))
+
+    fake_result = MagicMock()
+    fake_result.stdout = ''
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: fake_result)
+
+    weather._pull_rules_from_mqtt()
+
+    assert rules_file.read_text() == '[]'
