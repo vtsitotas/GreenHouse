@@ -48,17 +48,21 @@ ssh pi@greenhouse.local
 *(Troubleshooting for this step is in the cheat sheet at the bottom.)*
 
 ### Step 3. Install the greenhouse software (from your PC)
-In the **PC terminal** (these run on your PC and copy files *to* the Pi):
+In the **PC terminal**, from the repo root:
 ```powershell
-$pi = "C:\Users\billy\Desktop\diplomatikh\pi"
-ssh pi@greenhouse.local "mkdir -p /home/pi/greenhouse"
-scp -r "$pi\scripts" "$pi\systemd" "$pi\portal" "$pi\mosquitto" "$pi\install.sh" pi@greenhouse.local:/home/pi/greenhouse/
-ssh pi@greenhouse.local 'find /home/pi/greenhouse -type f \( -name "*.sh" -o -name "*.py" -o -name "*.service" -o -name "*.conf" \) -exec sed -i "s/\r$//" {} +; sudo bash /home/pi/greenhouse/install.sh && sudo bash /home/pi/greenhouse/scripts/selftest.sh'
+.\deploy.ps1                          # defaults to greenhouse.local
+.\deploy.ps1 -PiHost 192.168.1.54     # or target a specific IP
 ```
-- It will ask for the password (`greenhouse2026`) a couple of times — that's normal.
-- **If you open a fresh PC terminal, re-run the `$pi = ...` line first** (the variable resets).
+This wipes `/home/pi/greenhouse` on the Pi, copies the `pi/` folder over, runs
+`install.sh`, then runs `selftest.sh`. It will ask for the password
+(`greenhouse2026`) once or twice the first time — that's normal.
 
-✅ **Success = `RESULT: 16 passed, 0 failed`** at the end.
+> Don't `scp` the `pi/` folder over manually instead — if `/home/pi/greenhouse`
+> already exists, a manual `scp -r` nests the copy into a subfolder instead of
+> replacing it. `deploy.ps1` `rm -rf`s the remote dir first, which is why it's
+> the supported path.
+
+✅ **Success = `RESULT: <n> passed, 0 failed`** at the end (no failures).
 
 > ⚠️ After install, the Pi's password is **changed to a random one** (security feature). From now on, SSH works automatically with your key — you don't need a password. The random password is saved on the SD card (see cheat sheet) if you ever need it.
 
@@ -151,6 +155,14 @@ Day-to-day you edit the repo and deploy over SSH. You only rebuild `greenhouse.i
 
 ---
 
+## Security notes
+
+- Per-unit secrets: TLS CA + key, MQTT password, OS password (in `/boot`), AP SSID — all generated fresh on first boot, nothing shared between units.
+- Admin access: baked SSH key (`install.sh`'s `ADMIN_KEY`).
+- Deferred: `/pair` has no proof-of-possession check (relies on the 5-minute LAN pairing window only). Add a PIN/QR confirmation before any public/production deployment.
+
+---
+
 ## Troubleshooting cheat sheet
 
 **`ssh: connect to host greenhouse.local port 22: Connection refused`**
@@ -165,10 +177,11 @@ Day-to-day you edit the repo and deploy over SSH. You only rebuild `greenhouse.i
 ssh-keygen -R greenhouse.local
 ```
 
-**`scp: stat local "\scripts": No such file or directory`**
-→ You ran the `scp` *on the Pi*. Type `exit` to return to your PC (`PS C:\...>`), make sure you ran the `$pi = "..."` line, then run `scp` again.
+**`deploy.ps1` prints `ERROR: Cannot resolve ... -- is the Pi on the network?`**
+→ mDNS (`.local`) resolution can be flaky from Windows. Find the Pi's IP in
+your router's device list and pass it directly: `.\deploy.ps1 -PiHost 192.168.1.xx`.
 
-**Self-test shows `15 passed, 1 failed` (portal not responding)**
+**Self-test shows `N-1 passed, 1 failed` (portal not responding)**
 → Harmless timing — the portal was still starting. Re-run the self-test:
 ```powershell
 ssh pi@greenhouse.local "sudo bash /home/pi/greenhouse/scripts/selftest.sh"
