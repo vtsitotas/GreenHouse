@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:greenhouse_app/models/weather_alert.dart';
 
 /// Wraps flutter_local_notifications for greenhouse weather alerts.
 class NotificationService {
@@ -32,29 +31,6 @@ class NotificationService {
     final android = _plugin.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     await android?.requestNotificationsPermission();
-  }
-
-  Future<void> showAlert(WeatherAlert alert) async {
-    if (!_initialized) return;
-    final id = alert.type.hashCode.abs() % 10000;
-
-    const androidDetails = AndroidNotificationDetails(
-      _channelId,
-      _channelName,
-      channelDescription: _channelDesc,
-      importance: Importance.high,
-      priority: Priority.high,
-      icon: '@mipmap/ic_launcher',
-    );
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-    const details = NotificationDetails(android: androidDetails, iOS: iosDetails);
-
-    await _plugin.show(id, alert.title, alert.message, details);
-    debugPrint('[Notifications] showed: ${alert.title}');
   }
 
   /// Show a plain info notification (e.g. daily summary).
