@@ -16,7 +16,7 @@
 - The existing MQTT publish (`greenhouse/weather/alert`) and the Weather screen's in-app banner (`weatherAlertsProvider`) are unchanged — FCM is an added delivery channel, not a replacement for that live state.
 - A push failure (missing Firebase setup, bad token, network error) must never raise out of `send_push()` or block `weather.py`'s rule-evaluation loop.
 - Camera motion-alert integration is explicitly out of scope — this plan only builds `send_push()` as a reusable helper.
-- Firebase service-account credentials live at `/etc/greenhouse/firebase-service-account.json` on the Pi (root-readable only, same handling as existing TLS certs) — obtaining this file is a manual Firebase Console step, outside this plan's code changes.
+- Firebase service-account credentials live at `/etc/greenhouse/firebase-service-account.json` on the Pi, owned `pi:pi` mode 600 (not root-only — `greenhouse-weather.service` runs as `User=pi`) — obtaining this file is a manual Firebase Console step, outside this plan's code changes.
 
 ---
 

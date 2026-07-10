@@ -102,8 +102,11 @@ It resolves the current token set via the wildcard `mosquitto_sub` call
 above, then calls `firebase_admin.messaging.send()` once per token, catching
 and logging failures **per token** so one stale/invalid token never blocks
 delivery to the rest. Requires a Firebase service-account key on the Pi
-(`/etc/greenhouse/firebase-service-account.json`, root-readable only, same
-handling as the existing TLS certs/passwd files).
+(`/etc/greenhouse/firebase-service-account.json`, owned `pi:pi` mode 600 —
+**not** root-only: `greenhouse-weather.service` runs as `User=pi`, confirmed
+during bench-testing 2026-07-10, when a root:root key made every push fail
+silently with `Permission denied`, caught by `send_push()`'s error handling
+but never actually delivered).
 
 `weather.py`'s three existing alert call sites (rule trigger, forecast-based
 alert, frost alert) each gain one added call to `push.send_push(alert['title'],
@@ -170,20 +173,50 @@ Scoped proportionally to a thesis project:
   the mesh relay firmware's real behavior was only bench-validated on actual
   hardware, not proven in the dev sandbox.
 
-## Known Risks (bench-test items, not solved at design time)
+## Bench-Test Results (2026-07-10, real Pi Zero W + real phone)
 
-- **`firebase-admin` on the Pi Zero W:** the Python package's compatibility
-  with the Pi's ARMv6/Trixie environment is unverified. If installation or
-  runtime behavior proves too heavy, a documented fallback is calling FCM's
-  HTTP v1 REST API directly with a manually-signed service-account JWT (more
-  code, lighter dependency footprint) — reach for this only if the bench
-  test actually fails, not as a parallel implementation built alongside the
-  primary approach.
-- **Manual one-time setup:** creating the actual Firebase project, adding the
-  Android app to it, downloading `google-services.json`, and generating the
-  service-account key are manual console steps outside of code — these need
-  to happen before the Pi-side or app-side code can be bench-tested
-  end-to-end.
+End-to-end delivery confirmed working: app foreground, app fully force-stopped,
+and phone on mobile data with WiFi off entirely — all three received a real
+push. Three real problems surfaced during this bench test, all fixed:
+
+- **`firebase-admin` install crashed the Pi Zero W twice.** Root cause was
+  two-fold: (1) `/tmp` is a ~214MB tmpfs on this OS, but `grpcio`'s armv6l
+  wheel on piwheels is ~190MB, so downloading it into `/tmp` failed with
+  "No space left on device" despite the SD card having 11GB free — fixed by
+  redirecting `TMPDIR` to a real-disk directory. (2) pip resolved to the
+  newest `grpcio` release even though piwheels hadn't built an armv6l wheel
+  for it yet, silently falling back to compiling from source — a
+  multi-hour, memory-hungry build that pushed this 512MB board into
+  swap-thrashing and crashed it (confirmed via a live SSH session going
+  fully unresponsive, not just slow) — fixed with pip's `--prefer-binary`
+  flag, which picks an older version with a wheel over a newer version
+  requiring a source build. Both fixes are now baked into `pi/install.sh`
+  itself, not just applied manually on this one Pi.
+- **Service-account key ownership was wrong.** The original design assumed
+  root-only ownership "same as TLS certs," but `greenhouse-weather.service`
+  runs as `User=pi`, not root — a root:root key made `send_push()`'s
+  Firebase init fail with `Permission denied` on every call, caught and
+  logged by the existing error handling (so it never crashed weather.py),
+  but silently meant zero pushes were ever actually sent. Fixed: the key
+  must be `pi:pi` mode 600; `install.sh` now re-asserts this ownership on
+  every run.
+- **A real Riverpod bug in the app**, unrelated to Firebase: `app.dart`'s
+  `_initFcm()` used `next.whenData((status) { ... })` inside a
+  `ref.listenManual(connectionStatusProvider, ...)` callback, which crashed
+  with `NoSuchMethodError: Class 'AsyncData<ConnectionStatus>' has no
+  instance method 'whenData'` in the release build every time the
+  connection status changed — meaning `registerToken()` never ran, no
+  matter how long the app stayed open. Root cause not fully isolated (the
+  same `.whenData()` pattern exists in two other pre-existing call sites,
+  `control_screen.dart` and `weather_screen.dart`, which may share the same
+  latent risk but weren't exercised in this test session). Fixed by
+  replacing `.whenData()` with a plain `next.value` null-check, which
+  sidesteps whatever release-mode/Riverpod interaction caused the crash.
+
+**Manual one-time setup** (done for this bench test, needed for any other
+unit): creating the actual Firebase project, adding the Android app to it,
+downloading `google-services.json`, and generating the service-account key
+are manual console steps outside of code.
 
 ## Follow-up (explicitly deferred)
 

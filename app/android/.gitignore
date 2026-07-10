@@ -12,3 +12,9 @@ GeneratedPluginRegistrant.java
 key.properties
 **/*.keystore
 **/*.jks
+
+# Firebase config/credentials — google-services.json isn't a hard secret
+# (its API key is package/SHA-restricted) but doesn't need to be in git;
+# the admin SDK key is a real credential and must never be committed.
+app/google-services.json
+app/*firebase-adminsdk*.json
