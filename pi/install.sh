@@ -33,9 +33,22 @@ echo "==> Installing firebase-admin (for push notifications)..."
 # Not available as an apt package. Trixie's Python is "externally managed"
 # (PEP 668) — --break-system-packages is required for a direct system-wide
 # pip install here, matching this project's existing no-venv convention.
-# Compatibility on the Pi Zero W's ARMv6 image is unverified until bench-tested
-# (see docs/superpowers/specs/2026-07-10-fcm-push-notifications-design.md).
-pip3 install --break-system-packages firebase-admin
+#
+# Bench-tested on a real Pi Zero W (2026-07-10) and found two real problems,
+# both fixed below:
+#   1. /tmp is a ~214MB tmpfs (RAM-backed) on this OS, but firebase-admin's
+#      grpcio dependency is a ~190MB wheel on piwheels (armv6l builds are
+#      unusually large) — downloading it into /tmp fails with "No space left
+#      on device" even though the SD card has plenty of room. TMPDIR redirects
+#      pip's temp/download directory to real disk instead.
+#   2. pip's resolver can pick the newest grpcio release even when piwheels
+#      hasn't built an armv6l wheel for it yet, silently falling back to
+#      compiling from source — a multi-hour, memory-hungry build that
+#      crashed/rebooted this Pi Zero W (512MB RAM) twice before this was
+#      diagnosed. --prefer-binary tells pip to prefer an older version with a
+#      prebuilt wheel over a newer version requiring a source build.
+mkdir -p /home/pi/pip-tmp
+TMPDIR=/home/pi/pip-tmp pip3 install --break-system-packages --resume-retries 5 --prefer-binary firebase-admin
 
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
@@ -47,6 +60,14 @@ if [ ! -f /etc/greenhouse/firebase-service-account.json ]; then
   echo "NOTE: /etc/greenhouse/firebase-service-account.json not found."
   echo "      Push notifications will be skipped until you copy your Firebase"
   echo "      service-account key there (see the FCM push notifications spec)."
+else
+  # greenhouse-weather.service runs as User=pi (not root) — bench-tested
+  # 2026-07-10: a root:root key here makes weather.py's Firebase init fail
+  # with "Permission denied" on every push, silently (caught and logged, not
+  # fatal, but no push ever goes out). Re-chown on every install.sh run in
+  # case the key was copied in with different ownership.
+  chown pi:pi /etc/greenhouse/firebase-service-account.json
+  chmod 600 /etc/greenhouse/firebase-service-account.json
 fi
 
 echo "==> Installing captive-portal DNS config..."

@@ -79,11 +79,10 @@ class _GreenhouseAppState extends ConsumerState<GreenhouseApp>
     // underlying publish is retained) so a token obtained before the first
     // connection isn't lost.
     _alertSub = ref.listenManual(connectionStatusProvider, (_, next) {
-      next.whenData((status) {
-        if (status == ConnectionStatus.local || status == ConnectionStatus.remote) {
-          ref.read(fcmTokenServiceProvider).registerToken();
-        }
-      });
+      final status = next.value;
+      if (status == ConnectionStatus.local || status == ConnectionStatus.remote) {
+        ref.read(fcmTokenServiceProvider).registerToken();
+      }
     });
   }
 
