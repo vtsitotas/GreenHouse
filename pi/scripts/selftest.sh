@@ -6,12 +6,12 @@ ok(){ echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 no(){ echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 echo "== services enabled =="
-for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge mosquitto; do
+for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge greenhouse-weather mosquitto; do
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
 echo "== services active =="
-for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge mosquitto; do
+for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge greenhouse-weather mosquitto; do
   systemctl is-active "$s" >/dev/null 2>&1 && ok "$s running" || no "$s not running"
 done
 
@@ -29,6 +29,10 @@ if [ -f /etc/greenhouse/device.json ]; then
 else
   no "device.json missing"
 fi
+
+echo "== weather config =="
+[ -f /etc/greenhouse/weather.json ] && ok "weather.json present" || no "weather.json missing"
+[ -f /etc/greenhouse/rules.json ]   && ok "rules.json present"   || no "rules.json missing"
 
 echo "== mqtt round-trip (TLS, authed) =="
 USER=$(python3 -c "import json;print(json.load(open('/etc/greenhouse/device.json'))['username'])" 2>/dev/null)

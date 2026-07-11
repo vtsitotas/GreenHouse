@@ -28,8 +28,9 @@ rm -f /etc/mosquitto/certs/ca.key /etc/mosquitto/certs/ca.crt /etc/mosquitto/cer
 echo "[prep] wiping sensor history database..."
 rm -f /var/lib/greenhouse/greenhouse.db /var/lib/greenhouse/greenhouse.db-wal /var/lib/greenhouse/greenhouse.db-shm
 
-echo "[prep] removing per-unit OS password record..."
+echo "[prep] removing per-unit OS password record and cloud-init configs..."
 rm -f /boot/firmware/INITIAL_PASSWORD.txt /boot/INITIAL_PASSWORD.txt
+rm -f /boot/firmware/network-config /boot/firmware/user-data /boot/firmware/meta-data /boot/network-config /boot/user-data /boot/meta-data 2>/dev/null || true
 
 echo "[prep] resetting machine-id (unique per clone)..."
 : > /etc/machine-id
@@ -47,6 +48,14 @@ echo "[prep] removing WiFi profiles (dev + AP) — SSH will drop now..."
 for c in $(nmcli -t -f NAME,TYPE connection show | awk -F: '$2 ~ /wireless/{print $1}'); do
   nmcli connection delete "$c" 2>/dev/null || true
 done
+
+echo "[prep] removing netplan WiFi config so clones don't reconnect as client..."
+# Pi Imager writes /etc/netplan/50-cloud-init.yaml with the dev WiFi. If we
+# leave it, netplan regenerates the NM connection on every clone boot → wlan0
+# connects as client → AP activation fails silently.
+rm -f /etc/netplan/50-cloud-init.yaml /etc/netplan/*wireless* /etc/netplan/*wifi* 2>/dev/null || true
+# Clear cloud-init state so it doesn't re-configure networking on clone boots.
+rm -rf /var/lib/cloud/instances/ /var/lib/cloud/instance/ /var/lib/cloud/data/ 2>/dev/null || true
 
 sync
 echo "[prep] powering off — pull the SD card and image it."
