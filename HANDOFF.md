@@ -1,11 +1,23 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-10 (FCM push notifications + customizable alert rules session)
-**Status:** ✅ All previous features still complete. This session adds real push notifications (FCM) that work even when the app is closed/backgrounded, fixes a pre-existing bug where rule edits from the app never actually reached the Pi, and replaces the old hardcoded frost/daily-summary alerts with a fully customizable rule builder (any zone/metric/operator/threshold/duration, optional actuator action, optional per-rule notification). Branch `worktree-fcm-push-notifications`, not yet merged to `main` — see "Next step" below.
+**Last updated:** 2026-07-11 (ESP32-CAM design + plan session)
+**Status:** ✅ All previous features still complete and merged to `main` (the FCM push notifications + customizable alert rules branch from the prior session is now merged — `main` is clean and up to date). This session is planning-only: a full design spec + 13-task implementation plan for ESP32-CAM live view + motion alerts, **no code written yet**. See "Next step" below.
 
 ---
 
-## TL;DR of this session (2026-07-10, FCM push + customizable alert rules)
+## TL;DR of this session (2026-07-11, ESP32-CAM design + plan)
+
+Brainstorm → design spec → implementation plan, no implementation started. Spec: `docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md`. Plan: `docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`.
+
+**MVP scope (fully planned, ready to implement):** a single ESP32-CAM (hardware in hand, not yet flashed). LAN live view loads the camera's own MJPEG stream directly (genuinely smooth, ~10-20fps). Motion detection runs Pi-side (new `pi/scripts/cam_bridge.py`, grayscale frame-diffing on periodic snapshot POSTs from the camera) — reuses the existing FCM push pipeline (`push.send_push()`) for alerts, text-only ("Motion detected — 14:32"), with the photo fetched on tap over a new chunked MQTT request/response (no existing precedent in this codebase for binary-over-MQTT, so this is a from-scratch protocol: `{"chunk", "total", "data"}` envelopes, 3072-byte raw chunks). Event photos live on the **camera's own SD card** (not the Pi) — a deliberate choice made after discussing the tradeoff (Pi already has the bytes in-hand at detection time, so camera-side storage costs an extra fetch round-trip and makes old events unrecoverable if the camera is ever offline — user chose camera-side storage anyway, since the hardware already has an SD slot). Remote "live" view is on-demand only (never continuous background polling), relayed through the Pi at ~1-3fps over MQTT — a real two-tier quality difference from the LAN view, discussed explicitly with the user before proceeding. 7-day age-based retention, Pi-driven (camera needs no RTC).
+
+**Phase 2 (WebRTC remote streaming) — documented, deliberately not planned:** the user explicitly asked to plan out "the real deal" for smooth remote video even though it's a bigger lift, but to decide later whether/when to build it. The spec's Phase 2 section covers the architecture (Pi runs `aiortc`, camera firmware stays unchanged, signaling rides the existing MQTT/HiveMQ bridge, media relays through a new TURN server) and flags two real open risks: a TURN relay is new public infrastructure this project doesn't otherwise need, and the Pi Zero W (no hardware video encoder) may not have the CPU headroom to encode a live WebRTC track — that bench test is the necessary first step whenever this phase is picked up, not something to assume works.
+
+**Also corrected this session:** memory said the FCM/rule-builder branch was unmerged — it's actually already on `main` (merged since the last memory update), confirmed via `git log`/`git status` before starting new work.
+
+---
+
+## TL;DR of previous session (2026-07-10, FCM push + customizable alert rules)
 
 Two features, each via brainstorm → design spec → implementation plan → subagent-driven-development → live bench-test on the real Pi Zero W + real phone.
 
@@ -36,7 +48,7 @@ All 8 implementation tasks done, each independently reviewed (Task 8 and the fin
 
 ## Next step
 
-Merge `worktree-fcm-push-notifications` to `main` and push, once the interactive rule-builder bench-test (see above) is confirmed. Not done automatically this session since that manual confirmation was still outstanding when doc/memory updates were requested.
+Implement the ESP32-CAM MVP plan (`docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`) — 13 tasks across the Pi (`cam_bridge.py`, built incrementally across Tasks 3-6), firmware (`firmware/cam_esp32/cam_esp32.ino`, Task 8), and the app (Tasks 9-13). The user had not yet chosen subagent-driven vs. inline execution when this session ended — ask first. Firmware (Task 8) can't be compiled/bench-tested until it's flashed to the physical ESP32-CAM, same situation as the still-unflashed mesh relay firmware.
 
 ---
 
@@ -227,7 +239,8 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - [x] ~~Alerts don't arrive when the app is closed~~ — fixed 2026-07-10 via FCM push notifications. See this session's TL;DR above.
 - [x] ~~Hardcoded frost/daily-summary-only alerts, no per-sensor dry/humid duration rules~~ — fixed 2026-07-10 via the customizable rule builder (any zone/metric/operator/threshold/duration/action). See this session's TL;DR above.
 - [x] ~~Rule edits from the app didn't actually reach the Pi~~ — fixed 2026-07-10 (pre-existing bug found while writing the alert-rules plan; `publishRules()` now uses the retain+poll pattern proven for location sync).
-- [ ] Nice-to-haves from the original vision, all unstarted: ESP32-CAM plant time-lapse, CSV export, a smartwatch/widget glance. (ESP32-CAM was floated again this session as a possible next feature but the FCM/alert-rules bug fixes were prioritized instead.)
+- [ ] ESP32-CAM live view + motion alerts — **fully designed and planned as of 2026-07-11** (spec: `docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md`, plan: `docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`, 13 tasks), **not yet implemented**. WebRTC remote streaming is documented as a separate future Phase 2, not planned.
+- [ ] Other nice-to-haves from the original vision, all unstarted: CSV export, a smartwatch/widget glance.
 
 **Housekeeping:**
 - [ ] `debugPrint()` calls in `mqtt_connection.dart` / `connection_provider.dart` — remove before any demo.
