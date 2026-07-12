@@ -35,5 +35,21 @@ void main() {
     test('extractActuatorId returns the actuator segment', () {
       expect(MqttConnection.extractActuatorId('greenhouse/actuators/pump1/state'), 'pump1');
     });
+
+    test('isCamStatusTopic matches only the status topic', () {
+      expect(MqttConnection.isCamStatusTopic('greenhouse/cam/status'), isTrue);
+      expect(MqttConnection.isCamStatusTopic('greenhouse/cam/live/frame'), isFalse);
+    });
+
+    test('isCamEventResponseTopic matches response/<id> and extracts the id', () {
+      expect(MqttConnection.isCamEventResponseTopic('greenhouse/cam/event/response/req1'), isTrue);
+      expect(MqttConnection.isCamEventResponseTopic('greenhouse/cam/event/request'), isFalse);
+      expect(MqttConnection.extractCamEventReqId('greenhouse/cam/event/response/req1'), 'req1');
+    });
+
+    test('isCamLiveFrameTopic matches only the live frame topic', () {
+      expect(MqttConnection.isCamLiveFrameTopic('greenhouse/cam/live/frame'), isTrue);
+      expect(MqttConnection.isCamLiveFrameTopic('greenhouse/cam/live/start'), isFalse);
+    });
   });
 }
