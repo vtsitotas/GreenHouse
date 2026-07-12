@@ -22,6 +22,7 @@ apt-get install -y -qq \
   mosquitto mosquitto-clients \
   python3-flask \
   python3-paho-mqtt \
+  python3-pil \
   python3-pip \
   openssl \
   dnsmasq-base \
@@ -126,6 +127,7 @@ cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-hivemq-bridge.service  /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-cam-bridge.service     /etc/systemd/system/
 
 # Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
 mkdir -p /etc/systemd/system/mosquitto.service.d
@@ -135,7 +137,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge greenhouse-cam-bridge >/dev/null 2>&1
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.

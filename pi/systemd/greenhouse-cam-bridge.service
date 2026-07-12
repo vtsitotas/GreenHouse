@@ -1,0 +1,24 @@
+[Unit]
+Description=Greenhouse Camera Bridge (motion detection + live relay)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/cam_bridge.py
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=/tmp /etc/greenhouse /var/lib/greenhouse
+
+[Install]
+WantedBy=multi-user.target
