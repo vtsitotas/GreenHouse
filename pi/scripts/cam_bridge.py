@@ -6,13 +6,18 @@
 # fires push alerts, and relays event photos / on-demand live frames to the
 # app over MQTT. See docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md.
 # ═══════════════════════════════════════════════════════════════════════════
+import base64
 import json
 import os
 import sys
 import threading
 import time
+import urllib.error
+import urllib.request
+from urllib.request import urlopen
 
 from flask import Flask, request
+import paho.mqtt.client as mqtt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 import cam_store
@@ -24,6 +29,17 @@ CAM_HTTP_PORT = 8090
 DB_PATH = '/var/lib/greenhouse/cam_events.db'
 NOTIFICATION_SETTINGS_CFG = '/etc/greenhouse/notification_settings.json'
 MOTION_THRESHOLD = 12.0
+
+MQTT_HOST = '127.0.0.1'
+MQTT_PORT = 1883
+STATUS_TOPIC = 'greenhouse/cam/status'
+EVENT_REQUEST_TOPIC = 'greenhouse/cam/event/request'
+EVENT_RESPONSE_PREFIX = 'greenhouse/cam/event/response/'
+CHUNK_SIZE = 3072  # raw bytes per chunk before base64 (~4KB after encoding) —
+                    # conservative, comfortably under any broker/HiveMQ Cloud
+                    # per-message size limit. New protocol for this feature;
+                    # no existing precedent to match.
+HEARTBEAT_STALE_SECONDS = 9  # 3x the camera's ~3s snapshot-POST interval
 
 app = Flask(__name__)
 
@@ -77,6 +93,60 @@ def _fire_motion_alert(event_id: str) -> None:
         send_push('Motion detected', message)
 
 
+def _publish_chunked(client, topic: str, data: bytes, extra: dict | None = None) -> None:
+    chunks = [data[i:i + CHUNK_SIZE] for i in range(0, len(data), CHUNK_SIZE)] or [b'']
+    total = len(chunks)
+    for i, chunk in enumerate(chunks):
+        payload = {'chunk': i, 'total': total, 'data': base64.b64encode(chunk).decode('ascii')}
+        if extra:
+            payload.update(extra)
+        client.publish(topic, json.dumps(payload))
+
+
+def publish_status(client) -> None:
+    with _state_lock:
+        online = _last_seen > 0 and (time.time() - _last_seen) < HEARTBEAT_STALE_SECONDS
+        status = {
+            'online': online,
+            'last_seen': _last_seen or None,
+            'ip': _camera_ip,
+            'last_event': _last_event,
+        }
+    client.publish(STATUS_TOPIC, json.dumps(status), retain=True)
+
+
+def _handle_event_request(client, raw_payload: bytes) -> None:
+    try:
+        req = json.loads(raw_payload.decode())
+        req_id = req['id']
+        event_id = req['event_id']
+    except Exception:
+        return  # malformed request — no id to reply on, nothing sane to do
+    camera_ip = _get_camera_ip()
+    if camera_ip is None:
+        client.publish(EVENT_RESPONSE_PREFIX + req_id, json.dumps({'error': 'camera_unreachable'}))
+        return
+    try:
+        with urlopen(urllib.request.Request(f'http://{camera_ip}/event/{event_id}'), timeout=8) as resp:
+            jpeg_bytes = resp.read()
+    except Exception as e:
+        print(f'[cam_bridge] WARN: event photo fetch failed: {e}', flush=True)
+        client.publish(EVENT_RESPONSE_PREFIX + req_id, json.dumps({'error': 'camera_unreachable'}))
+        return
+    _publish_chunked(client, EVENT_RESPONSE_PREFIX + req_id, jpeg_bytes)
+
+
+def on_connect(client, userdata, flags, rc, properties=None):
+    client.subscribe(EVENT_REQUEST_TOPIC)
+    print('[cam_bridge] Connected, subscribed to event-request topic', flush=True)
+    publish_status(client)
+
+
+def on_message(client, userdata, msg):
+    if msg.topic == EVENT_REQUEST_TOPIC:
+        _handle_event_request(client, msg.payload)
+
+
 @app.route('/cam/frame', methods=['POST'])
 def cam_frame():
     global _prev_gray
@@ -103,8 +173,16 @@ def cam_frame():
 
 
 def run():
-    global _db_conn
+    global _db_conn, _mqtt_client
     _db_conn = cam_store.init_db(DB_PATH)
+
+    client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id='greenhouse-cam-bridge')
+    client.on_connect = on_connect
+    client.on_message = on_message
+    client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
+    client.loop_start()
+    _mqtt_client = client
+
     print(f'[cam_bridge] Starting HTTP server on port {CAM_HTTP_PORT}', flush=True)
     app.run(host='0.0.0.0', port=CAM_HTTP_PORT, debug=False)
 
