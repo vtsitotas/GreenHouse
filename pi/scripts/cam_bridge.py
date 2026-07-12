@@ -29,6 +29,7 @@ CAM_HTTP_PORT = 8090
 DB_PATH = '/var/lib/greenhouse/cam_events.db'
 NOTIFICATION_SETTINGS_CFG = '/etc/greenhouse/notification_settings.json'
 MOTION_THRESHOLD = 12.0
+EVENT_MAX_AGE_DAYS = 7
 
 MQTT_HOST = '127.0.0.1'
 MQTT_PORT = 1883
@@ -180,6 +181,36 @@ def _live_loop(client, stop_event: threading.Event) -> None:
     print('[cam_bridge] Live session ended', flush=True)
 
 
+def _prune_expired_events(conn) -> None:
+    now = int(time.time())
+    for event_id in cam_store.expired_events(conn, now, EVENT_MAX_AGE_DAYS):
+        camera_ip = _get_camera_ip()
+        if camera_ip is None:
+            continue  # retry next cycle once the camera is reachable again
+        try:
+            urlopen(urllib.request.Request(f'http://{camera_ip}/event/{event_id}', method='DELETE'),
+                    timeout=5)
+        except Exception as e:
+            print(f'[cam_bridge] WARN: could not delete expired event {event_id} on camera: {e}', flush=True)
+            continue  # metadata kept, retry next cycle
+        cam_store.delete_event(conn, event_id)
+
+
+def maintenance_loop(conn, client, interval_seconds: int = 60, _stop_event: threading.Event | None = None) -> None:
+    """Runs pruning + status publish once per interval, forever (or until
+    _stop_event is set — used only by tests to bound the loop)."""
+    stop_event = _stop_event or threading.Event()
+    while not stop_event.wait(interval_seconds):
+        try:
+            _prune_expired_events(conn)
+        except Exception as e:
+            print(f'[cam_bridge] ERROR: pruning failed: {e}', flush=True)
+        try:
+            publish_status(client)
+        except Exception as e:
+            print(f'[cam_bridge] ERROR: status publish failed: {e}', flush=True)
+
+
 def on_connect(client, userdata, flags, rc, properties=None):
     client.subscribe(EVENT_REQUEST_TOPIC)
     client.subscribe(LIVE_START_TOPIC)
@@ -232,6 +263,10 @@ def run():
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
     _mqtt_client = client
+
+    maint_thread = threading.Thread(
+        target=maintenance_loop, args=(_db_conn, client), daemon=True)
+    maint_thread.start()
 
     print(f'[cam_bridge] Starting HTTP server on port {CAM_HTTP_PORT}', flush=True)
     app.run(host='0.0.0.0', port=CAM_HTTP_PORT, debug=False)

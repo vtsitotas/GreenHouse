@@ -256,3 +256,72 @@ def test_on_message_routes_live_start_and_stop(tmp_path, monkeypatch):
     cam_bridge.on_message(client, None, stop_msg)
     cam_bridge._live_thread.join(timeout=2)
     assert not cam_bridge._live_thread.is_alive()
+
+
+def test_prune_expired_events_deletes_on_camera_then_from_db(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', '192.168.1.50')
+    cam_store.record_event(cam_bridge._db_conn, 'old', 1, 20.0)
+    deleted_urls = []
+    monkeypatch.setattr(cam_bridge, 'urlopen', lambda req, timeout=5: deleted_urls.append(req.full_url))
+    cam_bridge._prune_expired_events(cam_bridge._db_conn)
+    assert deleted_urls == ['http://192.168.1.50/event/old']
+    assert cam_store.latest_event(cam_bridge._db_conn) is None
+
+
+def test_prune_expired_events_keeps_metadata_when_camera_unreachable(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', None)
+    cam_store.record_event(cam_bridge._db_conn, 'old', 1, 20.0)
+    cam_bridge._prune_expired_events(cam_bridge._db_conn)
+    assert cam_store.latest_event(cam_bridge._db_conn) == {'event_id': 'old', 'ts': 1}
+
+
+def test_prune_expired_events_keeps_metadata_when_delete_request_fails(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', '192.168.1.50')
+    cam_store.record_event(cam_bridge._db_conn, 'old', 1, 20.0)
+
+    def _raise(*a, **k):
+        raise OSError('unreachable')
+    monkeypatch.setattr(cam_bridge, 'urlopen', _raise)
+
+    cam_bridge._prune_expired_events(cam_bridge._db_conn)
+    assert cam_store.latest_event(cam_bridge._db_conn) == {'event_id': 'old', 'ts': 1}
+
+
+def test_maintenance_loop_runs_prune_and_publish_once_per_tick(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    calls = {'prune': 0, 'status': 0}
+    monkeypatch.setattr(cam_bridge, '_prune_expired_events', lambda conn: calls.__setitem__('prune', calls['prune'] + 1))
+    monkeypatch.setattr(cam_bridge, 'publish_status', lambda client: calls.__setitem__('status', calls['status'] + 1))
+    client = MagicMock()
+    stop_after_one = threading.Event()
+
+    def _run_once():
+        cam_bridge.maintenance_loop(cam_bridge._db_conn, client, interval_seconds=0.01, _stop_event=stop_after_one)
+    t = threading.Thread(target=_run_once)
+    t.start()
+    time.sleep(0.05)
+    stop_after_one.set()
+    t.join(timeout=2)
+    assert calls['prune'] >= 1
+    assert calls['status'] >= 1
+
+
+def test_maintenance_loop_survives_prune_exception(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_prune_expired_events', lambda conn: (_ for _ in ()).throw(Exception('boom')))
+    status_calls = []
+    monkeypatch.setattr(cam_bridge, 'publish_status', lambda client: status_calls.append(1))
+    client = MagicMock()
+    stop_event = threading.Event()
+
+    def _run_once():
+        cam_bridge.maintenance_loop(cam_bridge._db_conn, client, interval_seconds=0.01, _stop_event=stop_event)
+    t = threading.Thread(target=_run_once)
+    t.start()
+    time.sleep(0.05)
+    stop_event.set()
+    t.join(timeout=2)
+    assert len(status_calls) >= 1  # status still publishes despite the pruning exception
