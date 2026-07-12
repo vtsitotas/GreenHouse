@@ -35,6 +35,11 @@ MQTT_PORT = 1883
 STATUS_TOPIC = 'greenhouse/cam/status'
 EVENT_REQUEST_TOPIC = 'greenhouse/cam/event/request'
 EVENT_RESPONSE_PREFIX = 'greenhouse/cam/event/response/'
+LIVE_START_TOPIC = 'greenhouse/cam/live/start'
+LIVE_STOP_TOPIC = 'greenhouse/cam/live/stop'
+LIVE_FRAME_TOPIC = 'greenhouse/cam/live/frame'
+LIVE_POLL_INTERVAL = 0.7   # seconds between camera /capture polls (~1.4fps)
+LIVE_SESSION_TIMEOUT = 120  # seconds without a keep-alive before auto-stopping
 CHUNK_SIZE = 3072  # raw bytes per chunk before base64 (~4KB after encoding) —
                     # conservative, comfortably under any broker/HiveMQ Cloud
                     # per-message size limit. New protocol for this feature;
@@ -51,6 +56,9 @@ _prev_gray: bytes | None = None
 _camera_ip: str | None = None
 _last_seen: float = 0.0
 _last_event: dict | None = None
+_live_thread: threading.Thread | None = None
+_live_stop_event = threading.Event()
+_live_last_start = 0.0
 
 
 def _update_heartbeat(remote_addr: str) -> None:
@@ -136,15 +144,57 @@ def _handle_event_request(client, raw_payload: bytes) -> None:
     _publish_chunked(client, EVENT_RESPONSE_PREFIX + req_id, jpeg_bytes)
 
 
+def _start_live_session(client) -> None:
+    global _live_thread, _live_stop_event, _live_last_start
+    _live_last_start = time.monotonic()
+    if _live_thread is not None and _live_thread.is_alive():
+        return  # already running — this call was just a keep-alive refresh
+    _live_stop_event = threading.Event()
+    _live_thread = threading.Thread(target=_live_loop, args=(client, _live_stop_event), daemon=True)
+    _live_thread.start()
+    print('[cam_bridge] Live session started', flush=True)
+
+
+def _stop_live_session() -> None:
+    if _live_thread is not None:
+        _live_stop_event.set()
+    print('[cam_bridge] Live session stop requested', flush=True)
+
+
+def _live_loop(client, stop_event: threading.Event) -> None:
+    frame_id = 0
+    while not stop_event.is_set():
+        if time.monotonic() - _live_last_start > LIVE_SESSION_TIMEOUT:
+            print('[cam_bridge] Live session timed out (no keep-alive)', flush=True)
+            break
+        camera_ip = _get_camera_ip()
+        if camera_ip is not None:
+            try:
+                with urlopen(urllib.request.Request(f'http://{camera_ip}/capture'), timeout=5) as resp:
+                    jpeg_bytes = resp.read()
+                _publish_chunked(client, LIVE_FRAME_TOPIC, jpeg_bytes, extra={'frame_id': frame_id})
+                frame_id += 1
+            except Exception as e:
+                print(f'[cam_bridge] WARN: live frame fetch failed: {e}', flush=True)
+        stop_event.wait(LIVE_POLL_INTERVAL)
+    print('[cam_bridge] Live session ended', flush=True)
+
+
 def on_connect(client, userdata, flags, rc, properties=None):
     client.subscribe(EVENT_REQUEST_TOPIC)
-    print('[cam_bridge] Connected, subscribed to event-request topic', flush=True)
+    client.subscribe(LIVE_START_TOPIC)
+    client.subscribe(LIVE_STOP_TOPIC)
+    print('[cam_bridge] Connected, subscribed to event/live topics', flush=True)
     publish_status(client)
 
 
 def on_message(client, userdata, msg):
     if msg.topic == EVENT_REQUEST_TOPIC:
         _handle_event_request(client, msg.payload)
+    elif msg.topic == LIVE_START_TOPIC:
+        _start_live_session(client)
+    elif msg.topic == LIVE_STOP_TOPIC:
+        _stop_live_session()
 
 
 @app.route('/cam/frame', methods=['POST'])

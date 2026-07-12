@@ -3,6 +3,7 @@ import io
 import json
 import os
 import sys
+import threading
 import time
 
 from PIL import Image
@@ -180,3 +181,78 @@ def test_handle_event_request_ignores_malformed_payload(tmp_path, monkeypatch):
     client = MagicMock()
     cam_bridge._handle_event_request(client, b'not json')
     client.publish.assert_not_called()
+
+
+def test_start_live_session_spawns_a_thread(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', None)  # no camera to poll — loop just idles
+    monkeypatch.setattr(cam_bridge, 'LIVE_POLL_INTERVAL', 0.01)
+    client = MagicMock()
+    cam_bridge._start_live_session(client)
+    assert cam_bridge._live_thread is not None
+    assert cam_bridge._live_thread.is_alive()
+    cam_bridge._stop_live_session()
+    cam_bridge._live_thread.join(timeout=2)
+    assert not cam_bridge._live_thread.is_alive()
+
+
+def test_start_live_session_is_idempotent_while_already_running(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', None)
+    monkeypatch.setattr(cam_bridge, 'LIVE_POLL_INTERVAL', 0.01)
+    client = MagicMock()
+    cam_bridge._start_live_session(client)
+    first_thread = cam_bridge._live_thread
+    cam_bridge._start_live_session(client)  # treated as a keep-alive, not a second session
+    assert cam_bridge._live_thread is first_thread
+    cam_bridge._stop_live_session()
+    first_thread.join(timeout=2)
+
+
+def test_live_loop_publishes_frames_while_camera_reachable(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', '192.168.1.50')
+    monkeypatch.setattr(cam_bridge, 'LIVE_POLL_INTERVAL', 0.01)
+    monkeypatch.setattr(cam_bridge, 'urlopen', lambda req, timeout=5: io.BytesIO(b'frame'))
+    client = MagicMock()
+    stop_event = threading.Event()
+
+    def _stop_soon():
+        time.sleep(0.05)
+        stop_event.set()
+    threading.Thread(target=_stop_soon).start()
+
+    cam_bridge._live_loop(client, stop_event)
+
+    assert client.publish.call_count >= 1
+    topic, payload = client.publish.call_args_list[0].args[:2]
+    assert topic == cam_bridge.LIVE_FRAME_TOPIC
+    assert 'frame_id' in json.loads(payload)
+
+
+def test_live_loop_stops_after_timeout_without_keepalive(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', None)
+    monkeypatch.setattr(cam_bridge, 'LIVE_POLL_INTERVAL', 0.01)
+    monkeypatch.setattr(cam_bridge, 'LIVE_SESSION_TIMEOUT', 0.05)
+    client = MagicMock()
+    cam_bridge._live_last_start = time.monotonic() - 1  # already stale
+    stop_event = threading.Event()
+
+    start = time.monotonic()
+    cam_bridge._live_loop(client, stop_event)
+    assert time.monotonic() - start < 2  # returned promptly instead of looping forever
+
+
+def test_on_message_routes_live_start_and_stop(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, '_camera_ip', None)
+    monkeypatch.setattr(cam_bridge, 'LIVE_POLL_INTERVAL', 0.01)
+    client = MagicMock()
+    msg = MagicMock(topic=cam_bridge.LIVE_START_TOPIC, payload=b'1')
+    cam_bridge.on_message(client, None, msg)
+    assert cam_bridge._live_thread is not None
+    stop_msg = MagicMock(topic=cam_bridge.LIVE_STOP_TOPIC, payload=b'1')
+    cam_bridge.on_message(client, None, stop_msg)
+    cam_bridge._live_thread.join(timeout=2)
+    assert not cam_bridge._live_thread.is_alive()
