@@ -11,6 +11,7 @@ import 'package:greenhouse_app/screens/control/control_screen.dart';
 import 'package:greenhouse_app/screens/settings/settings_screen.dart';
 import 'package:greenhouse_app/screens/weather/weather_screen.dart';
 import 'package:greenhouse_app/screens/history/history_screen.dart';
+import 'package:greenhouse_app/screens/camera/camera_screen.dart';
 import 'package:greenhouse_app/services/notification_service.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 import 'package:greenhouse_app/theme/app_theme.dart';
@@ -33,6 +34,7 @@ final _router = GoRouter(
         GoRoute(path: '/dashboard', builder: (_, __) => const DashboardScreen()),
         GoRoute(path: '/devices',   builder: (_, __) => const DevicesScreen()),
         GoRoute(path: '/control',   builder: (_, __) => const ControlScreen()),
+        GoRoute(path: '/camera',    builder: (_, __) => const CameraScreen()),
         GoRoute(path: '/weather',   builder: (_, __) => const WeatherScreen()),
         GoRoute(path: '/settings',  builder: (_, __) => const SettingsScreen()),
         GoRoute(

@@ -5,7 +5,7 @@ class ShellScreen extends StatelessWidget {
   final Widget child;
   const ShellScreen({required this.child, super.key});
 
-  static const _routes = ['/dashboard', '/devices', '/control', '/weather', '/settings'];
+  static const _routes = ['/dashboard', '/devices', '/control', '/camera', '/weather', '/settings'];
 
   @override
   Widget build(BuildContext context) {
@@ -20,6 +20,7 @@ class ShellScreen extends StatelessWidget {
           NavigationDestination(icon: Icon(Icons.dashboard),    label: 'Dashboard'),
           NavigationDestination(icon: Icon(Icons.sensors),      label: 'Devices'),
           NavigationDestination(icon: Icon(Icons.toggle_on),    label: 'Control'),
+          NavigationDestination(icon: Icon(Icons.videocam),     label: 'Camera'),
           NavigationDestination(icon: Icon(Icons.cloud),        label: 'Weather'),
           NavigationDestination(icon: Icon(Icons.settings),     label: 'Settings'),
         ],
