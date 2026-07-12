@@ -242,11 +242,12 @@ systemctl restart greenhouse-portal
 systemctl restart greenhouse-weather
 systemctl restart greenhouse-recorder
 systemctl restart greenhouse-hivemq-bridge
-# greenhouse-serial-bridge is deliberately NOT restarted here (same as
-# greenhouse-cam-bridge above) -- it's enabled for next boot only. Until the
-# one-time raspi-config step below has run and the Pi has rebooted,
-# /dev/serial0 is still the login console, so starting it now would just
-# restart-loop against a port it can't use yet.
+systemctl restart greenhouse-cam-bridge
+# greenhouse-serial-bridge is deliberately NOT restarted here -- it's enabled
+# for next boot only. Until the one-time raspi-config step below has run and
+# the Pi has rebooted, /dev/serial0 is still the login console, so starting
+# it now would just restart-loop against a port it can't use yet. (Unlike
+# serial-bridge, cam-bridge has no such dependency, so it's restarted above.)
 
 echo ""
 echo "════════════════════════════════════════════════════════════════════════"
