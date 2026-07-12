@@ -10,7 +10,6 @@ import 'package:greenhouse_app/models/notification_settings.dart';
 import 'package:greenhouse_app/models/sensor_reading.dart';
 import 'package:greenhouse_app/models/weather_events.dart';
 import 'package:greenhouse_app/models/weather_rule.dart';
-import 'package:greenhouse_app/models/cam_status.dart';
 import 'package:greenhouse_app/repository/greenhouse_repository.dart';
 
 class MockConnection extends Mock implements GreenhouseConnection {}

@@ -24,10 +24,10 @@ void main() {
   testWidgets('shows online status with last motion event', (tester) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
-        camStatusProvider.overrideWith((ref) => Stream.value(CamStatus(
+        camStatusProvider.overrideWith((ref) => Stream.value(const CamStatus(
               online: true,
               ip: '192.168.1.50',
-              lastEvent: const CamEvent(eventId: 'evt1', ts: 1700000000),
+              lastEvent: CamEvent(eventId: 'evt1', ts: 1700000000),
             ))),
         connectionStatusProvider.overrideWith((ref) => Stream.value(ConnectionStatus.local)),
       ],
