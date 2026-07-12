@@ -134,6 +134,7 @@ def _pull_notification_settings():
         settings = {
             'frost_forecast': bool(data.get('frost_forecast', True)),
             'daily_summary':  bool(data.get('daily_summary', True)),
+            'motion_alert':   bool(data.get('motion_alert', True)),
         }
         with open(NOTIFICATION_SETTINGS_CFG, 'w') as f:
             json.dump(settings, f)
@@ -148,9 +149,10 @@ def load_notification_settings() -> dict:
         return {
             'frost_forecast': bool(d.get('frost_forecast', True)),
             'daily_summary':  bool(d.get('daily_summary', True)),
+            'motion_alert':   bool(d.get('motion_alert', True)),
         }
     except Exception:
-        return {'frost_forecast': True, 'daily_summary': True}
+        return {'frost_forecast': True, 'daily_summary': True, 'motion_alert': True}
 
 
 def publish_notification_settings():

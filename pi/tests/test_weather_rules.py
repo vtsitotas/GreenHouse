@@ -1,3 +1,4 @@
+import json
 import os
 import sqlite3
 import subprocess
@@ -273,7 +274,7 @@ def test_eval_rules_notify_false_skips_push_but_still_publishes_alert(monkeypatc
 def test_load_notification_settings_defaults_when_missing(tmp_path, monkeypatch):
     monkeypatch.setattr(weather, 'NOTIFICATION_SETTINGS_CFG', str(tmp_path / 'missing.json'))
     settings = weather.load_notification_settings()
-    assert settings == {'frost_forecast': True, 'daily_summary': True}
+    assert settings == {'frost_forecast': True, 'daily_summary': True, 'motion_alert': True}
 
 
 def test_load_notification_settings_reads_file(tmp_path, monkeypatch):
@@ -281,7 +282,7 @@ def test_load_notification_settings_reads_file(tmp_path, monkeypatch):
     cfg.write_text('{"frost_forecast": false, "daily_summary": true}')
     monkeypatch.setattr(weather, 'NOTIFICATION_SETTINGS_CFG', str(cfg))
     settings = weather.load_notification_settings()
-    assert settings == {'frost_forecast': False, 'daily_summary': True}
+    assert settings == {'frost_forecast': False, 'daily_summary': True, 'motion_alert': True}
 
 
 def test_maybe_send_frost_alert_respects_frost_forecast_off(monkeypatch):
@@ -320,3 +321,22 @@ def test_maybe_send_daily_summary_respects_daily_summary_off(monkeypatch):
 
     assert pushed == []
     assert weather._last_summary_date is not None
+
+
+def test_load_notification_settings_includes_motion_alert_default_true(tmp_path, monkeypatch):
+    monkeypatch.setattr(weather, 'NOTIFICATION_SETTINGS_CFG', str(tmp_path / 'missing.json'))
+    settings = weather.load_notification_settings()
+    assert settings['motion_alert'] is True
+
+
+def test_pull_notification_settings_preserves_motion_alert(tmp_path, monkeypatch):
+    cfg_path = tmp_path / 'settings.json'
+    monkeypatch.setattr(weather, 'NOTIFICATION_SETTINGS_CFG', str(cfg_path))
+    fake_result = MagicMock()
+    fake_result.stdout = json.dumps({
+        'frost_forecast': True, 'daily_summary': True, 'motion_alert': False,
+    })
+    monkeypatch.setattr(subprocess, 'run', lambda *a, **k: fake_result)
+    weather._pull_notification_settings()
+    saved = json.loads(cfg_path.read_text())
+    assert saved['motion_alert'] is False
