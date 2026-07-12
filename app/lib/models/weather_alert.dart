@@ -30,6 +30,7 @@ class WeatherAlert {
       case 'rain-close':     return '🌧 Rain Alert';
       case 'frost-heat':     return '❄️ Frost Protection';
       case 'heat-fan':       return '🌡 Heat Wave';
+      case 'motion':         return '📷 Motion Detected';
       default:               return '🌿 Greenhouse Alert';
     }
   }
