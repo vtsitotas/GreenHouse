@@ -29,3 +29,22 @@ class HistoryResponseRaw {
   final String payload;
   const HistoryResponseRaw(this.id, this.payload);
 }
+
+/// Carries the raw JSON payload from greenhouse/cam/status.
+class CamStatusRaw {
+  final String payload;
+  const CamStatusRaw(this.payload);
+}
+
+/// Carries one chunk of a greenhouse/cam/event/response/<id> photo transfer.
+class CamEventChunkRaw {
+  final String reqId;
+  final String payload; // JSON: {chunk, total, data} or {error}
+  const CamEventChunkRaw(this.reqId, this.payload);
+}
+
+/// Carries one chunk of a greenhouse/cam/live/frame relayed live-view frame.
+class CamLiveFrameChunkRaw {
+  final String payload; // JSON: {frame_id, chunk, total, data}
+  const CamLiveFrameChunkRaw(this.payload);
+}

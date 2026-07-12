@@ -113,6 +113,12 @@ class MqttConnection implements GreenhouseConnection {
       _events.add(NotificationSettingsRaw(payload));
     } else if (isHistoryResponseTopic(topic)) {
       _events.add(HistoryResponseRaw(topic.substring(_historyResponsePrefix.length), payload));
+    } else if (isCamStatusTopic(topic)) {
+      _events.add(CamStatusRaw(payload));
+    } else if (isCamEventResponseTopic(topic)) {
+      _events.add(CamEventChunkRaw(extractCamEventReqId(topic), payload));
+    } else if (isCamLiveFrameTopic(topic)) {
+      _events.add(CamLiveFrameChunkRaw(payload));
     } else if (isSensorTopic(topic)) {
       try { _events.add(SensorReading.fromMqtt(topic, payload)); } catch (_) {}
     } else if (isNodeStatusTopic(topic)) {
@@ -199,4 +205,12 @@ class MqttConnection implements GreenhouseConnection {
 
   static String extractNodeId(String t) => t.split('/')[2];
   static String extractActuatorId(String t) => t.split('/')[2];
+
+  static bool isCamStatusTopic(String t) => t == 'greenhouse/cam/status';
+
+  static const _camEventResponsePrefix = 'greenhouse/cam/event/response/';
+  static bool isCamEventResponseTopic(String t) => t.startsWith(_camEventResponsePrefix);
+  static String extractCamEventReqId(String t) => t.substring(_camEventResponsePrefix.length);
+
+  static bool isCamLiveFrameTopic(String t) => t == 'greenhouse/cam/live/frame';
 }
