@@ -42,10 +42,10 @@ flowchart LR
         NodeN["Κόμβος Ζώνης N — ESP32-C3<br/>(ίδιοι αισθητήρες ανά ζώνη)"]:::hw
     end
 
+    Bridge["Γέφυρα ESP32 (Gateway)<br/>δέκτης ESP-NOW ➜ εκδότης MQTT"]:::hw
+
     subgraph LAN ["Τοπικό δίκτυο (τροφοδοσία από πρίζα)"]
         direction TB
-        Bridge["Γέφυρα ESP32 (Gateway)<br/>δέκτης ESP-NOW ➜ εκδότης MQTT"]:::hw
-
         subgraph Pi ["Raspberry Pi Zero W — τοπικός διακομιστής"]
             direction TB
             Broker["Mosquitto MQTT Broker<br/>8883 TLS + auth (εξωτερικά)<br/>1883 μόνο loopback (εσωτερικά)"]:::sw
