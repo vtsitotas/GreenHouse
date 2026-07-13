@@ -119,6 +119,116 @@ node instead, regardless of actual signal strength or distance. Remove the
 line and reflash to restore normal behavior. It has zero effect on any
 board that doesn't explicitly define it.
 
+## Διαγράμματα
+
+### 1. Πριν vs Μετά — Star vs Mesh
+
+```mermaid
+flowchart LR
+    classDef hw fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    classDef br fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef pi fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+
+    subgraph Before ["Παλιά — Star (πρόβλημα)"]
+        direction LR
+        A1["Κόμβος α\n(μακριά)"]:::hw
+        B1["Κόμβος β"]:::hw
+        D1["Bridge\n(ESP32)"]:::br
+        Pi1["Pi"]:::pi
+
+        B1 -->|"ESP-NOW ✓"| D1
+        A1 -. "ESP-NOW ✗\n(δεν φτάνει)" .-> D1
+        D1 --> Pi1
+    end
+
+    subgraph After ["Τώρα — Mesh Relay (λύση)"]
+        direction LR
+        A2["Κόμβος α\nrank 2"]:::hw
+        B2["Κόμβος β\nrank 1\n(relay)"]:::hw
+        D2["Bridge\nrank 0"]:::br
+        Pi2["Pi"]:::pi
+
+        A2 -->|"unicast → γονέας"| B2
+        B2 -->|"relay forward"| D2
+        D2 --> Pi2
+    end
+```
+
+---
+
+### 2. Ανακάλυψη ranks μέσω beacons (τετράγωνη διάταξη α β / γ δ)
+
+```mermaid
+sequenceDiagram
+    participant D as δ — Bridge (rank 0)
+    participant B as β
+    participant G as γ
+    participant A as α (μακριά)
+
+    Note over D: Ξεκινά πάντα με rank=0, beacon κάθε 2s
+    D->>B: beacon {rank=0}
+    D->>G: beacon {rank=0}
+    D--xA: beacon (δεν φτάνει)
+
+    Note over B,G: Υιοθετούν rank=1, ξεκινούν δικό τους beacon
+    B->>A: beacon {rank=1}
+    G->>A: beacon {rank=1}
+
+    Note over A: Ακούει β και γ — και οι δύο rank=1<br/>Επιλέγει αυτόν με καλύτερο RSSI (π.χ. β)<br/>Υιοθετεί rank=2, γονέας = β
+```
+
+---
+
+### 3. Ροή δεδομένων — 2-hop μονοπάτι
+
+```mermaid
+flowchart LR
+    classDef hw fill:#e1f5fe,stroke:#0288d1,stroke-width:2px
+    classDef br fill:#fff3e0,stroke:#f57c00,stroke-width:2px
+    classDef pi fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px
+    classDef relay fill:#e8f5e9,stroke:#388e3c,stroke-width:2px
+
+    A["α — rank 2\norigin_mac=A\nseq=42"]:::hw
+    B["β — rank 1\n(relay)"]:::relay
+    G["γ — rank 1\n(direct)"]:::hw
+    D["δ — Bridge\nrank 0"]:::br
+    Pi["Raspberry Pi\nMosquitto"]:::pi
+
+    A -->|"MeshDataPacket\norigin=A, ttl=4"| B
+    B -->|"origin=A, ttl=3\n(B μόνο μεταφέρει)"| D
+    G -->|"MeshDataPacket\norigin=G, ttl=4"| D
+    D -->|"zone lookup\nκατά origin_mac\nMQTT publish"| Pi
+
+    A -. "εναλλακτικό\nαν β χαθεί" .-> G
+```
+
+---
+
+### 4. Self-healing — ο relay χάνεται, το δίκτυο επανέρχεται
+
+```mermaid
+sequenceDiagram
+    participant A as α (rank 2)
+    participant B as β (rank 1)
+    participant G as γ (rank 1)
+    participant D as δ — Bridge
+
+    A->>B: data (origin=α, seq=10)
+    B->>D: relay (origin=α, seq=10)
+
+    Note over B: β αποσυνδέεται (πτώση τάσης κτλ.)
+
+    Note over A: Σιωπή από β > PARENT_TIMEOUT (3× beacon interval)<br/>→ αποδέσμευση γονέα, rank=255 (unrouted)<br/>→ buffer readings στη μνήμη, ψάχνει νέο γονέα
+
+    G->>A: beacon {rank=1}
+    Note over A: Νέος γονέας = γ, rank=2
+
+    A->>G: data (origin=α, seq=11 + buffered)
+    G->>D: relay (origin=α, seq=11)
+```
+
+---
+
 ## Files this feature touches
 
 | File | Role |
