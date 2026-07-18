@@ -1,0 +1,48 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  pi-tests:
+    name: Pi tests (pytest)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          # flask/paho-mqtt/Pillow: installed via apt as system packages on the
+          # real Pi (install.sh) — installed here via pip since CI has no apt
+          # step for them. firebase-admin: real dependency of pi/shared/push.py,
+          # installed on the real Pi too (install.sh) — without it here,
+          # push.py's `messaging` name is never bound (import is inside a
+          # try/except ImportError), which breaks test_push.py's monkeypatching.
+          pip install flask paho-mqtt Pillow firebase-admin pytest
+
+      - name: Run tests
+        run: python -m pytest pi/tests/ -v
+
+  flutter-tests:
+    name: Flutter tests (analyze + test)
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+
+      - run: flutter pub get
+      - run: flutter analyze
+      - run: flutter test
