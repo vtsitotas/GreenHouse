@@ -188,14 +188,25 @@ recorder/cam_bridge) να είναι η γνωστή επόμενη κίνηση
 
 ## Δ. Διαδικασία / Ποιότητα repo
 
-### Δ1. Καθόλου CI **[εύκολο — ίσως το καλύτερο cost/benefit όλης της λίστας]**
-Δεν υπάρχει `.github/workflows/` — κάθε PR αυτής της περιόδου πέρασε με
-μηδέν checks. Υπάρχουν ήδη **79+ Pi tests** (`pi/tests/`, pytest) και
-**84+ Flutter tests** + `flutter analyze` που τρέχουν μόνο χειροκίνητα.
-Ένα workflow δύο jobs (python: `pytest pi/tests`· flutter:
-`flutter analyze && flutter test`) θα έπιανε regressions αυτόματα σε κάθε
-PR. Τα firmware sketches δεν χτίζονται στο CI χωρίς toolchain — εκτός
-scope, τα Python/Dart καλύπτουν ήδη το μεγαλύτερο μέρος της λογικής.
+### Δ1. Καθόλου CI **[έγινε — `.github/workflows/ci.yml`]**
+Δεν υπήρχε `.github/workflows/` — κάθε PR αυτής της περιόδου περνούσε με
+μηδέν checks. Υπήρχαν ήδη **120 Python tests** (`pi/tests/`, pytest) και
+**~104 Dart tests** (`app/test/`) + `flutter analyze` που έτρεχαν μόνο
+χειροκίνητα. Προστέθηκε workflow δύο jobs (pytest· `flutter analyze &&
+flutter test`) — επαληθεύτηκε τοπικά πριν το push (`pytest pi/tests/` σε
+καθαρό venv). Τα firmware sketches παραμένουν εκτός CI (δεν υπάρχει
+toolchain χωρίς φυσικό hardware) — εκτός scope, ίδιο μοτίβο με τα mesh/
+camera bench-tests.
+
+**Πραγματικό bug που βρέθηκε φτιάχνοντας το CI:** 2 από τα 120 tests
+(`test_push.py`) απέτυχαν όταν το `firebase-admin` λείπει, γιατί το
+`pi/shared/push.py:13-18` ορίζει το `messaging` name **μέσα** στο
+`try/except ImportError` — αν η βιβλιοθήκη λείπει, το όνομα δεν υπάρχει
+καθόλου στο module namespace, άρα το `monkeypatch.setattr(push,
+'messaging', ...)` σκάει με `AttributeError` αντί να τρέξει το
+mock-based σενάριο του test. Λύθηκε στο επίπεδο του workflow
+(εγκατάσταση `firebase-admin` στο CI, ίδιο με το πραγματικό Pi μέσω
+`install.sh`) αντί να αλλάξει το `push.py` — μικρότερο, πιο ασφαλές diff.
 
 ### Δ2. debugPrint / logging τακτοποίηση **[εύκολο]**
 Ήδη στο `TODO.md` (housekeeping) — αναφέρεται εδώ για πληρότητα μαζί με το
