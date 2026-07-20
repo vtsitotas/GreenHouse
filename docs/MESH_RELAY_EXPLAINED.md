@@ -166,10 +166,10 @@ flowchart LR
 
 ```mermaid
 sequenceDiagram
-    participant A as α (μακριά)
-    participant G as γ
-    participant B as β
     participant D as δ — Bridge (rank 0)
+    participant B as β
+    participant G as γ
+    participant A as α (μακριά)
 
     Note over D: Ξεκινά πάντα με rank=0, beacon κάθε 2s
     D->>B: beacon {rank=0}
