@@ -1,11 +1,111 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-11 (ESP32-CAM design + plan session)
-**Status:** ✅ All previous features still complete and merged to `main` (the FCM push notifications + customizable alert rules branch from the prior session is now merged — `main` is clean and up to date). This session is planning-only: a full design spec + 13-task implementation plan for ESP32-CAM live view + motion alerts, **no code written yet**. See "Next step" below.
+**Last updated:** 2026-07-20 (documentation deep-dive + design specs session)
+**Status:** ✅ `main` is clean, all work merged, CI is green. This session was
+**documentation and design only — no application code changed**. Corrected
+two stale claims found in this file (see below) and in the ESP32-CAM entry
+right below: the camera feature was actually already fully implemented back
+on 2026-07-11, contrary to what this file said until now. See "Next step"
+below for what's actually still open.
 
 ---
 
-## TL;DR of this session (2026-07-11, ESP32-CAM design + plan)
+## TL;DR of this session (2026-07-20, technical docs + design specs + CI)
+
+Long documentation/design session, triggered by the user wanting deep
+OSI-level technical references for the thesis writeup. No feature code
+touched — everything below is docs, specs, plans, or small config/security
+cleanups. 8 PRs, all merged.
+
+**`docs/technical/` — new 15-file Greek technical deep-dive** (`00-INDEX.md`
+through `14-network-reference.md`): sensor hardware, ESP-NOW protocol at
+OSI-layer detail, the mesh routing algorithm (rank/beacon/trickle), the
+bridge gateway, the MQTT broker (full topic tree + QoS/retain policy), why
+SQLite over MariaDB/InfluxDB, the recorder's buffering/rollup, why a custom
+paho-mqtt HiveMQ bridge replaced Mosquitto's native (broken) one, the setup
+portal + full mDNS/DNS-SD explanation, an end-to-end security/TLS map, the
+weather automation engine, the camera/motion pipeline, the Flutter app
+architecture, and a consolidated port/protocol/OSI reference table. Every
+claim cites real `file:line` references; gaps (no actuator firmware, no
+deep sleep yet, etc.) are called out explicitly rather than glossed over.
+
+**Two new design specs** (approved in conversation, **not yet implemented**):
+- `docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md` — pair the
+  app directly against the Pi's setup hotspot with zero home WiFi ever
+  configured (for sites with no ISP WiFi). Investigation found `/pair` is
+  already reachable in AP mode today, gated only by a 600s timer — the real
+  gap is that `/pair` hands out full MQTT credentials with **no
+  authentication** beyond that timer, over **plaintext HTTP**, and mDNS/
+  DNS-SD discovery is spoofable. Extended mid-session with a PIN-auth +
+  5-attempt-lockout design once that gap was discussed — splits `/pair` into
+  an unauthenticated existence-check (`GET /pair` → `{"found": true}`) and a
+  new PIN-gated `POST /pair/confirm` that returns the real credentials.
+  Applies to both the new AP-direct flow and the existing STA/home-WiFi flow.
+- `docs/superpowers/specs/2026-07-20-uart-bridge-design.md` +
+  `docs/superpowers/plans/2026-07-20-uart-bridge.md` — for deployments where
+  physical distance between the bridge and Pi isn't a constraint, replaces
+  the bridge's WiFi+MQTT+TLS uplink with a direct 3-wire GPIO UART
+  connection (both ESP32 and Pi GPIO run 3.3V — no level shifter). Removes
+  the router dependency and the WiFi credentials currently baked into
+  `bridge_esp32.ino` firmware. 5-task implementation plan written; explicitly
+  scoped to the bridge↔Pi hop only, doesn't touch the Pi's own HiveMQ
+  connectivity.
+
+**`TODO.md` (new) and `IMPROVEMENTS.md` (new)** — two root-level tracking
+docs, built by reading the real source tree rather than trusting this file's
+own claims (which turned out to have stale entries — see below) or the
+implementation-plan checkboxes (every plan file has 0/N boxes checked
+regardless of actual completion, confirmed by counting). `TODO.md` covers
+what's designed-but-unbuilt or built-but-hardware-unvalidated, plus a real
+gap this pass found that wasn't previously tracked anywhere: **no actuator
+controller firmware exists at all** — `greenhouse/actuators/<id>/set` is
+published correctly by the app and the rules engine, but nothing subscribes
+to it and drives a real relay/pump/fan, only the simulator fakes it.
+`IMPROVEMENTS.md` catalogs 20 code-verified findings across security,
+correctness, performance, and process for code that already works but could
+be better (committed WiFi/MQTT credentials needing rotation, the portal
+running as root with none of its siblings' systemd sandboxing, a live-frame
+memory leak, LAN camera streaming starving motion detection, etc.).
+
+**Implemented the top `IMPROVEMENTS.md` recommendation: CI.**
+`.github/workflows/ci.yml` — `pytest pi/tests/` (120 tests) and
+`flutter analyze && flutter test` (~104 tests), previously only ever run
+manually. The first real run caught two genuine, previously-invisible bugs:
+`pi/shared/push.py` binds the `messaging` name only inside a
+`try/except ImportError`, so `test_push.py` broke without `firebase-admin`
+installed (fixed by installing it in CI, matching the real Pi); and 7
+`deprecated_member_use` lints (`DropdownButtonFormField.value` →
+`initialValue`, `Switch.activeColor` → `activeThumbColor`) that only
+surfaced because CI installs current-stable Flutter rather than whatever
+version was last used locally. CI is now green on `main`.
+
+**Small security cleanup:** removed the unused MQTT-over-WebSocket listener
+(port 9001) from `pi/mosquitto/mosquitto.conf` — no client has used it since
+the app moved to direct TCP/TLS on 8883 (`docs/ARCHITECTURE.md`, an earlier
+session). Found and removed a second orphaned reference to the same port
+while at it: `pi/avahi/greenhouse-mqtt.service` advertised mDNS for it but
+was **never actually installed** by `install.sh` — dead in two places, not
+just one.
+
+**Corrections made to this file's own accuracy** (the reason this session
+went looking in the first place — always verify against the real tree, not
+just prior notes): the 2026-07-11 entry below claimed ESP32-CAM was only
+*designed*, not implemented — it was actually fully coded that same session
+and just never had this file updated afterward. Also, the mesh-relay and
+ESP32-CAM firmware remain genuinely uncompiled/unflashed (no toolchain in
+any dev sandbox so far) — that part of the earlier claim was and still is
+accurate.
+
+**Process note:** 8 separate PRs this session (#1–#8, all merged), each
+scoped to one topic, subscribed/watched to completion via
+`subscribe_pr_activity` + scheduled check-ins rather than polling. The
+designated working branch got restarted from `main` after every merge per
+the standard convention for this setup (a merged branch can't take new
+commits for a fresh PR).
+
+---
+
+## TL;DR of previous session (2026-07-11, ESP32-CAM design + plan)
 
 Brainstorm → design spec → implementation plan, no implementation started. Spec: `docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md`. Plan: `docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`.
 
@@ -48,7 +148,29 @@ All 8 implementation tasks done, each independently reviewed (Task 8 and the fin
 
 ## Next step
 
-Implement the ESP32-CAM MVP plan (`docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`) — 13 tasks across the Pi (`cam_bridge.py`, built incrementally across Tasks 3-6), firmware (`firmware/cam_esp32/cam_esp32.ino`, Task 8), and the app (Tasks 9-13). The user had not yet chosen subagent-driven vs. inline execution when this session ended — ask first. Firmware (Task 8) can't be compiled/bench-tested until it's flashed to the physical ESP32-CAM, same situation as the still-unflashed mesh relay firmware.
+No single obvious next step was chosen this session — it was documentation/
+design only. Candidates, roughly in order of how self-contained they are
+(see `TODO.md` for the full picture):
+
+1. **Direct-to-Pi pairing + PIN auth** (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`)
+   — approved in conversation, no implementation plan written yet. Would
+   need one written (mirroring the UART bridge spec's task-list format)
+   before subagent-driven-development could start.
+2. **UART-wired bridge** (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`
+   + `docs/superpowers/plans/2026-07-20-uart-bridge.md`) — spec and 5-task
+   plan both already written, ready to implement. Firmware task (Task 1)
+   can't be bench-tested without physical hardware, same caveat as
+   mesh-relay/ESP32-CAM before it.
+3. **Real-hardware field validation** of the mesh relay and ESP32-CAM
+   firmware — both are fully coded and have never been compiled or flashed
+   (no `arduino-cli` toolchain in any dev sandbox so far). This blocks
+   several `TODO.md` items from moving out of "designed, unvalidated."
+4. Work through `IMPROVEMENTS.md`'s remaining findings — Δ1 (CI) and Α6
+   (unused port 9001) are already done from this session; Α1 (rotate
+   committed WiFi/HiveMQ credentials) is probably the next highest-value one
+   given it's a live, real exposure.
+
+Ask the user which before picking one — none was prioritized explicitly.
 
 ---
 
@@ -199,6 +321,10 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `app/lib/services/fcm_token_service.dart` | Registers/refreshes the device's FCM token over MQTT (retained) — 2026-07-10 |
 | `app/lib/screens/weather/rule_form_dialog.dart` | The customizable rule builder dialog (any zone/metric/operator/threshold/duration/action/notify) — 2026-07-10 |
 | `app/lib/models/weather_rule.dart` | Rule model — zone+metric split, optional action, optional duration, per-rule notify flag — rewritten 2026-07-10 |
+| `docs/technical/00-INDEX.md` | Entry point to the 15-file OSI-level Greek technical deep-dive (protocol/hardware/security/db detail) — 2026-07-20 |
+| `TODO.md` | Consolidated, code-verified list of designed-but-unbuilt and built-but-hardware-unvalidated work — 2026-07-20 |
+| `IMPROVEMENTS.md` | Code-verified list of things that work but could be better (security/correctness/performance/process), each with `file:line` — 2026-07-20 |
+| `.github/workflows/ci.yml` | pytest + flutter analyze/test on every PR — 2026-07-20, previously nothing ran automated |
 
 ---
 
@@ -219,17 +345,41 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 **Also fixed this session:** history charts now work remotely too. They previously called the Pi's HTTP `/api/history` directly, which only exists on the LAN (HiveMQ bridges MQTT, not HTTP) — so charts failed with "could not load" as soon as remote MQTT access started actually working and got tested. Added an MQTT request/response path (`greenhouse/history/request` → `greenhouse/history/response/<id>`, answered by `greenhouse-recorder`); the app now picks HTTP or MQTT based on whether it's connected local or remote. Verified end-to-end against the real HiveMQ cluster (409 real points returned).
 
 **Bridging / firmware:**
-- [ ] Bridge firmware (`firmware/bridge_esp32/bridge_esp32.ino`) publishes without `retain=true` — zone cards can show empty after a broker restart until the next packet arrives. Small, isolated fix.
-- [ ] Multi-hop sensor mesh / relay bridging for far-away nodes (range extension beyond one ESP-NOW hop) — not started, tracked as a separate design track.
-- [ ] Real-hardware field test of the ESP-NOW → bridge → MQTT path — everything so far has only been validated against `tools/simulator.py`.
+- [x] ~~Bridge firmware publishes without `retain=true`~~ — fixed as part of the
+      2026-07-09 dynamic mesh relay session (`bridge_esp32.ino`'s
+      `mqttPublish()` now always passes `retain=true`). This checkbox was
+      never updated at the time; corrected 2026-07-20 after verifying against
+      the real firmware.
+- [x] ~~Multi-hop sensor mesh / relay bridging for far-away nodes~~ — built
+      2026-07-09 (dynamic mesh relay, see `docs/MESH_RELAY_EXPLAINED.md`).
+      Duplicate of the note already correctly reflected in Slice 2 above;
+      this line just hadn't been updated to match.
+- [ ] Real-hardware field test of the ESP-NOW → bridge → MQTT path —
+      everything so far has only been validated against `tools/simulator.py`.
+      Still true as of 2026-07-20.
+- [ ] **New, no design yet:** if the UART-wired bridge
+      (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`) gets built,
+      the ESP-NOW mesh's channel-follows-the-router-SSID trick needs to
+      switch to a fixed channel (covered in that spec's Goal 4 — not a
+      separate item, just flagging the dependency here too).
 
 **ML / analytics — nothing implemented yet:**
 - [ ] "ML watering prediction" ("water likely needed in 2 days") — original nice-to-have, never scoped.
 - [ ] Nightly export of recorder data to an external store (Postgres/Supabase) for monthly stats and weather-forecast-accuracy comparisons (predicted vs. actual, using the already-stored `greenhouse/weather/forecast` data). Deliberately deferred in the sensor-database spec — push, don't depend on pull, keep the Pi decoupled from the external service's uptime.
 
-**Security — mostly done, two explicit exceptions:**
+**Security — mostly done, a few explicit exceptions:**
 - ✅ Per-unit TLS certs, per-unit random OS password, captive-portal auto-popup, dead factory-provisioning code removed — all verified on real hardware.
-- [ ] `/pair` and `/api/history*` are unauthenticated. Fine for LAN-only/thesis use; would need a PIN/QR/token before any public or multi-customer deployment.
+- [ ] `/pair` and `/api/history*` are unauthenticated. **Design now exists**
+      (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`,
+      updated 2026-07-20 with a PIN + 5-attempt-lockout mechanism) but is
+      **not implemented yet** — no implementation plan written either.
+- [x] ~~Unused MQTT WebSocket listener (port 9001)~~ — removed 2026-07-20
+      from `pi/mosquitto/mosquitto.conf`, plus a second orphaned reference
+      in `pi/avahi/greenhouse-mqtt.service` that was never even installed.
+- [ ] Real committed secrets in tracked firmware/install files (bridge and
+      camera WiFi passwords, MQTT password, HiveMQ Cloud credentials) —
+      found 2026-07-20 (`IMPROVEMENTS.md §Α1`), not yet rotated or moved out
+      of git history.
 
 **App feature gaps:**
 - [x] ~~Pick-a-specific-past-date view for history~~ — done 2026-07-09. A "Custom…" chip on the history screen opens a date-range picker (bounded to 90 days back, matching minute-resolution retention); both `/api/history` (HTTP) and the MQTT history request now accept absolute `since`/`until`. See this session's TL;DR above.
@@ -239,7 +389,16 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - [x] ~~Alerts don't arrive when the app is closed~~ — fixed 2026-07-10 via FCM push notifications. See this session's TL;DR above.
 - [x] ~~Hardcoded frost/daily-summary-only alerts, no per-sensor dry/humid duration rules~~ — fixed 2026-07-10 via the customizable rule builder (any zone/metric/operator/threshold/duration/action). See this session's TL;DR above.
 - [x] ~~Rule edits from the app didn't actually reach the Pi~~ — fixed 2026-07-10 (pre-existing bug found while writing the alert-rules plan; `publishRules()` now uses the retain+poll pattern proven for location sync).
-- [ ] ESP32-CAM live view + motion alerts — **fully designed and planned as of 2026-07-11** (spec: `docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md`, plan: `docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`, 13 tasks), **not yet implemented**. WebRTC remote streaming is documented as a separate future Phase 2, not planned.
+- [x] ~~ESP32-CAM live view + motion alerts~~ — **actually already fully
+      implemented**, contrary to what this line said until 2026-07-20. The
+      code (`firmware/cam_esp32/cam_esp32.ino`, `pi/scripts/cam_bridge.py`,
+      `pi/shared/motion.py`/`cam_store.py`, app-side `camera_screen.dart` +
+      tests) was written in or shortly after the 2026-07-11 session but this
+      file was never updated to reflect it — a real "verify against the code,
+      not just prior notes" lesson. Still open: firmware has never been
+      flashed to physical hardware or bench-tested (same caveat as the mesh
+      relay). WebRTC remote streaming (Phase 2) remains genuinely not
+      planned/started.
 - [ ] Other nice-to-haves from the original vision, all unstarted: CSV export, a smartwatch/widget glance.
 
 **Housekeeping:**
