@@ -16,12 +16,16 @@
 | 7 | Κάμερα → cam_bridge.py | TCP/8090 | WiFi (τοπικό) | TCP | HTTP/1.1 (Flask) | **Καμία** | `12 §2, §7` |
 | 8 | cam_bridge.py → Κάμερα (poll/delete) | TCP/80 (στην κάμερα) | WiFi (τοπικό) | TCP | HTTP/1.1 | **Καμία** | `12 §7` |
 | 9 | Internal loopback (weather/recorder/simulator → Mosquitto) | TCP/1883 | loopback interface | TCP | MQTT plaintext, anonymous | Καμία (network-isolated, `127.0.0.1` bind) | `05 §2` |
-| 10 | Εφαρμογή/Γέφυρα → Mosquitto (websocket, **αχρησιμοποίητο**) | TCP/9001 | WiFi | TCP | MQTT over WebSocket + TLS | TLS | `05 §3` |
-| 11 | Πρώτη εγκατάσταση: Κινητό → Pi AP | — | 802.11 (ανοιχτό δίκτυο, χωρίς WPA) | TCP | HTTP (captive portal) | **Καμία** | `09 §2-4` |
-| 12 | weather.py → Open-Meteo | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`urllib.request`) | TLS (δημόσιο API, standard library validation) | `11 §1` |
-| 13 | push.py → Firebase Cloud Messaging | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`firebase_admin` SDK) | TLS | `13 §10` |
-| 14 | Avahi mDNS | UDP/5353 (multicast) | WiFi (τοπικό) | UDP | mDNS/DNS-SD (RFC 6762/6763) | Καμία | `09 §8` |
-| 15 | AP DHCP/DNS (setup mode) | UDP/67-68 (DHCP), UDP/53 (DNS) | WiFi hotspot | UDP | DHCP, DNS (NetworkManager dnsmasq-shared) | Καμία | `09 §2` |
+| 10 | Πρώτη εγκατάσταση: Κινητό → Pi AP | — | 802.11 (ανοιχτό δίκτυο, χωρίς WPA) | TCP | HTTP (captive portal) | **Καμία** | `09 §2-4` |
+| 11 | weather.py → Open-Meteo | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`urllib.request`) | TLS (δημόσιο API, standard library validation) | `11 §1` |
+| 12 | push.py → Firebase Cloud Messaging | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`firebase_admin` SDK) | TLS | `13 §10` |
+| 13 | Avahi mDNS | UDP/5353 (multicast) | WiFi (τοπικό) | UDP | mDNS/DNS-SD (RFC 6762/6763) | Καμία | `09 §8` |
+| 14 | AP DHCP/DNS (setup mode) | UDP/67-68 (DHCP), UDP/53 (DNS) | WiFi hotspot | UDP | DHCP, DNS (NetworkManager dnsmasq-shared) | Καμία | `09 §2` |
+
+> Η θύρα 9001 (MQTT over WebSocket+TLS) υπήρχε σε αυτόν τον πίνακα ως
+> "αχρησιμοποίητη" σε παλιότερη εκδοχή — **αφαιρέθηκε πλέον εντελώς** από
+> το `mosquitto.conf` (δες `05 §3`), οπότε δεν υπάρχει καν πια ζεύξη να
+> καταγραφεί.
 
 ## Χάρτης θυρών ανά συσκευή
 
@@ -32,7 +36,6 @@
 | 1883 | Mosquitto, loopback plaintext | `weather.py`, `recorder.py`, `cam_bridge.py`, `simulator.py` — όλα τοπικά |
 | 8883 | Mosquitto, TLS | Γέφυρα ESP32, Εφαρμογή (LAN) |
 | 8090 | `greenhouse-cam-bridge` (Flask) | ESP32-CAM (POST snapshots) |
-| 9001 | Mosquitto, WebSocket+TLS | Κανένας ενεργός client σήμερα |
 | 22 | SSH (OpenSSH, εκτός εμβέλειας project code) | Διαχείριση/deploy |
 
 ### ESP32 συσκευές
