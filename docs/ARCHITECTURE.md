@@ -228,13 +228,13 @@ sequenceDiagram
     participant Pi as Raspberry Pi (AP mode)
     participant W as Οικιακό WiFi (router)
 
-    Note over Pi: 1η εκκίνηση — χωρίς αποθηκευμένο WiFi<br/>hotspot ανοιχτό, ΧΩΡΙΣ κρυπτογράφηση (no WPA)
-    Pi->>Pi: Εκπομπή SSID «Greenhouse-XXXX»<br/>στατική IP 192.168.4.1/24
+    Note over Pi: 1η εκκίνηση, χωρίς αποθηκευμένο WiFi<br/>hotspot ανοιχτό, ΧΩΡΙΣ κρυπτογράφηση (no WPA)
+    Pi->>Pi: Εκπομπή SSID Greenhouse-XXXX<br/>στατική IP 192.168.4.1/24
     U->>Pi: Σύνδεση στο ανοιχτό hotspot
     Pi-->>U: Captive-portal popup<br/>(302 redirect σε OS connectivity probe)
-    U->>Pi: HTTP :80 — φόρμα WiFi (SSID + κωδικός)
+    U->>Pi: HTTP θύρα 80, φόρμα WiFi (SSID + κωδικός)
     U->>Pi: POST /connect ή /api/connect<br/>(plaintext HTTP, καμία κρυπτογράφηση)
-    Pi->>W: Reboot → σύνδεση ως client (WPA2)
+    Pi->>W: Reboot, σύνδεση ως client (WPA2)
 ```
 
 **Θύρες/πρωτόκολλα εδώ:** το hotspot της AP φάσης είναι **ανοιχτό δίκτυο**
@@ -251,15 +251,15 @@ sequenceDiagram
     autonumber
     participant U as Χρήστης (κινητό, στο σπιτικό WiFi τώρα)
     participant Avahi as avahi-daemon (Pi)
-    participant Pi as greenhouse-portal :80
-    participant Broker as Mosquitto :8883
+    participant Pi as greenhouse-portal, θύρα 80
+    participant Broker as Mosquitto, θύρα 8883
 
-    U->>Avahi: mDNS ερώτημα «greenhouse.local;»<br/>UDP :5353 multicast (224.0.0.251)
-    Avahi-->>U: απάντηση: τρέχουσα IP
+    U->>Avahi: mDNS ερώτημα για greenhouse.local<br/>UDP θύρα 5353, multicast 224.0.0.251
+    Avahi-->>U: απάντηση με την τρέχουσα IP
     Note over U: fallback: DNS-SD PTR→SRV→A<br/>αν αποτύχει η απευθείας ανάλυση (Android)
-    U->>Pi: GET /pair — HTTP :80, plaintext<br/>(παράθυρο 600″ από boot)
-    Pi-->>U: JSON: MQTT credentials +<br/>TLS fingerprint (μη ελεγμένο αργότερα)
-    U->>Broker: TCP :8883 → TLS → MQTT 3.1.1<br/>(user/pass από το /pair)
+    U->>Pi: GET /pair, HTTP θύρα 80, plaintext<br/>(παράθυρο 600″ από boot)
+    Pi-->>U: JSON με MQTT credentials +<br/>TLS fingerprint (μη ελεγμένο αργότερα)
+    U->>Broker: TCP θύρα 8883, TLS, MQTT 3.1.1<br/>(user/pass από το /pair)
     Broker-->>U: live dashboard
 ```
 
