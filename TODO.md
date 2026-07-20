@@ -34,9 +34,101 @@ explicitly deferred ("Out of scope... Leave `/pair` as-is" —
 `docs/superpowers/plans/2026-06-26-security-hardening-and-captive-portal.md:21`)
 but removing the AP-mode timer (this spec's Goal 4) makes it urgent to fix now.
 
+### UART-wired bridge (replace WiFi bridge uplink)
+**Spec/plan:** `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`,
+`docs/superpowers/plans/2026-07-20-uart-bridge.md`
+**Status:** Proposed, spec + 5-task implementation plan written, **no code
+yet**.
+
+For deployments where the bridge and Pi will always sit physically close
+together, replaces the bridge's WiFi+MQTT+TLS uplink with a direct 3-wire
+GPIO UART connection (both ESP32 and Pi GPIO run 3.3V logic — no level
+shifter needed). Removes the router dependency and the WiFi credentials
+currently baked into `bridge_esp32.ino` (the same committed-secret problem
+flagged in `IMPROVEMENTS.md §Α1`). Newline-delimited JSON over the wire; a
+new `pi/scripts/serial_bridge.py` republishes to the existing loopback
+Mosquitto exactly as the current bridge does today, so nothing downstream
+(recorder/weather/portal/app) needs to change. Also switches the ESP-NOW
+mesh to a fixed radio channel instead of scanning a router's SSID, since no
+router is assumed present in this deployment mode. Explicitly scoped to the
+bridge↔Pi hop only — the Pi's own upstream/HiveMQ connectivity is untouched.
+
 ---
 
-## 2. Code exists, never validated on real hardware
+## 2. Mesh protocol enhancements discussed but not yet written as specs
+
+Smaller than the items above — captured here so the design thinking isn't
+lost before someone formalizes it properly.
+
+### Adaptive TTL (mesh routing)
+**Discussed:** 2026-07-20, no spec file yet.
+
+Today `MESH_MAX_TTL` is a fixed constant (4) in `mesh_config.h`, applied the
+same to every packet regardless of how deep in the mesh it originated. Real
+consequence: a packet from a node whose rank is ≥6 gets silently dropped one
+hop before reaching the bridge (`docs/technical/03-mesh-routing.md §4`
+TTL walkthrough) — the network is structurally capped at ~5 hops deep no
+matter the physical layout.
+
+Proposed fix: make TTL **adaptive per-packet** instead of a global constant
+— set it from the origin node's own already-known rank plus a small margin,
+in `meshSendReading()` (`mesh_node.h`):
+```c
+// today:
+pkt.ttl = MESH_MAX_TTL;
+// proposed:
+pkt.ttl = meshMyRank + MESH_TTL_MARGIN;   // e.g. MESH_TTL_MARGIN = 2
+```
+Zero wire-format change (the `ttl` field already exists at its current
+size), zero new coordination needed (rank is already known locally). No
+safety downside — the actual anti-loop protection is the strict-rank parent
+rule, not TTL (`docs/technical/03-mesh-routing.md §4`), so a larger
+effective TTL costs nothing. Removes the hard depth ceiling entirely; the
+network can grow as deep as the physical mesh actually reaches.
+
+### Clock synchronization for the deep-sleep shared wake window
+**Discussed:** 2026-07-20, no spec file yet. Extends the still-unimplemented
+deep-sleep plan in `docs/EDGE_NODE_POWER_OPTIMIZATION.md` and the
+forward-compat `window_duration_ms` field already carried in every
+`MeshBeacon` (`mesh_config.h` — carried today, unused).
+
+**The problem:** once real deep sleep ships, nodes sleeping on independent
+schedules would miss each other entirely unless they're reliably awake at
+the same moments — but no node (except the always-on bridge) can keep an
+accurate clock for the days/weeks between resyncs that battery deployment
+implies.
+
+**The design worked out in conversation:**
+- Nodes don't need long-term clock accuracy — only need to resync **every
+  wake cycle** against their parent's beacon, using the `beacon_interval_ms`
+  field (already exists — "gap until sender's next beacon") to compute
+  exactly how long to sleep until the next shared window. Drift never
+  compounds across days, because every cycle re-anchors against a fresh
+  reference point, cascading down from the bridge (always-on, stable clock)
+  through each rank.
+- Each wake cycle: brief **guard-listen window** (sized to cover one
+  sleep-interval's worth of RTC drift, not cumulative drift) → hear parent's
+  beacon → do own work (send reading / relay children's packets) → compute
+  next sleep duration from the freshly-received `beacon_interval_ms` → deep
+  sleep.
+- Hardware suggestion: an external 32kHz watch crystal for RTC timing
+  (instead of the ESP32's internal RC oscillator) shrinks worst-case
+  per-cycle drift, letting the guard-listen window — and its battery cost —
+  shrink too.
+- Needs a new tuning constant (e.g. `MESH_WAKE_GUARD_MS`), sized
+  empirically once real hardware drift is measured on actual boards.
+- First-boot / no-known-parent case already has a conceptual answer in the
+  existing mesh design (longer discovery listen before adopting any
+  schedule, `docs/technical/03-mesh-routing.md`) — just needs to be wired
+  into this scheme once deep sleep is actually built.
+
+Not yet written into `EDGE_NODE_POWER_OPTIMIZATION.md` itself — this TODO
+entry is the only record of the design until someone formalizes it there or
+into a dedicated spec.
+
+---
+
+## 3. Code exists, never validated on real hardware
 
 ### Dynamic mesh relay (multi-hop ESP-NOW)
 **Spec/plan:** `docs/superpowers/specs/2026-07-09-dynamic-mesh-relay-design.md`,
@@ -68,7 +160,7 @@ committing to this track.
 
 ---
 
-## 3. HANDOFF.md backlog — verified against current code
+## 4. HANDOFF.md backlog — verified against current code
 
 ### Security / access control
 - [ ] `/pair` and `/api/history*` have no authentication beyond LAN/hotspot
@@ -131,7 +223,7 @@ committing to this track.
 
 ---
 
-## 4. Superseded / obsolete plans — not actionable, kept for history only
+## 5. Superseded / obsolete plans — not actionable, kept for history only
 
 These plans describe approaches the project **explicitly abandoned** in favor
 of what's actually built today. Do not implement anything from them without
