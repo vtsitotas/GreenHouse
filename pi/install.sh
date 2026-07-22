@@ -95,6 +95,7 @@ bash "$REPO/scripts/gen_certs.sh"
 
 echo "==> Configuring Mosquitto..."
 cp "$REPO/mosquitto/mosquitto.conf"      /etc/mosquitto/conf.d/greenhouse.conf
+cp "$REPO/mosquitto/acl"                 /etc/mosquitto/acl
 # NB: no native Mosquitto `connection` bridge here — it never completes a
 # handshake against our HiveMQ Cloud cluster (verified: 0 CONNACKs over 9
 # days of logs). greenhouse-hivemq-bridge.service replaces it with a small
@@ -102,14 +103,24 @@ cp "$REPO/mosquitto/mosquitto.conf"      /etc/mosquitto/conf.d/greenhouse.conf
 rm -f /etc/mosquitto/conf.d/hivemq-bridge.conf
 
 echo "==> Writing HiveMQ config for portal..."
-cat > /etc/greenhouse/hivemq.json << 'EOF'
-{
-  "host": "5d0f2497a0ba4a41a762943a32738484.s1.eu.hivemq.cloud",
-  "port": 8883,
-  "username": "greenhouse",
-  "password": "Greenhouse2026"
-}
-EOF
+# Real credentials are never committed (see IMPROVEMENTS.md finding A1) --
+# write a placeholder only if nothing is provisioned yet, so a re-run of
+# this script doesn't clobber real values written by hand afterward.
+if [ ! -f /etc/greenhouse/hivemq.json ]; then
+  cp "$REPO/hivemq.json.example" /etc/greenhouse/hivemq.json
+  echo "    Placeholder written. Edit /etc/greenhouse/hivemq.json with your"
+  echo "    real HiveMQ Cloud credentials for remote/app access to work."
+fi
+
+echo "==> Writing ESP32-CAM shared token for cam_bridge..."
+# Same idea as hivemq.json above -- must match CAM_TOKEN in the camera's
+# flashed secrets.h exactly (see IMPROVEMENTS.md finding A5).
+if [ ! -f /etc/greenhouse/cam_token.txt ]; then
+  cp "$REPO/cam_token.txt.example" /etc/greenhouse/cam_token.txt
+  echo "    Placeholder written. Edit /etc/greenhouse/cam_token.txt to match"
+  echo "    CAM_TOKEN in the flashed camera firmware."
+fi
+
 touch /etc/mosquitto/passwd
 chown mosquitto:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd
@@ -128,6 +139,16 @@ cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-hivemq-bridge.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-cam-bridge.service     /etc/systemd/system/
+# demo-only, disabled by default -- enable manually with
+# `sudo systemctl enable --now greenhouse-simulator` only on units with no
+# real sensors attached (see pi/tools/simulator.py)
+cp "$REPO"/systemd/greenhouse-simulator.service      /etc/systemd/system/
+
+echo "==> Installing portal sudoers rule (nmcli/reboot for the pi user)..."
+# greenhouse-portal.service runs as `pi`, not root (IMPROVEMENTS.md A2) --
+# this grants just the two commands _save_wifi()/scan()/_reboot_soon() need.
+install -m 440 "$REPO/portal/greenhouse-portal.sudoers" /etc/sudoers.d/greenhouse-portal
+visudo -c -f /etc/sudoers.d/greenhouse-portal
 
 # Ensure Mosquitto starts AFTER first_boot has generated certs on a fresh unit.
 mkdir -p /etc/systemd/system/mosquitto.service.d

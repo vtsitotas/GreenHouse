@@ -31,6 +31,26 @@ NOTIFICATION_SETTINGS_CFG = '/etc/greenhouse/notification_settings.json'
 MOTION_THRESHOLD = 12.0
 EVENT_MAX_AGE_DAYS = 7
 
+# Shared token gating cam_esp32's /capture and /event/<id> (see
+# IMPROVEMENTS.md finding A5) -- must match CAM_TOKEN in the camera's
+# flashed secrets.h exactly; there's no automatic sync between the two.
+CAM_TOKEN_FILE = '/etc/greenhouse/cam_token.txt'
+
+
+def _load_cam_token() -> str:
+    try:
+        with open(CAM_TOKEN_FILE) as f:
+            return f.read().strip()
+    except Exception:
+        return ''
+
+
+CAM_TOKEN = _load_cam_token()
+
+
+def _cam_url(camera_ip: str, path: str) -> str:
+    return f'http://{camera_ip}{path}?token={CAM_TOKEN}'
+
 MQTT_HOST = '127.0.0.1'
 MQTT_PORT = 1883
 STATUS_TOPIC = 'greenhouse/cam/status'
@@ -136,7 +156,7 @@ def _handle_event_request(client, raw_payload: bytes) -> None:
         client.publish(EVENT_RESPONSE_PREFIX + req_id, json.dumps({'error': 'camera_unreachable'}))
         return
     try:
-        with urlopen(urllib.request.Request(f'http://{camera_ip}/event/{event_id}'), timeout=8) as resp:
+        with urlopen(urllib.request.Request(_cam_url(camera_ip, f'/event/{event_id}')), timeout=8) as resp:
             jpeg_bytes = resp.read()
     except Exception as e:
         print(f'[cam_bridge] WARN: event photo fetch failed: {e}', flush=True)
@@ -171,7 +191,7 @@ def _live_loop(client, stop_event: threading.Event) -> None:
         camera_ip = _get_camera_ip()
         if camera_ip is not None:
             try:
-                with urlopen(urllib.request.Request(f'http://{camera_ip}/capture'), timeout=5) as resp:
+                with urlopen(urllib.request.Request(_cam_url(camera_ip, '/capture')), timeout=5) as resp:
                     jpeg_bytes = resp.read()
                 _publish_chunked(client, LIVE_FRAME_TOPIC, jpeg_bytes, extra={'frame_id': frame_id})
                 frame_id += 1
@@ -188,7 +208,7 @@ def _prune_expired_events(conn) -> None:
         if camera_ip is None:
             continue  # retry next cycle once the camera is reachable again
         try:
-            urlopen(urllib.request.Request(f'http://{camera_ip}/event/{event_id}', method='DELETE'),
+            urlopen(urllib.request.Request(_cam_url(camera_ip, f'/event/{event_id}'), method='DELETE'),
                     timeout=5)
         except Exception as e:
             print(f'[cam_bridge] WARN: could not delete expired event {event_id} on camera: {e}', flush=True)

@@ -1,6 +1,6 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:typed_data';
+import 'package:flutter/foundation.dart';
 import 'package:greenhouse_app/connection/greenhouse_connection.dart';
 import 'package:greenhouse_app/models/actuator_state.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
@@ -33,8 +33,18 @@ class GreenhouseRepository {
   final _camLiveFrameCtrl = StreamController<Uint8List>.broadcast();
 
   // Buffers chunks per in-flight live frame_id until `total` chunks have
-  // arrived, then emits the reassembled bytes and drops the buffer.
+  // arrived, then emits the reassembled bytes and drops the buffer. If a
+  // chunk is lost (network hiccup, especially over the remote/HiveMQ relay
+  // path) a frame_id would otherwise never complete and never be removed,
+  // leaking one entry per dropped frame for the rest of the live session.
+  // Bounded below by `_maxInFlightLiveFrames`: since frame_id increases
+  // monotonically within a live session and Dart's Map preserves insertion
+  // order, evicting `_liveFrameBuffers.keys.first` when a genuinely new
+  // frame_id would exceed the bound always evicts the oldest (and by then
+  // hopelessly stale, since newer frames have already superseded it)
+  // incomplete entry.
   final Map<int, List<String?>> _liveFrameBuffers = {};
+  static const int _maxInFlightLiveFrames = 2;
 
   List<WeatherRule> _rules = [];
   Map<String, dynamic>? _lastForecast;
@@ -108,22 +118,30 @@ class GreenhouseRepository {
         final data = jsonDecode(event.payload) as Map<String, dynamic>;
         _lastForecast = data;
         _forecastCtrl.add(data);
-      } catch (_) {}
+      } catch (e) {
+        if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse weather forecast payload: $e');
+      }
     } else if (event is RulesPayloadRaw) {
       try {
         _rules = WeatherRule.listFromJson(event.payload);
         _rulesCtrl.add(List.from(_rules));
-      } catch (_) {}
+      } catch (e) {
+        if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse rules payload: $e');
+      }
     } else if (event is NotificationSettingsRaw) {
       try {
         final settings = NotificationSettings.fromJson(jsonDecode(event.payload) as Map<String, dynamic>);
         _notificationSettings = settings;
         _notificationSettingsCtrl.add(settings);
-      } catch (_) {}
+      } catch (e) {
+        if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse notification-settings payload: $e');
+      }
     } else if (event is CamStatusRaw) {
       try {
         _camStatusCtrl.add(CamStatus.fromJson(jsonDecode(event.payload) as Map<String, dynamic>));
-      } catch (_) {}
+      } catch (e) {
+        if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse camera status payload: $e');
+      }
     } else if (event is CamEventChunkRaw) {
       _camEventChunkCtrl.add(event);
     } else if (event is CamLiveFrameChunkRaw) {
@@ -240,6 +258,12 @@ class GreenhouseRepository {
       final frameId = data['frame_id'] as int;
       final chunk = data['chunk'] as int;
       final total = data['total'] as int;
+      if (!_liveFrameBuffers.containsKey(frameId) &&
+          _liveFrameBuffers.length >= _maxInFlightLiveFrames) {
+        // Would exceed the in-flight bound: evict the oldest incomplete
+        // frame rather than let it sit in memory forever.
+        _liveFrameBuffers.remove(_liveFrameBuffers.keys.first);
+      }
       final buffer = _liveFrameBuffers.putIfAbsent(frameId, () => List<String?>.filled(total, null));
       buffer[chunk] = data['data'] as String;
       if (buffer.every((c) => c != null)) {
@@ -247,7 +271,9 @@ class GreenhouseRepository {
         _camLiveFrameCtrl.add(Uint8List.fromList(bytes));
         _liveFrameBuffers.remove(frameId);
       }
-    } catch (_) {}
+    } catch (e) {
+      if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse live frame chunk: $e');
+    }
   }
 
   /// Fires whenever the Pi publishes an updated camera status (retained, so

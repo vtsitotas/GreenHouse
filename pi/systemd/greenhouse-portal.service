@@ -4,13 +4,33 @@ After=network.target greenhouse-firstboot.service
 
 [Service]
 Type=simple
-User=root
+User=pi
 WorkingDirectory=/home/pi/greenhouse/portal
 ExecStart=/usr/bin/python3 /home/pi/greenhouse/portal/portal.py
-ExecStartPost=/sbin/iptables -t nat -A PREROUTING -p tcp --dport 8080 -j REDIRECT --to-port 80
 Restart=always
 RestartSec=5
 StandardOutput=journal
+
+# Lets a non-root process bind port 80 (see IMPROVEMENTS.md finding A2).
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+
+# NoNewPrivileges is intentionally NOT set here, unlike its sibling services:
+# _save_wifi()/scan()/_reboot_soon() in portal.py run `sudo nmcli`/`sudo
+# reboot` (see /etc/sudoers.d/greenhouse-portal, installed by install.sh from
+# pi/portal/greenhouse-portal.sudoers), which relies on sudo's setuid
+# escalation -- NoNewPrivileges would silently break that. Still a real
+# reduction from the old User=root: this process itself runs as `pi`,
+# filesystem-sandboxed below, with sudo narrowed to exactly those two
+# commands instead of the whole portal running fully privileged.
+ProtectSystem=strict
+ProtectHome=read-only
+# /etc/greenhouse: portal.py writes the .wifi_configured sentinel.
+# /run/sudo: sudo's own timestamp cache -- read-only here would make even
+# NOPASSWD sudo calls fail to initialize under ProtectSystem=strict.
+ReadWritePaths=/etc/greenhouse /run/sudo
+
+TimeoutStopSec=15
+KillSignal=SIGTERM
 
 [Install]
 WantedBy=multi-user.target

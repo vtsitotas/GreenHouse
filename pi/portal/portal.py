@@ -9,7 +9,10 @@ AP mode  (no /etc/greenhouse/.wifi_configured):
     POST /api/connect -> save WiFi from the Flutter app (JSON), reboot
 
 STA mode (.wifi_configured present):
-    GET  /pair        -> pairing JSON consumed by the Flutter app
+    GET  /pair          -> {"found": true} — existence check only, no secrets
+    POST /pair/confirm  -> {"pin": "123456"} -> pairing JSON consumed by the
+                            Flutter app, only if the PIN matches. 5 wrong
+                            PINs lock the endpoint until the service restarts.
 """
 import json
 import os
@@ -25,6 +28,14 @@ from history_query import query_points
 
 _START_TIME = time.time()
 _PAIR_WINDOW = 600  # seconds the /pair endpoint stays open after boot
+
+# /pair/confirm lockout — in-memory, same pattern as _START_TIME. Resets only
+# on service restart: this is a small greenhouse LAN/hotspot, not a public
+# service, so a global counter (not per-IP) is the simpler, sufficient choice
+# (see docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md).
+MAX_PAIR_ATTEMPTS = 5
+_pair_fail_count = 0
+_pair_locked = False
 
 app = Flask(__name__, template_folder="templates")
 
@@ -80,31 +91,34 @@ def _validate(ssid: str, password: str):
     return None
 
 
+# The portal runs as `pi`, not root (see IMPROVEMENTS.md finding A2) — nmcli
+# and reboot need real privilege, granted narrowly via
+# /etc/sudoers.d/greenhouse-portal (see pi/portal/greenhouse-portal.sudoers).
 def _save_wifi(ssid: str, password: str) -> None:
-    subprocess.run(["nmcli", "connection", "delete", _CLIENT_CONN],
+    subprocess.run(["sudo", "nmcli", "connection", "delete", _CLIENT_CONN],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(
-        ["nmcli", "connection", "add", "type", "wifi", "ifname", "wlan0",
+        ["sudo", "nmcli", "connection", "add", "type", "wifi", "ifname", "wlan0",
          "con-name", _CLIENT_CONN, "autoconnect", "yes",
          "connection.autoconnect-priority", "10",
          "ssid", ssid],
         check=True)
     if password:
         subprocess.run(
-            ["nmcli", "connection", "modify", _CLIENT_CONN,
+            ["sudo", "nmcli", "connection", "modify", _CLIENT_CONN,
              "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password],
             check=True)
     # Disable autoconnect on every other WiFi profile so only greenhouse-home
     # reconnects after reboot (avoids Pi Imager dev-WiFi racing it on boot).
     try:
         out = subprocess.run(
-            ["nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
+            ["sudo", "nmcli", "-t", "-f", "NAME,TYPE", "connection", "show"],
             capture_output=True, text=True).stdout
         for line in out.splitlines():
             name, _, ctype = line.partition(":")
             if "wireless" in ctype and name != _CLIENT_CONN:
                 subprocess.run(
-                    ["nmcli", "connection", "modify", name,
+                    ["sudo", "nmcli", "connection", "modify", name,
                      "connection.autoconnect", "no"],
                     stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
@@ -113,7 +127,7 @@ def _save_wifi(ssid: str, password: str) -> None:
 
 
 def _reboot_soon() -> None:
-    subprocess.Popen(["bash", "-c", "sleep 3 && reboot"])
+    subprocess.Popen(["bash", "-c", "sleep 3 && sudo reboot"])
 
 
 @app.route("/", defaults={"path": ""})
@@ -136,13 +150,13 @@ def scan():
         abort(403)
     try:
         subprocess.run(
-            ["nmcli", "device", "wifi", "rescan", "ifname", "wlan0"],
+            ["sudo", "nmcli", "device", "wifi", "rescan", "ifname", "wlan0"],
             timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except Exception:
         pass
     try:
         out = subprocess.run(
-            ["nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY",
+            ["sudo", "nmcli", "-t", "-f", "SSID,SIGNAL,SECURITY",
              "device", "wifi", "list", "ifname", "wlan0"],
             capture_output=True, text=True, timeout=10).stdout
         seen, networks = set(), []
@@ -195,24 +209,52 @@ def api_connect():
     return jsonify({"status": "connecting", "ssid": ssid})
 
 
+def _pairing_payload() -> dict:
+    c  = _load_config()
+    hm = _load_hivemq()
+    return {
+        "host_lan":        "greenhouse.local",
+        "host_remote":     hm.get("host", ""),
+        "port":            c["port"],
+        "tls_fingerprint": c["tls_fingerprint"],
+        "username":        c["username"],
+        "password":        c["password"],
+        "remote_username": hm.get("username", ""),
+        "remote_password": hm.get("password", ""),
+    }
+
+
 @app.route("/pair")
 def pair():
+    # Existence check only — no secrets. mDNS/DNS-SD has no authenticity
+    # guarantee, so anything that could hand out credentials here would be
+    # exposed to spoofing; the real handoff now requires the PIN below.
     if time.time() - _START_TIME > _PAIR_WINDOW:
         return jsonify({"error": "Pairing window expired. Restart the Pi "
                                  "to open a new pairing window."}), 403
+    return jsonify({"found": True})
+
+
+@app.route("/pair/confirm", methods=["POST"])
+def pair_confirm():
+    global _pair_fail_count, _pair_locked
+    if _pair_locked:
+        return jsonify({"error": "Too many incorrect PINs. Restart the Pi "
+                                 "to try again."}), 429
+    pin = str((request.get_json(silent=True) or {}).get("pin", ""))
     try:
-        c  = _load_config()
-        hm = _load_hivemq()
-        return jsonify({
-            "host_lan":        "greenhouse.local",
-            "host_remote":     hm.get("host", ""),
-            "port":            c["port"],
-            "tls_fingerprint": c["tls_fingerprint"],
-            "username":        c["username"],
-            "password":        c["password"],
-            "remote_username": hm.get("username", ""),
-            "remote_password": hm.get("password", ""),
-        })
+        expected_pin = _load_config()["pair_pin"]
+    except Exception as exc:
+        return jsonify({"error": str(exc)}), 500
+    if pin != expected_pin:
+        _pair_fail_count += 1
+        if _pair_fail_count >= MAX_PAIR_ATTEMPTS:
+            _pair_locked = True
+        time.sleep(1)  # throttle — slows even the 5 allowed attempts for a script
+        return jsonify({"error": "invalid PIN"}), 401
+    _pair_fail_count = 0
+    try:
+        return jsonify(_pairing_payload())
     except Exception as exc:
         return jsonify({"error": str(exc)}), 500
 

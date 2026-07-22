@@ -1,7 +1,10 @@
 import 'dart:async';
+import 'dart:io';
+import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:greenhouse_app/connection/greenhouse_connection.dart';
 import 'package:greenhouse_app/models/actuator_state.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
@@ -32,15 +35,26 @@ class MqttConnection implements GreenhouseConnection {
     _scheduleRetry(config, gen);
   }
 
+  // Remembers whether the last successful connection was 'local' or
+  // 'remote' and tries that one first, so repeated reconnects while away
+  // from home don't each pay the 5s LAN timeout before falling through to
+  // the remote host that's actually going to answer.
+  static const _lastGoodKind = 'greenhouse_last_good_connection';
+
   Future<bool> _attempt(ConnectionConfig config, int gen) async {
-    final hosts = [
-      (config.lanHost,    config.username,       config.password),
-      (config.remoteHost, config.remoteUsername,  config.remotePassword),
+    var hosts = [
+      (config.lanHost,    config.username,       config.password,       ConnectionStatus.local),
+      (config.remoteHost, config.remoteUsername,  config.remotePassword, ConnectionStatus.remote),
     ];
-    for (final (host, user, pass) in hosts) {
+    final prefs = await SharedPreferences.getInstance();
+    if (prefs.getString(_lastGoodKind) == 'remote') {
+      hosts = hosts.reversed.toList();
+    }
+    for (final (host, user, pass, kind) in hosts) {
       try {
         if (await _tryConnect(host, user, pass, config, gen)) {
-          _status.add(host == config.lanHost ? ConnectionStatus.local : ConnectionStatus.remote);
+          await prefs.setString(_lastGoodKind, kind == ConnectionStatus.local ? 'local' : 'remote');
+          _status.add(kind);
           return true;
         }
       } catch (_) {}
@@ -60,6 +74,22 @@ class MqttConnection implements GreenhouseConnection {
     }
   }
 
+  // Pins against the fingerprint captured at pairing time (ConnectionConfig
+  // .tlsFingerprint, from the Pi's /pair response) instead of trusting any
+  // self-signed cert — closes the MITM gap left by a blind accept-all.
+  // Format must match the Pi's `openssl x509 -fingerprint -sha256`
+  // output: colon-separated uppercase hex byte pairs.
+  static bool _matchesPinnedFingerprint(X509Certificate cert, String expectedFingerprint) {
+    if (expectedFingerprint.isEmpty) return false; // nothing to pin against — fail closed
+    final actual = sha256
+        .convert(cert.der)
+        .bytes
+        .map((b) => b.toRadixString(16).padLeft(2, '0'))
+        .join(':')
+        .toUpperCase();
+    return actual == expectedFingerprint.toUpperCase();
+  }
+
   Future<bool> _tryConnect(String host, String user, String pass,
       ConnectionConfig config, int gen) async {
     if (host.isEmpty) return false;
@@ -67,7 +97,10 @@ class MqttConnection implements GreenhouseConnection {
     final client = MqttServerClient.withPort(host, clientId, config.port);
     client.useWebSocket = false;
     client.secure = true;
-    client.onBadCertificate = (Object _) => true; // accept self-signed; pin in Slice 5
+    // The Pi's cert is self-signed, so the platform trust check always calls
+    // this back — the fingerprint comparison below is the only real check.
+    client.onBadCertificate =
+        (X509Certificate cert) => _matchesPinnedFingerprint(cert, config.tlsFingerprint);
     client.logging(on: false);
     client.keepAlivePeriod = 30;
     client.connectTimeoutPeriod = 5000;
@@ -76,12 +109,12 @@ class MqttConnection implements GreenhouseConnection {
         .authenticateAs(user, pass)
         .startClean();
     try {
-      debugPrint('[MQTT] trying $host:${config.port}');
+      if (kDebugMode) debugPrint('[MQTT] trying $host:${config.port}');
       final result = await client.connect();
-      debugPrint('[MQTT] result: ${result?.state}');
+      if (kDebugMode) debugPrint('[MQTT] result: ${result?.state}');
       if (result?.state != MqttConnectionState.connected) return false;
     } catch (e, st) {
-      debugPrint('[MQTT] error on $host: $e\n$st');
+      if (kDebugMode) debugPrint('[MQTT] error on $host: $e\n$st');
       return false;
     }
     _client = client;

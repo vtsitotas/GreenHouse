@@ -20,10 +20,19 @@ LOCAL_PORT = 1883
 TOPIC = 'greenhouse/#'
 HIVEMQ_CONFIG = '/etc/greenhouse/hivemq.json'
 
+# How long a forwarded payload is remembered for echo-suppression purposes.
+# The actual echo round-trip between the two brokers takes milliseconds to
+# low seconds -- this window only needs to cover that, not forever. Keeping
+# it short lets a genuine later re-publish of the same value (e.g. two
+# identical consecutive sensor readings, or a retained-topic republish)
+# through instead of silently dropping it for good.
+ECHO_SUPPRESS_WINDOW_S = 2.0
+
 # Shared last-forwarded-value cache used to stop the two connections from
 # echoing a message back and forth forever: whichever side forwards a
-# message records it here, and the receiving side skips re-forwarding an
-# unchanged value it just received.
+# message records (payload, monotonic timestamp) here, and the receiving
+# side skips re-forwarding an unchanged value it just received -- but only
+# within ECHO_SUPPRESS_WINDOW_S of that forward, not indefinitely.
 _last_seen = {}
 
 
@@ -40,9 +49,13 @@ def _make_forwarder(name, target_holder):
         if target is None:
             return
         key = (msg.topic, msg.retain)
-        if _last_seen.get(key) == msg.payload:
-            return  # echo of what we ourselves just forwarded
-        _last_seen[key] = msg.payload
+        seen = _last_seen.get(key)
+        now = time.monotonic()
+        if seen is not None:
+            seen_payload, seen_at = seen
+            if seen_payload == msg.payload and (now - seen_at) < ECHO_SUPPRESS_WINDOW_S:
+                return  # echo of what we ourselves just forwarded
+        _last_seen[key] = (msg.payload, now)
         target.publish(msg.topic, msg.payload, qos=1, retain=msg.retain)
 
     return on_message

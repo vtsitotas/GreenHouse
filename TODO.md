@@ -11,28 +11,34 @@ don't get mistaken for live work.
 
 ## 1. Designed but zero code written
 
-### Direct-to-Pi pairing + PIN authentication
+### Direct-to-Pi pairing without home WiFi (AP-mode "connect directly")
 **Spec:** `docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`
-**Status:** Proposed, approved in conversation, **no implementation plan or code yet**.
+**Status:** PIN authentication (Goal 5) is implemented — the rest (Goals 1-4)
+is still open.
 
-Lets a user pair the app directly against the Pi's setup hotspot without ever
-configuring home WiFi (for sites with no ISP WiFi at all). Requires:
-- `pi/portal/portal.py`: split `/pair` into `GET /pair` (existence check only)
-  + new `POST /pair/confirm` (PIN-gated, returns credentials).
-- `pi/scripts/first_boot.sh`: generate a per-unit 6-digit `pair_pin`.
-- 5-attempt lockout + 1s throttle on `/pair/confirm`.
-- `app/lib/screens/pairing/pairing_screen.dart`: new "connect directly"
-  button + PIN entry step.
-- `INSTRUCTIONS.md`: add PIN-label printing to the mass-production step.
+**Done:** the PIN-gated credential handoff, which closes a real, previously-live
+gap — `/pair` used to return full MQTT credentials over plaintext HTTP with no
+authentication beyond a 600s boot-time window, and mDNS/DNS-SD discovery
+itself is spoofable (no identity guarantee):
+- `pi/portal/portal.py`: `GET /pair` now returns only `{"found": true}`; new
+  `POST /pair/confirm` (PIN-gated, returns the credentials `/pair` used to)
+  with a 5-attempt lockout + 1s throttle.
+- `pi/scripts/first_boot.sh`: generates a per-unit 6-digit `pair_pin` into
+  `device.json`.
+- `app/lib/screens/pairing/pairing_screen.dart`: discovery now prompts for
+  the PIN before calling `/pair/confirm`.
 
-This also closes a real, currently-live gap: **`/pair` today returns full
-MQTT credentials over plaintext HTTP with no authentication check beyond a
-600s boot-time window** (`pi/portal/portal.py:198-217`) — anyone who can
-reach the LAN/hotspot within that window gets credentials, and mDNS/DNS-SD
-discovery itself is spoofable (no identity guarantee). This was previously
-explicitly deferred ("Out of scope... Leave `/pair` as-is" —
-`docs/superpowers/plans/2026-06-26-security-hardening-and-captive-portal.md:21`)
-but removing the AP-mode timer (this spec's Goal 4) makes it urgent to fix now.
+**Still open** (Goals 1-4 — the actual "skip home WiFi entirely" feature):
+- No AP-mode bypass of the 600s `/pair` window yet (`portal.py`'s `pair()`
+  still applies the timer in both AP and STA mode) — needed for Goal 4
+  (indefinitely reusable pairing without SSH).
+- No new "Σύνδεση απευθείας" button / choice screen in the app — today a user
+  can still reach `/pair` while connected to the Pi's hotspot via the
+  existing "Find my greenhouse" button (nothing gates that on STA mode), but
+  there's no dedicated UX for it and no first-time-flow screen offering
+  "home WiFi" vs "direct" up front.
+- `INSTRUCTIONS.md`: no PIN-label printing step added to the mass-production
+  process yet.
 
 ### UART-wired bridge (replace WiFi bridge uplink)
 **Spec/plan:** `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`,
@@ -158,14 +164,56 @@ relay server; flagged risk: Pi Zero W may lack CPU headroom to encode a live
 WebRTC track (no hardware video encoder) — needs a bench test before
 committing to this track.
 
+### ESP32-CAM `/stream` token auth (app-side half of IMPROVEMENTS.md A5)
+`/capture` and `GET|DELETE /event/<id>` are now `CAM_TOKEN`-gated (see A5) —
+the Pi is the only caller for those three, so the fix was self-contained.
+`/stream` is the one endpoint the **app** calls directly
+(`camera_screen.dart:113`, LAN direct view) and it's still unprotected: the
+app has no way to learn `CAM_TOKEN` today. Full fix needs: `cam_token` added
+to `/pair`'s response schema (`portal.py`'s `_pairing_payload()`, reading
+from a new field in `device.json` or the existing `cam_token.txt`),
+`ConnectionConfig.camToken`, `pairing_screen.dart`'s manual/QR entry, and
+`camera_screen.dart` appending `?token=` to the stream URL. Left out of the
+A5 pass because it's cross-stack (firmware + Pi + app) and untestable here
+without real camera hardware — bench-test each hop before shipping this.
+
+### Adaptive ESP-NOW channel discovery for edge nodes (IMPROVEMENTS.md B5)
+Edge nodes currently find their ESP-NOW channel by scanning for the
+hardcoded home-router `WIFI_SSID` (`edge_node_esp32.ino`,
+`edge_node_esp32_c3.ino`) even though they never actually join WiFi —
+renaming the router forces a reflash of every node. Proposed fix: scan all
+13 channels listening for the bridge's own beacon (`MESH_MAGIC`, rank 0)
+instead of the router's SSID — decouples the mesh from router config
+entirely. Not attempted in this pass: changes the edge nodes' boot-time
+channel-acquisition logic, which is exactly the kind of change that's
+risky to get subtly wrong without a physical bench test (nodes that can't
+find their channel don't join the mesh at all — silent failure, hard to
+diagnose remotely).
+
+### LAN camera streaming blocks motion detection (IMPROVEMENTS.md B3)
+`cam_esp32.ino`'s `WebServer` is single-threaded; `handleStream()`'s
+`while (client.connected())` loop means `loop()` (and therefore
+`sendSnapshotToPi()`) never runs while someone is watching the live MJPEG
+view — no motion detection and no heartbeat for the whole viewing session
+(the Pi will even mark the camera "offline" after ~9s of streaming). Fix
+needs either a switch to `ESPAsyncWebServer` or a periodic yield inside the
+stream loop that sneaks in a snapshot POST — both are real behavioral
+changes to the streaming path that need a physical camera to validate
+(motion detection continuing to work *during* a live view, not just after
+the client disconnects). Not attempted in this pass for the same
+untestable-without-hardware reason as the channel discovery item above.
+
 ---
 
 ## 4. HANDOFF.md backlog — verified against current code
 
 ### Security / access control
-- [ ] `/pair` and `/api/history*` have no authentication beyond LAN/hotspot
-      reachability + (for `/pair`) a 600s boot-time window — see §1 above,
-      this is the fix in progress.
+- [x] `/pair` had no authentication beyond LAN/hotspot reachability + a 600s
+      boot-time window — fixed: `/pair` now only confirms existence, real
+      credentials require the PIN via `POST /pair/confirm` (see §1 above).
+- [ ] `/api/history*` still has no authentication beyond LAN/hotspot
+      reachability — not covered by the PIN fix (read-only history data, a
+      smaller exposure than credential handoff was).
 - [ ] No per-customer/multi-tenant device registry — confirmed: one shared
       HiveMQ Cloud account hardcoded for the entire fleet
       (`pi/install.sh:105-112`). Current model is single-tenant.

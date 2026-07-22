@@ -1,0 +1,20 @@
+# Mosquitto ACL for the TLS listener (8883) -- see IMPROVEMENTS.md finding A3.
+# Only `app` (the phone) and `bridge` (bridge_esp32) authenticate here; the
+# loopback listener (1883) stays anonymous/unrestricted for local Pi tooling
+# and isn't affected by this file.
+#
+# bridge_esp32 only ever publishes sensor readings and node-status -- it
+# never subscribes to anything (see bridge_esp32.ino). Scoping it to
+# publish-only on exactly those topics means a compromised/spoofed bridge
+# can't send actuator commands, rewrite rules, or read anything back.
+user bridge
+topic write greenhouse/+/air/temperature
+topic write greenhouse/+/air/humidity
+topic write greenhouse/+/soil/moisture
+topic write greenhouse/nodes/+/status
+
+# The app is the trusted end-user client: dashboard, actuator control,
+# weather rules, notification settings, camera, history -- needs the full
+# namespace both ways.
+user app
+topic readwrite greenhouse/#

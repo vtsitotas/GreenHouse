@@ -51,19 +51,15 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     }
   }
 
-  Future<bool> _applyPair(http.Response res) async {
+  // GET /pair only confirms a greenhouse is there — no secrets in the
+  // response. Real credentials require the PIN via /pair/confirm below
+  // (closes the mDNS-spoofing gap: anyone can answer "found", only someone
+  // reading the device's physical PIN label can get credentials).
+  Future<bool> _applyPair(http.Response res, String baseUrl) async {
     if (res.statusCode == 200) {
       final j = jsonDecode(res.body) as Map<String, dynamic>;
-      _host.text       = j['host_lan']        ?? '';
-      _remoteHost.text = j['host_remote']     ?? j['host_tailscale'] ?? '';
-      _remoteUser.text = j['remote_username'] ?? '';
-      _remotePass.text = j['remote_password'] ?? '';
-      _port.text       = (j['port'] ?? 8883).toString();
-      _fp.text         = j['tls_fingerprint'] ?? '';
-      _user.text       = j['username']        ?? 'app';
-      _pass.text       = j['password']        ?? '';
-      setState(() { _busy = false; });
-      return true;
+      if (j['found'] != true) return false;
+      return await _confirmWithPin(baseUrl);
     } else if (res.statusCode == 403) {
       setState(() {
         _error = 'Pairing window expired. Restart the Pi and try again within 10 minutes.';
@@ -74,14 +70,82 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     return false;
   }
 
+  Future<bool> _confirmWithPin(String baseUrl) async {
+    final pin = await _promptForPin();
+    if (pin == null) {
+      setState(() { _busy = false; });
+      return true;
+    }
+    try {
+      final res = await http
+          .post(Uri.parse('$baseUrl/pair/confirm'),
+              headers: {'Content-Type': 'application/json'},
+              body: jsonEncode({'pin': pin}))
+          .timeout(const Duration(seconds: 5));
+      if (res.statusCode == 200) {
+        final j = jsonDecode(res.body) as Map<String, dynamic>;
+        _host.text       = j['host_lan']        ?? '';
+        _remoteHost.text = j['host_remote']     ?? j['host_tailscale'] ?? '';
+        _remoteUser.text = j['remote_username'] ?? '';
+        _remotePass.text = j['remote_password'] ?? '';
+        _port.text       = (j['port'] ?? 8883).toString();
+        _fp.text         = j['tls_fingerprint'] ?? '';
+        _user.text       = j['username']        ?? 'app';
+        _pass.text       = j['password']        ?? '';
+      } else if (res.statusCode == 401) {
+        _error = 'Incorrect PIN.';
+      } else if (res.statusCode == 429) {
+        _error = 'Too many incorrect PINs. Restart the Pi to try again.';
+      } else {
+        _error = 'Could not confirm pairing.';
+      }
+    } catch (e) {
+      _error = 'Could not reach the greenhouse: $e';
+    }
+    setState(() { _busy = false; });
+    return true;
+  }
+
+  Future<String?> _promptForPin() async {
+    final controller = TextEditingController();
+    final pin = await showDialog<String>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Found your greenhouse'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          keyboardType: TextInputType.number,
+          maxLength: 6,
+          decoration: const InputDecoration(
+            labelText: 'PIN',
+            hintText: '6-digit PIN from the device label',
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(ctx), child: const Text('Cancel')),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, controller.text.trim()),
+            child: const Text('Confirm'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (!mounted || pin == null || pin.isEmpty) return null;
+    return pin;
+  }
+
   Future<void> _discover() async {
     setState(() { _busy = true; _error = null; });
 
     // Try hostname first (works on iOS; sometimes on Android)
     try {
-      final res = await http.get(Uri.parse('http://greenhouse.local/pair'))
+      const base = 'http://greenhouse.local';
+      final res = await http.get(Uri.parse('$base/pair'))
           .timeout(const Duration(seconds: 5));
-      if (await _applyPair(res)) return;
+      if (await _applyPair(res, base)) return;
     } catch (_) {}
 
     // Fall back to mDNS service discovery (reliable on Android)
@@ -104,9 +168,10 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       client.stop();
 
       if (ip != null) {
-        final res = await http.get(Uri.parse('http://$ip/pair'))
+        final base = 'http://$ip';
+        final res = await http.get(Uri.parse('$base/pair'))
             .timeout(const Duration(seconds: 5));
-        if (await _applyPair(res)) return;
+        if (await _applyPair(res, base)) return;
       }
     } catch (_) {}
 

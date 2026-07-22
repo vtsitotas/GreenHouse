@@ -268,4 +268,51 @@ void main() {
     })));
     expect(await future, data);
   });
+
+  test('liveFrames evicts the oldest incomplete in-flight frame instead of leaking it forever', () async {
+    // Repository's live-frame reassembly bounds itself to 2 simultaneously
+    // in-flight incomplete frame_ids (see _maxInFlightLiveFrames). A third
+    // distinct incomplete frame must evict the oldest rather than let it
+    // accumulate in memory for the rest of a lossy live session.
+    final emitted = <List<int>>[];
+    final sub = repo.liveFrames.listen(emitted.add);
+
+    Map<String, dynamic> chunk(int frameId, int chunkIdx, int total, String data) => {
+          'frame_id': frameId,
+          'chunk': chunkIdx,
+          'total': total,
+          'data': base64Encode(utf8.encode(data)),
+        };
+
+    // Frame 1 and 2 each get only their first chunk (as if the second was
+    // lost in transit) -- this fills the 2-frame in-flight bound.
+    eventsCtrl.add(CamLiveFrameChunkRaw(jsonEncode(chunk(1, 0, 2, 'a1'))));
+    eventsCtrl.add(CamLiveFrameChunkRaw(jsonEncode(chunk(2, 0, 2, 'b1'))));
+    // Frame 3 is a genuinely new frame_id arriving while both slots are
+    // full, so it evicts frame 1 (the oldest) to stay within the bound.
+    eventsCtrl.add(CamLiveFrameChunkRaw(jsonEncode(chunk(3, 0, 2, 'c1'))));
+    await Future(() {});
+
+    // Frame 2 was never evicted, so its remaining chunk still completes it.
+    eventsCtrl.add(CamLiveFrameChunkRaw(jsonEncode(chunk(2, 1, 2, 'b2'))));
+    await Future(() {});
+    expect(emitted.length, 1);
+    expect(utf8.decode(emitted.last), 'b1b2');
+
+    // Frame 1's remaining chunk arrives late. Because frame 1's original
+    // buffer (holding chunk 0's data) was evicted, this starts a brand new
+    // buffer missing chunk 0 -- it never completes, and frame 1's data is
+    // gone rather than lingering in _liveFrameBuffers indefinitely.
+    eventsCtrl.add(CamLiveFrameChunkRaw(jsonEncode(chunk(1, 1, 2, 'a2'))));
+    await Future(() {});
+    expect(emitted.length, 1);
+
+    // Frame 3 is still tracked and completes normally.
+    eventsCtrl.add(CamLiveFrameChunkRaw(jsonEncode(chunk(3, 1, 2, 'c2'))));
+    await Future(() {});
+    expect(emitted.length, 2);
+    expect(utf8.decode(emitted.last), 'c1c2');
+
+    await sub.cancel();
+  });
 }
