@@ -33,6 +33,25 @@ def _fresh_client(tmp_path, monkeypatch):
     return cam_bridge.app.test_client()
 
 
+def test_cam_url_appends_token_query_param(monkeypatch):
+    monkeypatch.setattr(cam_bridge, 'CAM_TOKEN', 'sekret')
+    assert cam_bridge._cam_url('192.168.1.50', '/capture') == 'http://192.168.1.50/capture?token=sekret'
+    assert (cam_bridge._cam_url('192.168.1.50', '/event/evt1')
+            == 'http://192.168.1.50/event/evt1?token=sekret')
+
+
+def test_load_cam_token_defaults_to_empty_when_file_missing(tmp_path, monkeypatch):
+    monkeypatch.setattr(cam_bridge, 'CAM_TOKEN_FILE', str(tmp_path / 'missing.txt'))
+    assert cam_bridge._load_cam_token() == ''
+
+
+def test_load_cam_token_strips_whitespace(tmp_path, monkeypatch):
+    token_file = tmp_path / 'cam_token.txt'
+    token_file.write_text('  sekret-value\n')
+    monkeypatch.setattr(cam_bridge, 'CAM_TOKEN_FILE', str(token_file))
+    assert cam_bridge._load_cam_token() == 'sekret-value'
+
+
 def test_cam_frame_discards_first_frame_no_prior_baseline(tmp_path, monkeypatch):
     client = _fresh_client(tmp_path, monkeypatch)
     resp = client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg')
@@ -265,7 +284,7 @@ def test_prune_expired_events_deletes_on_camera_then_from_db(tmp_path, monkeypat
     deleted_urls = []
     monkeypatch.setattr(cam_bridge, 'urlopen', lambda req, timeout=5: deleted_urls.append(req.full_url))
     cam_bridge._prune_expired_events(cam_bridge._db_conn)
-    assert deleted_urls == ['http://192.168.1.50/event/old']
+    assert deleted_urls == [cam_bridge._cam_url('192.168.1.50', '/event/old')]
     assert cam_store.latest_event(cam_bridge._db_conn) is None
 
 

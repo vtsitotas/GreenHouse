@@ -111,6 +111,16 @@ if [ ! -f /etc/greenhouse/hivemq.json ]; then
   echo "    Placeholder written. Edit /etc/greenhouse/hivemq.json with your"
   echo "    real HiveMQ Cloud credentials for remote/app access to work."
 fi
+
+echo "==> Writing ESP32-CAM shared token for cam_bridge..."
+# Same idea as hivemq.json above -- must match CAM_TOKEN in the camera's
+# flashed secrets.h exactly (see IMPROVEMENTS.md finding A5).
+if [ ! -f /etc/greenhouse/cam_token.txt ]; then
+  cp "$REPO/cam_token.txt.example" /etc/greenhouse/cam_token.txt
+  echo "    Placeholder written. Edit /etc/greenhouse/cam_token.txt to match"
+  echo "    CAM_TOKEN in the flashed camera firmware."
+fi
+
 touch /etc/mosquitto/passwd
 chown mosquitto:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd

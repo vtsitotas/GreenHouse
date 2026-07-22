@@ -137,8 +137,13 @@ void loop() {
         } else {
           Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
                         pkt.temperature, pkt.humidity, pkt.soil_moisture);
-          meshSendReading(&pkt);  // to parent, or buffered while unrouted
         }
+        // Send even on a failed DHT read: NaN survives the wire fine
+        // (IEEE-754, same encoding both ends) and the bridge skips
+        // publishing just the NaN metric(s). Keeps lastSeenMs/nodeOnline
+        // current so a bad DHT read doesn't falsely report the whole node
+        // offline (IMPROVEMENTS.md finding B6).
+        meshSendReading(&pkt);  // to parent, or buffered while unrouted
       }
       break;
   }

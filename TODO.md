@@ -164,6 +164,45 @@ relay server; flagged risk: Pi Zero W may lack CPU headroom to encode a live
 WebRTC track (no hardware video encoder) — needs a bench test before
 committing to this track.
 
+### ESP32-CAM `/stream` token auth (app-side half of IMPROVEMENTS.md A5)
+`/capture` and `GET|DELETE /event/<id>` are now `CAM_TOKEN`-gated (see A5) —
+the Pi is the only caller for those three, so the fix was self-contained.
+`/stream` is the one endpoint the **app** calls directly
+(`camera_screen.dart:113`, LAN direct view) and it's still unprotected: the
+app has no way to learn `CAM_TOKEN` today. Full fix needs: `cam_token` added
+to `/pair`'s response schema (`portal.py`'s `_pairing_payload()`, reading
+from a new field in `device.json` or the existing `cam_token.txt`),
+`ConnectionConfig.camToken`, `pairing_screen.dart`'s manual/QR entry, and
+`camera_screen.dart` appending `?token=` to the stream URL. Left out of the
+A5 pass because it's cross-stack (firmware + Pi + app) and untestable here
+without real camera hardware — bench-test each hop before shipping this.
+
+### Adaptive ESP-NOW channel discovery for edge nodes (IMPROVEMENTS.md B5)
+Edge nodes currently find their ESP-NOW channel by scanning for the
+hardcoded home-router `WIFI_SSID` (`edge_node_esp32.ino`,
+`edge_node_esp32_c3.ino`) even though they never actually join WiFi —
+renaming the router forces a reflash of every node. Proposed fix: scan all
+13 channels listening for the bridge's own beacon (`MESH_MAGIC`, rank 0)
+instead of the router's SSID — decouples the mesh from router config
+entirely. Not attempted in this pass: changes the edge nodes' boot-time
+channel-acquisition logic, which is exactly the kind of change that's
+risky to get subtly wrong without a physical bench test (nodes that can't
+find their channel don't join the mesh at all — silent failure, hard to
+diagnose remotely).
+
+### LAN camera streaming blocks motion detection (IMPROVEMENTS.md B3)
+`cam_esp32.ino`'s `WebServer` is single-threaded; `handleStream()`'s
+`while (client.connected())` loop means `loop()` (and therefore
+`sendSnapshotToPi()`) never runs while someone is watching the live MJPEG
+view — no motion detection and no heartbeat for the whole viewing session
+(the Pi will even mark the camera "offline" after ~9s of streaming). Fix
+needs either a switch to `ESPAsyncWebServer` or a periodic yield inside the
+stream loop that sneaks in a snapshot POST — both are real behavioral
+changes to the streaming path that need a physical camera to validate
+(motion detection continuing to work *during* a live view, not just after
+the client disconnects). Not attempted in this pass for the same
+untestable-without-hardware reason as the channel discovery item above.
+
 ---
 
 ## 4. HANDOFF.md backlog — verified against current code

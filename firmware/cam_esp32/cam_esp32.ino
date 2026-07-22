@@ -14,10 +14,10 @@
 #include <SD_MMC.h>
 #include <FS.h>
 
-// ── WiFi (home router) ────────────────────────────────────────────────────────
-// WIFI_SSID, WIFI_PASSWORD: copy secrets.h.example to secrets.h in
+// ── WiFi + HTTP API token (home router / secrets.h) ────────────────────────────
+// WIFI_SSID, WIFI_PASSWORD, CAM_TOKEN: copy secrets.h.example to secrets.h in
 // firmware/libraries/GreenhouseSecrets/ and fill in real values (gitignored
-// -- see IMPROVEMENTS.md finding A1).
+// -- see IMPROVEMENTS.md findings A1/A5).
 #include <secrets.h>
 
 // ── Pi cam_bridge endpoint ────────────────────────────────────────────────
@@ -73,8 +73,22 @@ bool initCamera() {
   return esp_camera_init(&config) == ESP_OK;
 }
 
+// Gates /capture and /event/<id> (both only ever called by cam_bridge.py, not
+// the app) against anyone on the LAN -- see IMPROVEMENTS.md finding A5.
+// /stream is intentionally NOT gated: it's the app's direct LAN view and has
+// no way to learn CAM_TOKEN yet (that needs its own app/pairing plumbing --
+// tracked as a follow-up, see TODO.md).
+bool checkCamToken() {
+  if (server.arg("token") != CAM_TOKEN) {
+    server.send(401, "text/plain", "unauthorized");
+    return false;
+  }
+  return true;
+}
+
 // ── /capture: single JPEG frame ────────────────────────────────────────────────
 void handleCapture() {
+  if (!checkCamToken()) return;
   camera_fb_t *fb = esp_camera_fb_get();
   if (!fb) { server.send(503, "text/plain", "capture failed"); return; }
   server.sendHeader("Content-Type", "image/jpeg");
@@ -117,6 +131,7 @@ String eventPath(const String &eventId) {
 }
 
 void handleEventGet() {
+  if (!checkCamToken()) return;
   String eventId = server.pathArg(0);
   String path = eventPath(eventId);
   if (path == "" || !SD_MMC.exists(path)) {
@@ -129,6 +144,7 @@ void handleEventGet() {
 }
 
 void handleEventDelete() {
+  if (!checkCamToken()) return;
   String eventId = server.pathArg(0);
   String path = eventPath(eventId);
   if (path == "" || !SD_MMC.exists(path)) {
