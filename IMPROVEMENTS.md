@@ -13,67 +13,101 @@
 
 ## Α. Ασφάλεια
 
-### Α1. Secrets μέσα στο git repository **[μέτριο — το πιο σημαντικό εύρημα εδώ]**
-Πραγματικά credentials είναι commited σε tracked αρχεία:
+### Α1. Secrets μέσα στο git repository **[μέτριο — το πιο σημαντικό εύρημα εδώ]** — δομικά διορθωμένο
+**Status:** το σημείο 1 (δομική μετακίνηση) υλοποιήθηκε. Τα σημεία 2-3
+παραμένουν χειροκίνητα βήματα για τον χρήστη — βλ. παρακάτω.
+
+Πραγματικά credentials ήταν commited σε tracked αρχεία:
 - `firmware/bridge_esp32/bridge_esp32.ino:10-17` — WiFi SSID+password του
   σπιτιού **και** το MQTT password σε plaintext `#define`.
 - `firmware/cam_esp32/cam_esp32.ino:18-19` — ίδια WiFi credentials.
 - `pi/install.sh:105-112` — πλήρη HiveMQ Cloud credentials (host/user/pass).
 
 Ακόμα κι αν αφαιρεθούν σε επόμενο commit, **μένουν στο git history** — σε
-δημόσιο ή κοινοποιημένο repo θεωρούνται διαρρεύσαντα. Πρόταση:
-1. Μεταφορά σε `firmware/secrets.h` (gitignored, με `secrets.h.example`
-   template) και σε untracked `/etc/greenhouse/hivemq.json` που γράφεται
-   χειροκίνητα/από provisioning αντί να είναι μέσα στο `install.sh`.
-2. **Εναλλαγή (rotation)** των εκτεθειμένων κωδικών: WiFi password,
-   HiveMQ password, MQTT password της γέφυρας.
-3. Προσθήκη των patterns στο `.gitignore` (σήμερα δεν καλύπτει κανένα
-   secrets αρχείο firmware).
+δημόσιο ή κοινοποιημένο repo θεωρούνται διαρρεύσαντα.
 
-### Α2. Το portal τρέχει ως root, χωρίς sandboxing **[εύκολο]**
-`pi/systemd/greenhouse-portal.service` έχει `User=root` και **κανένα** από τα
-hardening directives που έχουν όλα τα αδελφά services (recorder, weather,
-cam-bridge έχουν `NoNewPrivileges`, `ProtectSystem=strict`,
-`ProtectHome=read-only`). Το portal είναι ταυτόχρονα η **μοναδική** υπηρεσία
-που εκτίθεται σε μη-αυθεντικοποιημένους clients (captive portal, `/pair`) —
-δηλαδή η πιο εκτεθειμένη υπηρεσία τρέχει με τα περισσότερα δικαιώματα.
-Πρόταση: `User=pi` + `AmbientCapabilities=CAP_NET_BIND_SERVICE` (για το bind
-στη θύρα 80) + το ίδιο hardening block με τα υπόλοιπα. Σημείωση: το
-`_save_wifi()` καλεί `nmcli`/`reboot` — αυτά χρειάζονται polkit ρύθμιση ή
-sudoers entry για τον `pi`, γι' αυτό είναι [εύκολο] αλλά όχι τετριμμένο.
+1. ✅ **Δομική μετακίνηση (έγινε):** νέα βιβλιοθήκη
+   `firmware/libraries/GreenhouseSecrets/` με `secrets.h.example` (tracked,
+   placeholder τιμές) — το πραγματικό `secrets.h` είναι gitignored. Τα 4
+   sketches (`bridge_esp32`, `cam_esp32`, `edge_node_esp32`,
+   `edge_node_esp32_c3`) κάνουν πλέον `#include <secrets.h>` αντί για
+   hardcoded `#define`. Το `pi/install.sh` πλέον γράφει `hivemq.json` μόνο
+   από το tracked `pi/hivemq.json.example` (placeholder τιμές, μόνο αν δεν
+   υπάρχει ήδη) — τα πραγματικά HiveMQ credentials αφαιρέθηκαν εντελώς από
+   το repo. `.gitignore` ενημερώθηκε για το νέο `secrets.h`.
+2. ⚠️ **Παραμένει ανοιχτό — απαιτεί χειροκίνητη ενέργεια:** οι
+   παλιές τιμές (WiFi password, HiveMQ password, MQTT password της γέφυρας)
+   **παραμένουν έγκυρες και μένουν στο git history**. Η δομική διόρθωση
+   πάνω δεν τις ακυρώνει — απαιτείται **εναλλαγή (rotation)** των ίδιων των
+   κωδικών (αλλαγή WiFi password στο router, νέο HiveMQ Cloud password, νέο
+   MQTT password για τον χρήστη `app` μέσω `mosquitto_passwd`) από τον
+   χρήστη, καθώς αγγίζει πραγματικές, ζωντανές υποδομές (router/HiveMQ
+   cloud account) εκτός του πεδίου αυτόματων αλλαγών κώδικα.
 
-Επίσης: το `ExecStartPost=/sbin/iptables ... --dport 8080 -j REDIRECT` στο
-ίδιο service είναι **νεκρό κατάλοιπο** — το portal δένει πλέον απευθείας στη
-θύρα 80, και το `ap_up.sh:82` σβήνει ρητά αυτό ακριβώς το redirect ως
-"stale". Το ένα αρχείο το προσθέτει, το άλλο το αφαιρεί. Να διαγραφεί η
-γραμμή.
+### Α2. Το portal τρέχει ως root, χωρίς sandboxing **[εύκολο]** — ✅ έγινε
+`pi/systemd/greenhouse-portal.service` είχε `User=root` και **κανένα** από τα
+hardening directives που έχουν όλα τα αδελφά services. Τώρα: `User=pi` +
+`AmbientCapabilities=CAP_NET_BIND_SERVICE` (για το bind στη θύρα 80) +
+`ProtectSystem=strict` + `ProtectHome=read-only` + `ReadWritePaths=` για
+`/etc/greenhouse` (sentinel write) και `/run/sudo` (sudo timestamp cache).
+`_save_wifi()`/`scan()`/`_reboot_soon()` καλούν πλέον `sudo nmcli`/`sudo
+reboot`, εξουσιοδοτημένα μέσω νέου `pi/portal/greenhouse-portal.sudoers`
+(εγκαθίσταται από το `install.sh` σε `/etc/sudoers.d/`, validated με
+`visudo -c`) — περιορισμένο ακριβώς σε αυτές τις δύο εντολές, όχι blanket
+sudo. Σημείωση: `NoNewPrivileges` **δεν** μπήκε σε αυτό το service (σε
+αντίθεση με τα αδέλφια του) — θα έκανε το setuid escalation του `sudo` να
+αποτυγχάνει σιωπηλά· τεκμηριωμένο trade-off μέσα στο ίδιο το service file.
 
-### Α3. Η γέφυρα μοιράζεται τον MQTT λογαριασμό της εφαρμογής **[εύκολο]**
-Η γέφυρα συνδέεται ως χρήστης `app` (`bridge_esp32.ino:16`), παρόλο που το
-`setup_tls.sh:38` δημιουργεί ήδη ξεχωριστό λογαριασμό `bridge` που μένει
-αχρησιμοποίητος. Με ξεχωριστούς λογαριασμούς + Mosquitto ACL (σήμερα δεν
-υπάρχει κανένα ACL — `docs/technical/10-security.md §6`), η γέφυρα θα
-μπορούσε να περιοριστεί σε publish-only στα sensor topics, ώστε παραβίασή
-της να μη δίνει π.χ. δυνατότητα εντολών σε actuators.
+Το `ExecStartPost=/sbin/iptables ... --dport 8080 -j REDIRECT` (νεκρό
+κατάλοιπο — το `ap_up.sh:82` το αφαιρούσε ήδη ως "stale") αφαιρέθηκε.
 
-### Α4. TLS certificate pinning — τα δεδομένα υπάρχουν ήδη, δεν ελέγχονται ποτέ **[μέτριο]**
+### Α3. Η γέφυρα μοιράζεται τον MQTT λογαριασμό της εφαρμογής **[εύκολο]** — ✅ έγινε
+Η γέφυρα συνδεόταν ως χρήστης `app` (`bridge_esp32.ino:16`) — το
+`setup_tls.sh` που δημιουργούσε έναν ξεχωριστό `bridge` λογαριασμό ήταν ήδη
+νεκρό κώδικας (διαγράφηκε, βλ. Δ3) και ποτέ δεν καλούνταν στην πράξη. Τώρα:
+`pi/scripts/first_boot.sh` παράγει και τα δύο passwords (`app` και `bridge`,
+ξεχωριστά, `mosquitto_passwd`), και νέο `pi/mosquitto/acl`
+(`acl_file` στο `mosquitto.conf`, μόνο για τον listener 8883) περιορίζει τον
+`bridge` σε **publish-only** στα τέσσερα topics που πραγματικά δημοσιεύει
+(`greenhouse/+/air/temperature`, `.../air/humidity`, `.../soil/moisture`,
+`greenhouse/nodes/+/status` — επιβεβαιωμένο από `bridge_esp32.ino`, ποτέ δεν
+κάνει subscribe). `firmware/bridge_esp32/bridge_esp32.ino` παίρνει πλέον
+`MQTT_USER`/`MQTT_PASS` από το gitignored `secrets.h` (βλ. finding A1),
+πλέον με τιμή `"bridge"` αντί για `"app"`.
+
+### Α4. TLS certificate pinning — τα δεδομένα υπάρχουν ήδη, δεν ελέγχονται ποτέ **[μέτριο]** — ✅ έγινε
 Το `/pair` παραδίδει το SHA-256 fingerprint του server certificate και η
 εφαρμογή το αποθηκεύει (`ConnectionConfig.tlsFingerprint`) — αλλά το
-`onBadCertificate = (Object _) => true` (`mqtt_connection.dart:70`) δέχεται
-οτιδήποτε και το fingerprint δεν συγκρίνεται πουθενά. Το σχόλιο "pin in
-Slice 5" δείχνει ότι ήταν πάντα το σχέδιο. Η υλοποίηση είναι οριοθετημένη:
-μέσα στο `onBadCertificate` callback, υπολογισμός SHA-256 του DER του
-παρουσιαζόμενου certificate και σύγκριση με το αποθηκευμένο — μόνο τότε
-`true`. Κλείνει το man-in-the-middle κενό που τεκμηριώνεται στο
-`docs/technical/10-security.md §4` χωρίς καμία αλλαγή στο Pi.
+`onBadCertificate = (Object _) => true` δεχόταν οτιδήποτε. Τώρα:
+`mqtt_connection.dart`'s `_matchesPinnedFingerprint()` υπολογίζει SHA-256
+του DER του παρουσιαζόμενου certificate και συγκρίνει με το αποθηκευμένο —
+μόνο σε ταίριασμα `true`, κενό fingerprint = fail closed (`false`). Κλείνει
+το man-in-the-middle κενό που τεκμηριώνεται στο `docs/technical/10-security.md §4`,
+χωρίς καμία αλλαγή στο Pi.
 
-### Α5. ESP32-CAM HTTP API εντελώς ανοιχτό στο LAN **[εύκολο]**
-`/stream`, `/capture`, `GET|DELETE /event/<id>` (`cam_esp32.ino:195-198`)
-δεν έχουν κανένα auth — οποιοσδήποτε στο LAN βλέπει τη κάμερα και μπορεί να
-**διαγράψει** αποθηκευμένα γεγονότα κίνησης. Ελάχιστη βελτίωση: ένα shared
-token (query param ή header) γνωστό σε Pi+εφαρμογή, έστω hardcoded στο ίδιο
-`secrets.h` του Α1. Δεν είναι πλήρης λύση, αλλά ανεβάζει το κόστος από
-"μηδέν" σε "χρειάζεσαι το token".
+### Α5. ESP32-CAM HTTP API εντελώς ανοιχτό στο LAN **[εύκολο]** — μερικώς έγινε
+`/stream`, `/capture`, `GET|DELETE /event/<id>` δεν είχαν κανένα auth —
+οποιοσδήποτε στο LAN έβλεπε την κάμερα και μπορούσε να **διαγράψει**
+αποθηκευμένα γεγονότα κίνησης. Τώρα: νέο `CAM_TOKEN` (network-wide shared
+token, ίδιο μοτίβο με το `WIFI_SSID` — όχι per-unit) στο
+`firmware/libraries/GreenhouseSecrets/secrets.h`, ελεγμένο σε `/capture` και
+`GET|DELETE /event/<id>` (`checkCamToken()` στο `cam_esp32.ino`) — αυτά τα
+τρία καλούνται **μόνο** από το `pi/scripts/cam_bridge.py`, που τώρα διαβάζει
+την ίδια τιμή από `/etc/greenhouse/cam_token.txt` (χειροκίνητα
+provisioned, ίδιο μοτίβο με το `hivemq.json` του Α1) και την επισυνάπτει ως
+query param.
+
+**Παραμένει ανοιχτό:** το `/stream` **δεν** προστατεύεται — καλείται
+απευθείας από την εφαρμογή (`camera_screen.dart:113`, LAN direct view), και
+η εφαρμογή δεν έχει σήμερα κανέναν τρόπο να μάθει το `CAM_TOKEN` (δεν είναι
+μέρος του `/pair` response ή του `ConnectionConfig`). Η πλήρης λύση θα
+απαιτούσε προσθήκη του token στο pairing flow (portal.py, `ConnectionConfig`,
+`pairing_screen.dart`) — μεγαλύτερη, cross-stack αλλαγή που δεν μπόρεσε να
+επαληθευτεί end-to-end χωρίς πραγματικό hardware, οπότε αφέθηκε ρητά εκτός
+αυτού του περάσματος (βλ. `TODO.md`) αντί να γίνει "στα τυφλά". Το
+διαγραφή-γεγονότων κίνησης (η πιο καταστροφική δυνατότητα) είναι πλέον
+προστατευμένο· το ανοιχτό view-only stream είναι μικρότερης σοβαρότητας
+υπόλοιπο.
 
 ### Α6. Αχρησιμοποίητος WebSocket listener 9001 **[έγινε]**
 Κανένας client δεν τον χρησιμοποιούσε πια (`docs/technical/05-mqtt-broker.md §3`).
@@ -86,27 +120,22 @@ token (query param ή header) γνωστό σε Pi+εφαρμογή, έστω ha
 
 ## Β. Ορθότητα / Αξιοπιστία
 
-### Β1. Το echo-suppression του HiveMQ bridge καταπίνει νόμιμες επαναλήψεις **[μέτριο]**
-Το `_last_seen` cache (`hivemq_bridge.py:27,42-45`) μπλοκάρει ένα μήνυμα αν
-το payload του είναι **ίδιο** με το τελευταίο που πέρασε από το ίδιο topic.
-Αυτό σταματά τον βρόχο ηχούς, αλλά έχει παρενέργεια: μια **γνήσια**
-επαναδημοσίευση ίδιας τιμής (π.χ. θερμοκρασία που μετρήθηκε ίδια δύο
-συνεχόμενες φορές, ή retained republish των `rules/current` με ίδιο
-περιεχόμενο) επίσης απορρίπτεται και δεν φτάνει ποτέ στην άλλη πλευρά.
-Για αισθητήρες με συνεχείς διακυμάνσεις είναι σπάνιο· για config topics
-είναι υπαρκτό. Καλύτερη λύση: αντί για σύγκριση payload, διάκριση
-κατεύθυνσης — π.χ. σύντομο χρονικό παράθυρο suppression (αγνόησε το ίδιο
-payload μόνο για ~2s μετά την προώθηση) ώστε η ηχώ να κόβεται αλλά μια
-πραγματική επανάληψη λεπτά αργότερα να περνά.
+### Β1. Το echo-suppression του HiveMQ bridge καταπίνει νόμιμες επαναλήψεις **[μέτριο]** — ✅ έγινε
+Το `_last_seen` cache μπλόκαρε ένα μήνυμα αν το payload του ήταν **ίδιο** με
+το τελευταίο που πέρασε από το ίδιο topic, χωρίς όριο χρόνου — μια **γνήσια**
+επαναδημοσίευση ίδιας τιμής λεπτά αργότερα επίσης απορριπτόταν για πάντα.
+Τώρα: `_last_seen` κρατά `(payload, monotonic_timestamp)` ζεύγη και το
+suppression ισχύει μόνο εντός `ECHO_SUPPRESS_WINDOW_S = 2.0` από την
+προηγούμενη προώθηση — αρκετό για να κοπεί η πραγματική ηχώ (round-trip σε
+ms) χωρίς να μπλοκάρει μια μεταγενέστερη, νόμιμη επανάληψη.
 
-### Β2. Διαρροή μνήμης στο reassembly των live frames της εφαρμογής **[εύκολο]**
-`_liveFrameBuffers` (`greenhouse_repository.dart:37,243`) κρατά buffer ανά
-`frame_id` μέχρι να φτάσουν **όλα** τα chunks. Αν χαθεί έστω ένα chunk
-(θόρυβος, remote σύνδεση μέσω HiveMQ), ο buffer εκείνου του frame **μένει
-για πάντα** — σε ένα μακρύ lossy live session συσσωρεύονται ημιτελή frames
-στη μνήμη. Πρόταση: eviction κάθε buffer παλαιότερου από 1-2 νεότερα
-`frame_id` (τα frames είναι διατεταγμένα — ένα ημιτελές παλιό frame δεν θα
-ολοκληρωθεί ποτέ και δεν έχει καν αξία προβολής πια).
+### Β2. Διαρροή μνήμης στο reassembly των live frames της εφαρμογής **[εύκολο]** — ✅ έγινε
+`_liveFrameBuffers` κρατούσε buffer ανά `frame_id` επ' αόριστον αν έστω ένα
+chunk χανόταν — σε μακρύ lossy live session συσσωρεύονταν ημιτελή frames
+στη μνήμη. Τώρα: `_maxInFlightLiveFrames = 2`, με eviction του παλαιότερου
+ημιτελούς buffer πριν δημιουργηθεί νέο πέρα από το όριο (ασφαλές γιατί τα
+`frame_id` είναι αύξοντα και ο `Map` insertion-ordered). Καλυμμένο με νέο
+test στο `greenhouse_repository_test.dart`.
 
 ### Β3. Το LAN live streaming παγώνει την ανίχνευση κίνησης **[μέτριο]**
 Ο `WebServer` του ESP32 είναι single-threaded και το `handleStream()`
@@ -119,15 +148,16 @@ heartbeat** όσο διαρκεί η ζωντανή προβολή (το Pi μά
 yield που στέλνει snapshot ενδιάμεσα. Τουλάχιστον να τεκμηριωθεί ως γνωστή
 συμπεριφορά αν μείνει ως έχει.
 
-### Β4. Καμία ρητή επανασύνδεση WiFi στη γέφυρα μετά το boot **[εύκολο]**
-Το `bridge_esp32.ino` κάνει blocking WiFi connect μόνο στο `setup()`. Αν το
-router επανεκκινήσει αργότερα, η επανασύνδεση αφήνεται στο implicit
-auto-reconnect του Arduino core — δεν υπάρχει έλεγχος `WiFi.status()` στο
-`loop()` ούτε λογική ανάκαμψης αν το auto-reconnect κολλήσει. Δεδομένου ότι
-η γέφυρα είναι το rank-0 anchor όλου του mesh, ένα ρητό
-"αν αποσυνδεδεμένο για >X δευτ. → `WiFi.reconnect()` / restart" είναι φτηνή
-ασφάλιση, στο ίδιο πνεύμα με το non-blocking MQTT reconnect που ήδη
-χτίστηκε προσεκτικά (`docs/technical/04-bridge-gateway.md §4`).
+### Β4. Καμία ρητή επανασύνδεση WiFi στη γέφυρα μετά το boot **[εύκολο]** — ✅ έγινε
+Το `bridge_esp32.ino` έκανε blocking WiFi connect μόνο στο `setup()`, χωρίς
+κανέναν έλεγχο στο `loop()`. Τώρα: νέα `checkWifi()`, καλείται σε κάθε
+`loop()` iteration, με το ίδιο "χαμηλού κόστους έλεγχος κάθε λίγα
+δευτερόλεπτα" πνεύμα με το ήδη υπάρχον non-blocking MQTT reconnect. Ελέγχει
+`WiFi.status()` κάθε `WIFI_CHECK_INTERVAL_MS` (5s)· αν αποσυνδεδεμένο,
+ξαναδοκιμάζει `WiFi.reconnect()` σε κάθε έλεγχο· αν παραμείνει
+αποσυνδεδεμένο για `WIFI_RECONNECT_TIMEOUT_MS` (30s), κάνει `ESP.restart()`
+ως backstop (καλύπτει την περίπτωση όπου το `reconnect()` της ίδιας της
+στοίβας έχει κολλήσει).
 
 ### Β5. Η σάρωση καναλιού των edge nodes δένει με το SSID του router **[μέτριο]**
 Κάθε edge node βρίσκει το ESP-NOW κανάλι σαρώνοντας για το hardcoded
@@ -139,43 +169,45 @@ auto-reconnect του Arduino core — δεν υπάρχει έλεγχος `WiF
 να ξέρει το δίκτυο. Δένει τους κόμβους στο δικό μας σύστημα αντί σε ξένη
 υποδομή.
 
-### Β6. Ψευδές "offline" σε σειρά αποτυχιών DHT **[εύκολο]**
-Τεκμηριωμένος περιορισμός στο ίδιο το firmware (`bridge_esp32.ino:96-99`):
-η ζωντάνια κόμβου βασίζεται μόνο σε άφιξη **δεδομένων**, οπότε ένας κόμβος
-που ζει και κάνει beacon κανονικά αλλά έχει διαδοχικά NaN από τον DHT
-δηλώνεται ψευδώς offline. Φτηνή λύση συμβατή με το υπάρχον σχήμα: όταν η
-μέτρηση αποτύχει, ο κόμβος να στέλνει το πακέτο με sentinel τιμές (π.χ.
-NaN encoded) αντί να μη στέλνει τίποτα — η γέφυρα ανανεώνει το lastSeen
-και απλά δεν δημοσιεύει τιμές.
+### Β6. Ψευδές "offline" σε σειρά αποτυχιών DHT **[εύκολο]** — ✅ έγινε
+Η ζωντάνια κόμβου βασιζόταν μόνο σε άφιξη **δεδομένων**, και οι δύο edge
+sketches παρέλειπαν εντελώς το `meshSendReading()` όταν ο DHT απέτυχε
+(`isnan`) — οπότε ένας κόμβος που ζει και κάνει beacon κανονικά αλλά έχει
+διαδοχικά NaN δηλωνόταν ψευδώς offline. Τώρα και τα δύο edge sketches
+καλούν πάντα `meshSendReading()`, ακόμα και με NaN temperature/humidity (το
+NaN περνάει σωστά μέσα από ESP-NOW — ίδια IEEE-754 κωδικοποίηση και στις
+δύο άκρες)· η γέφυρα (`onDataRecv`) ανανεώνει το `lastSeenMs`/`nodeOnline`
+όπως πάντα, αλλά πλέον παραλείπει να δημοσιεύσει μόνο το/τα NaN metric(s)
+αντί να στείλει το literal string `"nan"` σε topic που η εφαρμογή το
+περιμένει ως float — το soil moisture (δεν έρχεται από DHT) δημοσιεύεται
+κανονικά ό,τι κι αν συμβεί με τον DHT.
 
-### Β7. Σιωπηλά `catch (_) {}` στο repository της εφαρμογής **[εύκολο]**
-Πολλαπλά σημεία στο `greenhouse_repository.dart` (π.χ. 111, 116, 122, 126,
-250) καταπίνουν parse errors ολοκληρωτικά. Ένα κακοσχηματισμένο payload
-(π.χ. μετά από μελλοντική αλλαγή σχήματος στο Pi) θα εξαφανιζόταν χωρίς
-ίχνος, κάνοντας το debugging «γιατί δεν φαίνονται τα rules;» άσκοπα
-δύσκολο. Πρόταση: `debugPrint` σε debug builds τουλάχιστον (και δες Δ2 για
-τη γενικότερη τακτοποίηση logging).
+### Β7. Σιωπηλά `catch (_) {}` στο repository της εφαρμογής **[εύκολο]** — ✅ έγινε
+Πολλαπλά σημεία στο `greenhouse_repository.dart` κατάπιναν parse errors
+ολοκληρωτικά — ένα κακοσχηματισμένο payload θα εξαφανιζόταν χωρίς ίχνος.
+Όλα τα bare `catch (_) {}` της `_handle()`/live-frame-chunk λογικής έγιναν
+`catch (e) { if (kDebugMode) debugPrint('...: $e'); }`, με ξεχωριστό μήνυμα
+ανά σημείο για να λέει τι ακριβώς απέτυχε να γίνει parse.
 
 ---
 
 ## Γ. Απόδοση
 
-### Γ1. Motion diff σε καθαρή Python στο Pi Zero W **[εύκολο]**
-`motion.diff_score()` (`pi/shared/motion.py:27`) κάνει
-`sum(abs(p - c) for p, c in zip(...))` πάνω σε 4.800 pixels σε ερμηνευμένη
-Python, κάθε 3 δευτερόλεπτα, σε single-core ARMv6 1GHz. Με PIL που ήδη
-είναι dependency: `ImageChops.difference(img1, img2)` + `histogram()` κάνει
-τον ίδιο υπολογισμό σε C — τάξεις μεγέθους λιγότερο CPU στο πιο αδύναμο
-μηχάνημα του συστήματος. Ίδιο αποτέλεσμα, ~5 γραμμές αλλαγή, τα υπάρχοντα
-tests (`test_motion.py`) επιβεβαιώνουν ισοδυναμία.
+### Γ1. Motion diff σε καθαρή Python στο Pi Zero W **[εύκολο]** — ✅ έγινε
+`motion.diff_score()` έκανε `sum(abs(p - c) for p, c in zip(...))` πάνω σε
+4.800 pixels σε ερμηνευμένη Python, κάθε 3 δευτερόλεπτα, σε single-core
+ARMv6 1GHz. Τώρα χρησιμοποιεί `Image.frombytes` + `ImageChops.difference` +
+`ImageStat.Stat().mean[0]` (PIL, ήδη dependency) — ίδιο μαθηματικό
+αποτέλεσμα, υπολογισμένο σε C. Τα υπάρχοντα tests (`test_motion.py`)
+επιβεβαιώνουν ισοδυναμία.
 
-### Γ2. Fallback σειρά σύνδεσης όταν είσαι εκτός σπιτιού **[εύκολο]**
-`_attempt()` (`mqtt_connection.dart:35-50`) δοκιμάζει **πάντα** πρώτα το
-LAN host με 5s timeout πριν το remote. Όταν ο χρήστης είναι εκτός σπιτιού,
-κάθε (επανα)σύνδεση πληρώνει 5 χαμένα δευτερόλεπτα σε ένα host που δεν θα
-απαντήσει ποτέ. Πρόταση: θυμήσου ποιο host πέτυχε τελευταίο
-(`flutter_secure_storage`/prefs) και δοκίμασε αυτό πρώτα — το κόστος λάθους
-είναι συμμετρικό, το κέρδος είναι 5s στο κοινό σενάριο.
+### Γ2. Fallback σειρά σύνδεσης όταν είσαι εκτός σπιτιού **[εύκολο]** — ✅ έγινε
+`_attempt()` δοκίμαζε **πάντα** πρώτα το LAN host με 5s timeout πριν το
+remote — κάθε (επανα)σύνδεση εκτός σπιτιού πλήρωνε 5 χαμένα δευτερόλεπτα σε
+host που δεν θα απαντούσε ποτέ. Τώρα: `SharedPreferences` θυμάται αν η
+τελευταία επιτυχής σύνδεση ήταν `'local'` ή `'remote'` και δοκιμάζει αυτό
+πρώτα — συμμετρικό κόστος λάθους, κέρδος 5s στο κοινό away-from-home
+σενάριο.
 
 ### Γ3. Subprocess-based MQTT στο weather.py **[μέτριο — μόνο αν χρειαστεί]**
 Κάθε κύκλος (κάθε 30 λεπτά σε production, κάθε 30s με το τρέχον debug

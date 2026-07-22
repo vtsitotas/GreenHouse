@@ -2,6 +2,10 @@
 app/build/
 __pycache__/
 
+# Real WiFi/MQTT credentials -- firmware/libraries/GreenhouseSecrets/secrets.h.example
+# is the tracked template; each deployment fills in its own secrets.h here.
+firmware/libraries/GreenhouseSecrets/secrets.h
+
 # Scratch / staging
 _dart_staging/
 deleted/

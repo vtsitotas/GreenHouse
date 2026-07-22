@@ -1,0 +1,6 @@
+# Installed to /etc/sudoers.d/greenhouse-portal by install.sh.
+# greenhouse-portal.service runs as `pi`, not root (see IMPROVEMENTS.md
+# finding A2) -- these are the only two privileged commands the portal
+# actually needs: reconfiguring WiFi via nmcli (_save_wifi()/scan() in
+# portal.py) and rebooting after a successful /connect.
+pi ALL=(root) NOPASSWD: /usr/bin/nmcli, /usr/sbin/reboot

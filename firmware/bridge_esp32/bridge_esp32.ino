@@ -5,16 +5,22 @@
 #include <PubSubClient.h>
 #include <mesh_config.h>
 #include <mesh_node.h>
-
-// ── WiFi (home router) ────────────────────────────────────────────────────────
-#define WIFI_SSID     "TP-Link_14A6"
-#define WIFI_PASSWORD "6940604664"   // ← fill in
+// WIFI_SSID, WIFI_PASSWORD, MQTT_USER, MQTT_PASS: copy secrets.h.example to
+// secrets.h in firmware/libraries/GreenhouseSecrets/ and fill in real values
+// (gitignored -- see IMPROVEMENTS.md finding A1 for why this isn't a #define here).
+#include <secrets.h>
 
 // ── Pi MQTT broker ────────────────────────────────────────────────────────────
 #define MQTT_HOST     "greenhouse.local"
 #define MQTT_PORT     8883
-#define MQTT_USER     "app"
-#define MQTT_PASS     "tCCprsQSqwT072X6WRTr"
+
+// ── WiFi watchdog (see IMPROVEMENTS.md finding B4) ─────────────────────────────
+// The bridge is the mesh's rank-0 anchor, so a silently-stuck WiFi is worse
+// here than on any edge node -- don't just trust the Arduino core's implicit
+// auto-reconnect, check explicitly.
+#define WIFI_CHECK_INTERVAL_MS     5000UL
+#define WIFI_RECONNECT_TIMEOUT_MS  30000UL  // still down this long after a
+                                            // reconnect attempt -> restart
 
 // (Zone mapping now lives in mesh_config.h's TRUSTED_NODES[] — shared with the
 // edge nodes. SensorPacket comes from mesh_node.h.)
@@ -29,6 +35,32 @@ bool     nodeOnline[TRUSTED_NODE_COUNT];
 uint32_t lastBeaconMs       = 0;
 uint32_t lastOfflineCheckMs = 0;
 uint32_t lastMqttAttemptMs  = 0;
+uint32_t lastWifiCheckMs        = 0;
+uint32_t wifiDisconnectedSinceMs = 0;  // 0 = currently connected
+
+// Explicit WiFi liveness check + recovery, run periodically from loop().
+void checkWifi(uint32_t now) {
+  if (now - lastWifiCheckMs < WIFI_CHECK_INTERVAL_MS) return;
+  lastWifiCheckMs = now;
+
+  if (WiFi.status() == WL_CONNECTED) {
+    wifiDisconnectedSinceMs = 0;
+    return;
+  }
+  if (wifiDisconnectedSinceMs == 0) {
+    wifiDisconnectedSinceMs = now;
+  }
+  if (now - wifiDisconnectedSinceMs >= WIFI_RECONNECT_TIMEOUT_MS) {
+    Serial.println("[wifi] still down after reconnect timeout, restarting");
+    ESP.restart();
+    return;
+  }
+  // Retried every WIFI_CHECK_INTERVAL_MS until either reconnected or the
+  // timeout above fires -- a single reconnect() call isn't guaranteed to
+  // succeed, so don't rely on just one attempt.
+  Serial.println("[wifi] disconnected, reconnecting...");
+  WiFi.reconnect();
+}
 
 void mqttPublish(const char* topic, const char* payload, bool retain) {
   if (!mqtt.connected()) return;
@@ -93,10 +125,11 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
     return;
   }
   const char* zone = TRUSTED_NODES[idx].zone;
-  // NOTE: liveness tracking is data-only, not beacon-based. A run of consecutive
-  // DHT NaN failures on a node can cause a false "offline" report even though the
-  // node is alive and beaconing normally. This is a known, accepted limitation for
-  // this project's scope, not a bug.
+  // Liveness tracking is data-only, not beacon-based -- but edge nodes now
+  // send a reading even on a failed DHT read (NaN payload) instead of
+  // skipping the send entirely, so this stays current across a run of
+  // consecutive DHT failures too, not just successful reads
+  // (IMPROVEMENTS.md finding B6).
   lastSeenMs[idx] = millis();
   nodeOnline[idx] = true;
 
@@ -110,13 +143,21 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   char topic[64], payload[16];
 
   // retain=true: zone cards must survive a broker restart (HANDOFF.md backlog).
-  snprintf(topic, sizeof(topic), "greenhouse/%s/air/temperature", zone);
-  snprintf(payload, sizeof(payload), "%.1f", pkt.payload.temperature);
-  mqttPublish(topic, payload, true);
+  // NaN (failed DHT read on the origin) skips publishing that one metric
+  // rather than sending the literal string "nan" to a topic the app parses
+  // as a float -- the rest of the packet (and node liveness above) is still
+  // valid and published normally.
+  if (!isnan(pkt.payload.temperature)) {
+    snprintf(topic, sizeof(topic), "greenhouse/%s/air/temperature", zone);
+    snprintf(payload, sizeof(payload), "%.1f", pkt.payload.temperature);
+    mqttPublish(topic, payload, true);
+  }
 
-  snprintf(topic, sizeof(topic), "greenhouse/%s/air/humidity", zone);
-  snprintf(payload, sizeof(payload), "%.1f", pkt.payload.humidity);
-  mqttPublish(topic, payload, true);
+  if (!isnan(pkt.payload.humidity)) {
+    snprintf(topic, sizeof(topic), "greenhouse/%s/air/humidity", zone);
+    snprintf(payload, sizeof(payload), "%.1f", pkt.payload.humidity);
+    mqttPublish(topic, payload, true);
+  }
 
   snprintf(topic, sizeof(topic), "greenhouse/%s/soil/moisture", zone);
   snprintf(payload, sizeof(payload), "%.1f", pkt.payload.soil_moisture);
@@ -190,6 +231,8 @@ void setup() {
 
 void loop() {
   uint32_t now = millis();
+
+  checkWifi(now);
 
   if (!mqtt.connected()) {
     reconnectMQTTNonBlocking(now);

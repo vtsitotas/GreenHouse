@@ -1,0 +1,19 @@
+[Unit]
+Description=Greenhouse Sensor Simulator (DEMO/DEV ONLY -- generates fake sensor data, do not enable on a unit with real hardware attached)
+After=network.target mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/tools/simulator.py --interval 10
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+
+[Install]
+WantedBy=multi-user.target

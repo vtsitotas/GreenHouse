@@ -294,7 +294,17 @@ static void meshSendReading(const SensorPacket* payload) {
   pkt.magic = MESH_MAGIC;
   memcpy(pkt.origin_mac, meshSelfMac, 6);
   pkt.origin_rank = meshMyRank;
-  pkt.ttl         = MESH_MAX_TTL;
+  // Adaptive TTL: enough hops to reach the bridge from wherever this node
+  // currently sits, plus a small margin (MESH_TTL_MARGIN) for parent-rank
+  // drift while the packet is in flight -- removes the old fixed-depth
+  // ceiling entirely (a rank-10 node now gets ttl=12, not a fixed 4).
+  // While unrouted (rank == MESH_RANK_UNROUTED) this packet is only ever
+  // buffered below, never sent immediately; meshFlushBuffer() re-sends it
+  // later once routed without recomputing ttl, so avoid baking in a bogus
+  // huge value here -- fall back to the configured ceiling instead.
+  pkt.ttl         = (meshMyRank == MESH_RANK_UNROUTED)
+                       ? MESH_MAX_TTL
+                       : (uint8_t)(meshMyRank + MESH_TTL_MARGIN);
   pkt.seq         = meshDataSeq++;
   pkt.payload     = *payload;
   if (meshParentIdx < 0) {
