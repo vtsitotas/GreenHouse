@@ -18,7 +18,7 @@ TimeoutStopSec=35
 KillSignal=SIGTERM
 
 # Environment
-Environment=WEATHER_INTERVAL=30
+Environment=WEATHER_INTERVAL=1800
 
 # Basic sandboxing (no network restriction; needs urllib)
 NoNewPrivileges=yes

@@ -13,59 +13,77 @@
 
 ## Α. Ασφάλεια
 
-### Α1. Secrets μέσα στο git repository **[μέτριο — το πιο σημαντικό εύρημα εδώ]**
-Πραγματικά credentials είναι commited σε tracked αρχεία:
+### Α1. Secrets μέσα στο git repository **[μέτριο — το πιο σημαντικό εύρημα εδώ]** — δομικά διορθωμένο
+**Status:** το σημείο 1 (δομική μετακίνηση) υλοποιήθηκε. Τα σημεία 2-3
+παραμένουν χειροκίνητα βήματα για τον χρήστη — βλ. παρακάτω.
+
+Πραγματικά credentials ήταν commited σε tracked αρχεία:
 - `firmware/bridge_esp32/bridge_esp32.ino:10-17` — WiFi SSID+password του
   σπιτιού **και** το MQTT password σε plaintext `#define`.
 - `firmware/cam_esp32/cam_esp32.ino:18-19` — ίδια WiFi credentials.
 - `pi/install.sh:105-112` — πλήρη HiveMQ Cloud credentials (host/user/pass).
 
 Ακόμα κι αν αφαιρεθούν σε επόμενο commit, **μένουν στο git history** — σε
-δημόσιο ή κοινοποιημένο repo θεωρούνται διαρρεύσαντα. Πρόταση:
-1. Μεταφορά σε `firmware/secrets.h` (gitignored, με `secrets.h.example`
-   template) και σε untracked `/etc/greenhouse/hivemq.json` που γράφεται
-   χειροκίνητα/από provisioning αντί να είναι μέσα στο `install.sh`.
-2. **Εναλλαγή (rotation)** των εκτεθειμένων κωδικών: WiFi password,
-   HiveMQ password, MQTT password της γέφυρας.
-3. Προσθήκη των patterns στο `.gitignore` (σήμερα δεν καλύπτει κανένα
-   secrets αρχείο firmware).
+δημόσιο ή κοινοποιημένο repo θεωρούνται διαρρεύσαντα.
 
-### Α2. Το portal τρέχει ως root, χωρίς sandboxing **[εύκολο]**
-`pi/systemd/greenhouse-portal.service` έχει `User=root` και **κανένα** από τα
-hardening directives που έχουν όλα τα αδελφά services (recorder, weather,
-cam-bridge έχουν `NoNewPrivileges`, `ProtectSystem=strict`,
-`ProtectHome=read-only`). Το portal είναι ταυτόχρονα η **μοναδική** υπηρεσία
-που εκτίθεται σε μη-αυθεντικοποιημένους clients (captive portal, `/pair`) —
-δηλαδή η πιο εκτεθειμένη υπηρεσία τρέχει με τα περισσότερα δικαιώματα.
-Πρόταση: `User=pi` + `AmbientCapabilities=CAP_NET_BIND_SERVICE` (για το bind
-στη θύρα 80) + το ίδιο hardening block με τα υπόλοιπα. Σημείωση: το
-`_save_wifi()` καλεί `nmcli`/`reboot` — αυτά χρειάζονται polkit ρύθμιση ή
-sudoers entry για τον `pi`, γι' αυτό είναι [εύκολο] αλλά όχι τετριμμένο.
+1. ✅ **Δομική μετακίνηση (έγινε):** νέα βιβλιοθήκη
+   `firmware/libraries/GreenhouseSecrets/` με `secrets.h.example` (tracked,
+   placeholder τιμές) — το πραγματικό `secrets.h` είναι gitignored. Τα 4
+   sketches (`bridge_esp32`, `cam_esp32`, `edge_node_esp32`,
+   `edge_node_esp32_c3`) κάνουν πλέον `#include <secrets.h>` αντί για
+   hardcoded `#define`. Το `pi/install.sh` πλέον γράφει `hivemq.json` μόνο
+   από το tracked `pi/hivemq.json.example` (placeholder τιμές, μόνο αν δεν
+   υπάρχει ήδη) — τα πραγματικά HiveMQ credentials αφαιρέθηκαν εντελώς από
+   το repo. `.gitignore` ενημερώθηκε για το νέο `secrets.h`.
+2. ⚠️ **Παραμένει ανοιχτό — απαιτεί χειροκίνητη ενέργεια:** οι
+   παλιές τιμές (WiFi password, HiveMQ password, MQTT password της γέφυρας)
+   **παραμένουν έγκυρες και μένουν στο git history**. Η δομική διόρθωση
+   πάνω δεν τις ακυρώνει — απαιτείται **εναλλαγή (rotation)** των ίδιων των
+   κωδικών (αλλαγή WiFi password στο router, νέο HiveMQ Cloud password, νέο
+   MQTT password για τον χρήστη `app` μέσω `mosquitto_passwd`) από τον
+   χρήστη, καθώς αγγίζει πραγματικές, ζωντανές υποδομές (router/HiveMQ
+   cloud account) εκτός του πεδίου αυτόματων αλλαγών κώδικα.
 
-Επίσης: το `ExecStartPost=/sbin/iptables ... --dport 8080 -j REDIRECT` στο
-ίδιο service είναι **νεκρό κατάλοιπο** — το portal δένει πλέον απευθείας στη
-θύρα 80, και το `ap_up.sh:82` σβήνει ρητά αυτό ακριβώς το redirect ως
-"stale". Το ένα αρχείο το προσθέτει, το άλλο το αφαιρεί. Να διαγραφεί η
-γραμμή.
+### Α2. Το portal τρέχει ως root, χωρίς sandboxing **[εύκολο]** — ✅ έγινε
+`pi/systemd/greenhouse-portal.service` είχε `User=root` και **κανένα** από τα
+hardening directives που έχουν όλα τα αδελφά services. Τώρα: `User=pi` +
+`AmbientCapabilities=CAP_NET_BIND_SERVICE` (για το bind στη θύρα 80) +
+`ProtectSystem=strict` + `ProtectHome=read-only` + `ReadWritePaths=` για
+`/etc/greenhouse` (sentinel write) και `/run/sudo` (sudo timestamp cache).
+`_save_wifi()`/`scan()`/`_reboot_soon()` καλούν πλέον `sudo nmcli`/`sudo
+reboot`, εξουσιοδοτημένα μέσω νέου `pi/portal/greenhouse-portal.sudoers`
+(εγκαθίσταται από το `install.sh` σε `/etc/sudoers.d/`, validated με
+`visudo -c`) — περιορισμένο ακριβώς σε αυτές τις δύο εντολές, όχι blanket
+sudo. Σημείωση: `NoNewPrivileges` **δεν** μπήκε σε αυτό το service (σε
+αντίθεση με τα αδέλφια του) — θα έκανε το setuid escalation του `sudo` να
+αποτυγχάνει σιωπηλά· τεκμηριωμένο trade-off μέσα στο ίδιο το service file.
 
-### Α3. Η γέφυρα μοιράζεται τον MQTT λογαριασμό της εφαρμογής **[εύκολο]**
-Η γέφυρα συνδέεται ως χρήστης `app` (`bridge_esp32.ino:16`), παρόλο που το
-`setup_tls.sh:38` δημιουργεί ήδη ξεχωριστό λογαριασμό `bridge` που μένει
-αχρησιμοποίητος. Με ξεχωριστούς λογαριασμούς + Mosquitto ACL (σήμερα δεν
-υπάρχει κανένα ACL — `docs/technical/10-security.md §6`), η γέφυρα θα
-μπορούσε να περιοριστεί σε publish-only στα sensor topics, ώστε παραβίασή
-της να μη δίνει π.χ. δυνατότητα εντολών σε actuators.
+Το `ExecStartPost=/sbin/iptables ... --dport 8080 -j REDIRECT` (νεκρό
+κατάλοιπο — το `ap_up.sh:82` το αφαιρούσε ήδη ως "stale") αφαιρέθηκε.
 
-### Α4. TLS certificate pinning — τα δεδομένα υπάρχουν ήδη, δεν ελέγχονται ποτέ **[μέτριο]**
+### Α3. Η γέφυρα μοιράζεται τον MQTT λογαριασμό της εφαρμογής **[εύκολο]** — ✅ έγινε
+Η γέφυρα συνδεόταν ως χρήστης `app` (`bridge_esp32.ino:16`) — το
+`setup_tls.sh` που δημιουργούσε έναν ξεχωριστό `bridge` λογαριασμό ήταν ήδη
+νεκρό κώδικας (διαγράφηκε, βλ. Δ3) και ποτέ δεν καλούνταν στην πράξη. Τώρα:
+`pi/scripts/first_boot.sh` παράγει και τα δύο passwords (`app` και `bridge`,
+ξεχωριστά, `mosquitto_passwd`), και νέο `pi/mosquitto/acl`
+(`acl_file` στο `mosquitto.conf`, μόνο για τον listener 8883) περιορίζει τον
+`bridge` σε **publish-only** στα τέσσερα topics που πραγματικά δημοσιεύει
+(`greenhouse/+/air/temperature`, `.../air/humidity`, `.../soil/moisture`,
+`greenhouse/nodes/+/status` — επιβεβαιωμένο από `bridge_esp32.ino`, ποτέ δεν
+κάνει subscribe). `firmware/bridge_esp32/bridge_esp32.ino` παίρνει πλέον
+`MQTT_USER`/`MQTT_PASS` από το gitignored `secrets.h` (βλ. finding A1),
+πλέον με τιμή `"bridge"` αντί για `"app"`.
+
+### Α4. TLS certificate pinning — τα δεδομένα υπάρχουν ήδη, δεν ελέγχονται ποτέ **[μέτριο]** — ✅ έγινε
 Το `/pair` παραδίδει το SHA-256 fingerprint του server certificate και η
 εφαρμογή το αποθηκεύει (`ConnectionConfig.tlsFingerprint`) — αλλά το
-`onBadCertificate = (Object _) => true` (`mqtt_connection.dart:70`) δέχεται
-οτιδήποτε και το fingerprint δεν συγκρίνεται πουθενά. Το σχόλιο "pin in
-Slice 5" δείχνει ότι ήταν πάντα το σχέδιο. Η υλοποίηση είναι οριοθετημένη:
-μέσα στο `onBadCertificate` callback, υπολογισμός SHA-256 του DER του
-παρουσιαζόμενου certificate και σύγκριση με το αποθηκευμένο — μόνο τότε
-`true`. Κλείνει το man-in-the-middle κενό που τεκμηριώνεται στο
-`docs/technical/10-security.md §4` χωρίς καμία αλλαγή στο Pi.
+`onBadCertificate = (Object _) => true` δεχόταν οτιδήποτε. Τώρα:
+`mqtt_connection.dart`'s `_matchesPinnedFingerprint()` υπολογίζει SHA-256
+του DER του παρουσιαζόμενου certificate και συγκρίνει με το αποθηκευμένο —
+μόνο σε ταίριασμα `true`, κενό fingerprint = fail closed (`false`). Κλείνει
+το man-in-the-middle κενό που τεκμηριώνεται στο `docs/technical/10-security.md §4`,
+χωρίς καμία αλλαγή στο Pi.
 
 ### Α5. ESP32-CAM HTTP API εντελώς ανοιχτό στο LAN **[εύκολο]**
 `/stream`, `/capture`, `GET|DELETE /event/<id>` (`cam_esp32.ino:195-198`)

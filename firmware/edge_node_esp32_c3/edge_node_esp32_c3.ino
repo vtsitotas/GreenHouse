@@ -19,7 +19,10 @@
 #define SOIL_WET_VAL  1529
 
 // ── Network (channel scan only — never connects) ──────────────────────────────
-#define WIFI_SSID "TP-Link_14A6"
+// WIFI_SSID: copy secrets.h.example to secrets.h in
+// firmware/libraries/GreenhouseSecrets/ and fill in real values (gitignored
+// -- see IMPROVEMENTS.md finding A1).
+#include <secrets.h>
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 #define SEND_INTERVAL_MS  5000   // must match MESH_EXPECTED_REPORT_INTERVAL_MS

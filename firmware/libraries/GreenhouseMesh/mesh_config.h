@@ -9,9 +9,19 @@
 // ── Protocol ──────────────────────────────────────────────────────────────────
 #define MESH_MAGIC          0x47   // 'G' — version/sanity marker on every packet
 #define MESH_RANK_UNROUTED  255    // sentinel: node has no valid parent
-#define MESH_MAX_TTL        4      // hard hop backstop (loops are structurally
-                                   // prevented by the strict-rank rule; this is
-                                   // defense in depth only)
+#define MESH_TTL_MARGIN     2      // adaptive TTL = origin's own rank + this margin
+                                   // (see meshSendReading()) — covers small
+                                   // parent-rank drift while the packet is in
+                                   // flight, without capping how deep the mesh
+                                   // can physically grow
+#define MESH_MAX_TTL        16     // ceiling/fallback only: used when a reading
+                                   // is buffered while unrouted (rank not known
+                                   // yet, see meshSendReading()) and as a hard
+                                   // backstop against runaway forwarding. Loops
+                                   // are structurally prevented by the
+                                   // strict-rank rule regardless — this is
+                                   // defense in depth only, not the primary
+                                   // hop limit anymore.
 
 // ── Timing (spec-fixed starting values; Task 5 bench may tune) ────────────────
 #define MESH_BEACON_INTERVAL_MIN_MS    2000UL   // trickle floor — reset target

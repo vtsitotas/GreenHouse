@@ -24,7 +24,7 @@ class NotificationService {
     const settings = InitializationSettings(android: android, iOS: ios);
     await _plugin.initialize(settings);
     _initialized = true;
-    debugPrint('[Notifications] initialized');
+    if (kDebugMode) debugPrint('[Notifications] initialized');
   }
 
   Future<void> requestPermission() async {

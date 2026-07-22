@@ -18,11 +18,11 @@ final fcmTokenServiceProvider = Provider(
     (ref) => FcmTokenService(ref.watch(repositoryProvider)));
 
 final connectOnStartProvider = FutureProvider<void>((ref) async {
-  debugPrint('[CONNECT] provider running');
+  if (kDebugMode) debugPrint('[CONNECT] provider running');
   final config = await ref.read(pairingServiceProvider).loadConfig();
-  debugPrint('[CONNECT] config=$config');
+  if (kDebugMode) debugPrint('[CONNECT] config=$config');
   if (config != null) {
-    debugPrint('[CONNECT] calling connect lan=${config.lanHost} port=${config.port}');
+    if (kDebugMode) debugPrint('[CONNECT] calling connect lan=${config.lanHost} port=${config.port}');
     await ref.read(repositoryProvider).connect(config);
   }
 });

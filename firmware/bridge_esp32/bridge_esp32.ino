@@ -5,16 +5,14 @@
 #include <PubSubClient.h>
 #include <mesh_config.h>
 #include <mesh_node.h>
-
-// ── WiFi (home router) ────────────────────────────────────────────────────────
-#define WIFI_SSID     "TP-Link_14A6"
-#define WIFI_PASSWORD "6940604664"   // ← fill in
+// WIFI_SSID, WIFI_PASSWORD, MQTT_USER, MQTT_PASS: copy secrets.h.example to
+// secrets.h in firmware/libraries/GreenhouseSecrets/ and fill in real values
+// (gitignored -- see IMPROVEMENTS.md finding A1 for why this isn't a #define here).
+#include <secrets.h>
 
 // ── Pi MQTT broker ────────────────────────────────────────────────────────────
 #define MQTT_HOST     "greenhouse.local"
 #define MQTT_PORT     8883
-#define MQTT_USER     "app"
-#define MQTT_PASS     "tCCprsQSqwT072X6WRTr"
 
 // (Zone mapping now lives in mesh_config.h's TRUSTED_NODES[] — shared with the
 // edge nodes. SensorPacket comes from mesh_node.h.)

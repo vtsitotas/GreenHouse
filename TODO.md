@@ -11,28 +11,34 @@ don't get mistaken for live work.
 
 ## 1. Designed but zero code written
 
-### Direct-to-Pi pairing + PIN authentication
+### Direct-to-Pi pairing without home WiFi (AP-mode "connect directly")
 **Spec:** `docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`
-**Status:** Proposed, approved in conversation, **no implementation plan or code yet**.
+**Status:** PIN authentication (Goal 5) is implemented — the rest (Goals 1-4)
+is still open.
 
-Lets a user pair the app directly against the Pi's setup hotspot without ever
-configuring home WiFi (for sites with no ISP WiFi at all). Requires:
-- `pi/portal/portal.py`: split `/pair` into `GET /pair` (existence check only)
-  + new `POST /pair/confirm` (PIN-gated, returns credentials).
-- `pi/scripts/first_boot.sh`: generate a per-unit 6-digit `pair_pin`.
-- 5-attempt lockout + 1s throttle on `/pair/confirm`.
-- `app/lib/screens/pairing/pairing_screen.dart`: new "connect directly"
-  button + PIN entry step.
-- `INSTRUCTIONS.md`: add PIN-label printing to the mass-production step.
+**Done:** the PIN-gated credential handoff, which closes a real, previously-live
+gap — `/pair` used to return full MQTT credentials over plaintext HTTP with no
+authentication beyond a 600s boot-time window, and mDNS/DNS-SD discovery
+itself is spoofable (no identity guarantee):
+- `pi/portal/portal.py`: `GET /pair` now returns only `{"found": true}`; new
+  `POST /pair/confirm` (PIN-gated, returns the credentials `/pair` used to)
+  with a 5-attempt lockout + 1s throttle.
+- `pi/scripts/first_boot.sh`: generates a per-unit 6-digit `pair_pin` into
+  `device.json`.
+- `app/lib/screens/pairing/pairing_screen.dart`: discovery now prompts for
+  the PIN before calling `/pair/confirm`.
 
-This also closes a real, currently-live gap: **`/pair` today returns full
-MQTT credentials over plaintext HTTP with no authentication check beyond a
-600s boot-time window** (`pi/portal/portal.py:198-217`) — anyone who can
-reach the LAN/hotspot within that window gets credentials, and mDNS/DNS-SD
-discovery itself is spoofable (no identity guarantee). This was previously
-explicitly deferred ("Out of scope... Leave `/pair` as-is" —
-`docs/superpowers/plans/2026-06-26-security-hardening-and-captive-portal.md:21`)
-but removing the AP-mode timer (this spec's Goal 4) makes it urgent to fix now.
+**Still open** (Goals 1-4 — the actual "skip home WiFi entirely" feature):
+- No AP-mode bypass of the 600s `/pair` window yet (`portal.py`'s `pair()`
+  still applies the timer in both AP and STA mode) — needed for Goal 4
+  (indefinitely reusable pairing without SSH).
+- No new "Σύνδεση απευθείας" button / choice screen in the app — today a user
+  can still reach `/pair` while connected to the Pi's hotspot via the
+  existing "Find my greenhouse" button (nothing gates that on STA mode), but
+  there's no dedicated UX for it and no first-time-flow screen offering
+  "home WiFi" vs "direct" up front.
+- `INSTRUCTIONS.md`: no PIN-label printing step added to the mass-production
+  process yet.
 
 ### UART-wired bridge (replace WiFi bridge uplink)
 **Spec/plan:** `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`,
@@ -163,9 +169,12 @@ committing to this track.
 ## 4. HANDOFF.md backlog — verified against current code
 
 ### Security / access control
-- [ ] `/pair` and `/api/history*` have no authentication beyond LAN/hotspot
-      reachability + (for `/pair`) a 600s boot-time window — see §1 above,
-      this is the fix in progress.
+- [x] `/pair` had no authentication beyond LAN/hotspot reachability + a 600s
+      boot-time window — fixed: `/pair` now only confirms existence, real
+      credentials require the PIN via `POST /pair/confirm` (see §1 above).
+- [ ] `/api/history*` still has no authentication beyond LAN/hotspot
+      reachability — not covered by the PIN fix (read-only history data, a
+      smaller exposure than credential handoff was).
 - [ ] No per-customer/multi-tenant device registry — confirmed: one shared
       HiveMQ Cloud account hardcoded for the entire fleet
       (`pi/install.sh:105-112`). Current model is single-tenant.

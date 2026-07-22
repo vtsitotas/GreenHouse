@@ -15,8 +15,10 @@
 #include <FS.h>
 
 // ── WiFi (home router) ────────────────────────────────────────────────────────
-#define WIFI_SSID     "TP-Link_14A6"
-#define WIFI_PASSWORD "6940604664"
+// WIFI_SSID, WIFI_PASSWORD: copy secrets.h.example to secrets.h in
+// firmware/libraries/GreenhouseSecrets/ and fill in real values (gitignored
+// -- see IMPROVEMENTS.md finding A1).
+#include <secrets.h>
 
 // ── Pi cam_bridge endpoint ────────────────────────────────────────────────
 #define PI_HOST "greenhouse.local"
