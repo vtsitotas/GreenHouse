@@ -37,6 +37,20 @@
                                                 // router channel (router may have
                                                 // moved channels)
 
+// ── Deep sleep (Phase 1: leaf sleep — spec 2026-07-26-mesh-deep-sleep) ────────
+#define MESH_FLAG_SLEEPY          0x01      // beacon/data flags bit: sender is a
+                                            // battery node — NEVER adopt as parent
+#define MESH_SLEEP_INTERVAL_MS    900000UL  // 15 min duty cycle (power doc
+                                            // Scenario B: ~290 µA average draw)
+#define MESH_WAKE_DISCOVERY_MS    5000UL    // orphaned-wake listen window before
+                                            // giving up and buffering the reading
+#define MESH_TX_CONFIRM_WAIT_MS   500UL     // wait for the ESP-NOW send callback
+                                            // before judging a unicast delivered
+#define MESH_WAKE_MAX_AWAKE_MS    10000UL   // hard backstop: persist state and
+                                            // sleep no matter what path we're on
+#define MESH_MIN_SLEEP_MS         1000UL    // floor after subtracting awake time
+                                            // (never arm a 0/negative timer)
+
 // ── Buffers ───────────────────────────────────────────────────────────────────
 #define MESH_DEDUP_CACHE_SIZE  32   // (origin_mac, seq) ring — drops route-flap dupes
 #define MESH_DATA_BUFFER_SIZE  10   // own readings buffered while isolated
@@ -68,11 +82,16 @@ static const uint8_t MESH_LMK[16] =
 struct TrustedNode {
   uint8_t     mac[6];
   const char* zone;   // MQTT zone name, or nullptr for the bridge
+  bool        sleepy; // battery node: leaf-only, deep-sleeps between readings.
+                      // Role is looked up by each node's OWN MAC at boot, so a
+                      // single edge firmware image serves both roles. The bridge
+                      // uses it for per-role offline windows (sleepy nodes are
+                      // expected only every MESH_SLEEP_INTERVAL_MS).
 };
 
 static const TrustedNode TRUSTED_NODES[] = {
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0x6B, 0x50 }, nullptr },  // bridge (ESP32-C3)
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0xA1, 0xB0 }, "zone1" },  // ESP32-C3 edge node
-  { { 0x88, 0xF1, 0x55, 0x31, 0x45, 0x64 }, "zone2" },  // ESP32 WROOM-32 edge node
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0x6B, 0x50 }, nullptr, false },  // bridge (ESP32-C3)
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0xA1, 0xB0 }, "zone1", true  },  // ESP32-C3 edge node (battery)
+  { { 0x88, 0xF1, 0x55, 0x31, 0x45, 0x64 }, "zone2", false },  // ESP32 WROOM-32 edge node
 };
 static const int TRUSTED_NODE_COUNT = sizeof(TRUSTED_NODES) / sizeof(TRUSTED_NODES[0]);

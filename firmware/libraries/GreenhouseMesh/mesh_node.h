@@ -31,8 +31,11 @@ typedef struct __attribute__((packed)) {
   uint32_t beacon_interval_ms;  // gap until sender's NEXT beacon (children size
                                 // their parent-timeout from this)
   uint32_t window_duration_ms;  // bridge-originated, propagated hop-by-hop.
-                                // Deep-sleep forward-compat: carried, unused.
-} MeshBeacon;                   // 18 bytes
+                                // Phase-2 forward-compat: carried, unused.
+  uint8_t  flags;               // bit0 MESH_FLAG_SLEEPY: sender is a battery
+                                // node — record its liveness but NEVER adopt
+                                // it as a parent (leaf-only role)
+} MeshBeacon;                   // 19 bytes
 
 // Unicast to the chosen parent, ESP-NOW encrypted (PMK/LMK).
 typedef struct __attribute__((packed)) {
@@ -42,7 +45,13 @@ typedef struct __attribute__((packed)) {
   uint8_t      ttl;             // decremented per hop, dropped at 0
   uint16_t     seq;             // per-origin monotonic counter, for de-dup
   SensorPacket payload;         // unchanged existing struct
-} MeshDataPacket;               // 23 bytes — length disambiguates from MeshBeacon
+  // ── Telemetry (origin-owned, like origin_mac: relays never rewrite) ────────
+  uint16_t     battery_mv;      // measured battery millivolts, 0 = not measured
+  uint8_t      parent_mac[6];   // origin's parent at send time, zeros = none
+  int8_t       parent_rssi;     // RSSI origin last measured for that parent's
+                                // beacon (dBm), -128 = n/a
+  uint8_t      flags;           // bit0 MESH_FLAG_SLEEPY: origin is a battery node
+} MeshDataPacket;               // 33 bytes — length disambiguates from MeshBeacon
 
 static const uint8_t MESH_BCAST[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
@@ -72,6 +81,12 @@ static int meshBufHead  = 0;   // oldest entry
 static uint16_t meshDataSeq = 0;
 static int meshTxFailCount  = 0;
 
+static uint16_t meshBatteryMv = 0;     // set by the sketch before each reading;
+                                       // 0 = not measured (mains node / no divider)
+static MeshDataPacket meshLastPkt;     // last own reading handed to the radio —
+static bool meshLastPktValid = false;  // lets a wake cycle re-queue it (same seq,
+                                       // so the bridge de-dups if it DID arrive)
+
 // ── Trust helpers ─────────────────────────────────────────────────────────────
 static bool meshMacEqual(const uint8_t* a, const uint8_t* b) {
   return memcmp(a, b, 6) == 0;
@@ -87,6 +102,25 @@ static void meshFormatMac(const uint8_t* mac, char* out) {  // out: 13 bytes
   snprintf(out, 13, "%02X%02X%02X%02X%02X%02X",
            mac[0], mac[1], mac[2], mac[3], mac[4], mac[5]);
 }
+
+// Own role, from TRUSTED_NODES[] by own MAC. Cached after the first call.
+// Requires WiFi.mode() to have been set (WiFi.macAddress needs the driver up);
+// both sketches do that before any mesh call. An unlisted MAC is treated as
+// always-on (never sleeps) — the safe default: a misconfigured node stays
+// reachable/debuggable instead of vanishing into a sleep cycle.
+static bool meshIsSelfSleepy() {
+  static int cached = -1;  // -1 unknown, 0 always-on, 1 sleepy
+  if (cached < 0) {
+    uint8_t mac[6];
+    WiFi.macAddress(mac);
+    int idx = meshTrustedIndex(mac);
+    cached = (idx >= 0 && TRUSTED_NODES[idx].sleepy) ? 1 : 0;
+  }
+  return cached == 1;
+}
+
+// Sketch injects the measured battery voltage before each reading cycle.
+static void meshSetBatteryMv(uint16_t mv) { meshBatteryMv = mv; }
 
 // ── Init: PMK + peer registration ─────────────────────────────────────────────
 // Every trusted node might dynamically become anyone's parent at runtime, so
@@ -130,6 +164,7 @@ static void meshSendBeaconNow(uint8_t rank, uint32_t advertisedIntervalMs) {
   b.seq                = meshBeaconSeq++;
   b.beacon_interval_ms = advertisedIntervalMs;
   b.window_duration_ms = meshWindowDurationMs;
+  b.flags              = meshIsSelfSleepy() ? MESH_FLAG_SLEEPY : 0;
   esp_now_send(MESH_BCAST, (const uint8_t*)&b, sizeof(b));
 }
 
@@ -201,6 +236,15 @@ static void meshHandleBeacon(const uint8_t* srcMac, const MeshBeacon* b,
 
   if (meshNeighborLastHeard[idx] == 0) meshTrickleReset();  // new neighbor seen
   meshNeighborLastHeard[idx] = now;
+
+  // Sleepy nodes are leaf-only: never adopt one as a parent — its radio is
+  // about to go dark for MESH_SLEEP_INTERVAL_MS. Liveness was still recorded
+  // above. If our CURRENT parent starts advertising sleepy (role change +
+  // reflash), drop it exactly like a rank loss and rediscover.
+  if (b->flags & MESH_FLAG_SLEEPY) {
+    if (idx == meshParentIdx) meshDropParent("parent became sleepy");
+    return;
+  }
 
   if (idx == meshParentIdx) {
     // Our current parent: refresh liveness + track its interval/rank drift.
@@ -307,8 +351,22 @@ static void meshSendReading(const SensorPacket* payload) {
                        : (uint8_t)(meshMyRank + MESH_TTL_MARGIN);
   pkt.seq         = meshDataSeq++;
   pkt.payload     = *payload;
+  // Telemetry (origin-owned; buffered packets keep the values captured at
+  // measurement time — same policy as ttl, see meshFlushBuffer note above).
+  pkt.battery_mv  = meshBatteryMv;
+  if (meshParentIdx >= 0) {
+    memcpy(pkt.parent_mac, TRUSTED_NODES[meshParentIdx].mac, 6);
+  } else {
+    memset(pkt.parent_mac, 0, 6);
+  }
+  pkt.parent_rssi = (meshParentIdx >= 0 && meshParentRssi >= -128 && meshParentRssi <= 127)
+                       ? (int8_t)meshParentRssi : (int8_t)-128;
+  pkt.flags       = meshIsSelfSleepy() ? MESH_FLAG_SLEEPY : 0;
+  meshLastPkt      = pkt;   // kept for meshRequeueLastReading() (wake-cycle
+  meshLastPktValid = true;  // tx-failure fallback — same seq on purpose)
   if (meshParentIdx < 0) {
     meshBufferPush(&pkt);
+    meshLastPktValid = false;  // already buffered — requeue would duplicate it
     Serial.printf("[mesh] unrouted — reading buffered (%d queued)\n", meshBufCount);
     return;
   }
@@ -317,6 +375,20 @@ static void meshSendReading(const SensorPacket* payload) {
     meshFlushBuffer();
   }
   meshUnicastToParent(&pkt);
+}
+
+// Wake-cycle data-loss guarantee: if the send callback reports the unicast
+// undelivered, the reading is otherwise gone (meshSendReading already handed
+// it to the radio). Re-queuing the SAME packet — same seq — into the buffer
+// makes the retry/flush path safe in both directions: if the "failure" was a
+// lost MAC-level ack and the packet actually arrived, the bridge's de-dup
+// cache drops the duplicate; if it truly never arrived, the resend delivers
+// it. Readings therefore survive any single-wake radio failure, bounded only
+// by the 10-slot buffer.
+static void meshRequeueLastReading() {
+  if (!meshLastPktValid) return;
+  meshBufferPush(&meshLastPkt);
+  meshLastPktValid = false;  // one re-queue per reading, never a duplicate slot
 }
 
 // A child unicast us a data packet: forward it toward the bridge
