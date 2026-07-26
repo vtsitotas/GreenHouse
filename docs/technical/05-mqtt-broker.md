@@ -103,11 +103,36 @@ greenhouse/actuators/<id>/set          weather.py/app → (actuator controller �
 greenhouse/actuators/<id>/state        (μόνο simulator σήμερα)
 ```
 
-### Κόμβοι (ζωντάνια/μπαταρία)
+### Κόμβοι (ζωντάνια/μπαταρία/mesh τοπολογία)
 ```
 greenhouse/nodes/<MAC-hex>/status      bridge → app, retained ("online"/"offline")
-greenhouse/nodes/<id>/battery          (μόνο simulator σήμερα — κανένα
-                                         πραγματικό firmware δεν αναφέρει μπαταρία)
+greenhouse/nodes/<id>/battery          bridge → app, retained (ποσοστό %, ο
+                                         bridge κάνει τη μετατροπή mV→% με
+                                         LiFePO4 καμπύλη· δημοσιεύεται μόνο όταν
+                                         ο κόμβος στέλνει battery_mv > 0, δηλ.
+                                         έχει τον voltage divider. Υλοποιημένο
+                                         σε firmware ΚΑΙ simulator — το firmware
+                                         εκκρεμεί bench test σε πραγματικό
+                                         hardware, δες
+                                         docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md
+                                         Task 6)
+greenhouse/nodes/<id>/mesh             JSON, retained — bridge → app (υλοποιημένο
+                                         σε firmware ΚΑΙ simulator, ίδιο
+                                         bench-test caveat με το /battery. Ο
+                                         bridge δημοσιεύει και τη δική του
+                                         εγγραφή root με parent:null/rank:0,
+                                         συν MQTT LWT στο δικό του /status).
+                                         Authoritative contract:
+                                         docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md
+                                         §Telemetry. Σχήμα:
+                                         {"parent": "<12-hex MAC>|null",
+                                          "rank": <int>, "rssi": <int|null>,
+                                          "sleepy": <bool>,
+                                          "battery_mv": <int|null>,
+                                          "zone": "<string>|null",
+                                          "ts": <epoch-seconds, προαιρετικό>}
+                                         — καταναλώνεται από την οθόνη Mesh Map
+                                         της εφαρμογής (δες 13-mobile-app.md §11)
 ```
 
 ### Ιστορικό (over-MQTT path, για εκτός-LAN πρόσβαση)

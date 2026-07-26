@@ -57,6 +57,16 @@ To achieve the optimized power profile safely in an outdoor/greenhouse environme
 
 ---
 
+> **Status update (2026-07-26):** the software side of this plan is now
+> implemented as "Phase 1 leaf sleep" — see
+> `docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md` (design) and
+> `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md` (implementation,
+> Tasks 1-5 done; Task 6 is the hardware bench checklist). The §4 flow below
+> shipped in a mesh-aware form: the wake cycle also beacons, re-validates its
+> remembered parent, and persists seq/buffer state in RTC memory so
+> multi-hop routing and bridge de-dup survive sleep. The hardware mods in §1B
+> (LED removal, LDO bypass, divider soldering) remain to be done per board.
+
 ## 4. Conceptual Software Flow for Future Expansion
 
 When expanding the current Edge Node code (`edge_node_esp32_c3.ino`), the `loop()` function will be replaced by a single execution path in `setup()`, followed by deep sleep:
