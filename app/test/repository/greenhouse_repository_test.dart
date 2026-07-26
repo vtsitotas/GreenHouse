@@ -154,6 +154,99 @@ void main() {
     expect(nodes['node1']?.batteryPercent, 75.0);
   });
 
+  test('merges status, battery, and mesh events for one nodeId into a single complete entry', () async {
+    repo.connect(_config);
+    final future = repo.nodes.firstWhere((m) => m['node1']?.parentId != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'online'));
+    eventsCtrl.add(NodeStatus.fromMqttBattery('node1', '88.0'));
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node1',
+      '{"parent":"bridge","rank":1,"rssi":-55,"sleepy":false,'
+      '"battery_mv":4000,"zone":"zone1"}',
+    ));
+    final nodes = await future;
+    final node = nodes['node1']!;
+    expect(node.isOnline, isTrue);
+    expect(node.batteryPercent, 88.0);
+    expect(node.parentId, 'bridge');
+    expect(node.meshRank, 1);
+    expect(node.parentRssi, -55);
+    expect(node.isSleepy, isFalse);
+    expect(node.zone, 'zone1');
+    expect(node.batteryMv, 4000);
+  });
+
+  test('status offline after mesh sets isOnline false but retains mesh fields', () async {
+    repo.connect(_config);
+    final meshFuture = repo.nodes.firstWhere((m) => m['node1']?.parentId != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'online'));
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node1',
+      '{"parent":"bridge","rank":1,"rssi":-55,"sleepy":false,'
+      '"battery_mv":4000,"zone":"zone1"}',
+    ));
+    await meshFuture;
+
+    final offlineFuture = repo.nodes.firstWhere((m) => m['node1']?.isOnline == false);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'offline'));
+    final nodes = await offlineFuture;
+    final node = nodes['node1']!;
+    expect(node.isOnline, isFalse);
+    expect(node.parentId, 'bridge');
+    expect(node.meshRank, 1);
+    expect(node.parentRssi, -55);
+    expect(node.zone, 'zone1');
+    expect(node.batteryMv, 4000);
+  });
+
+  test('a later mesh event does not resurrect isOnline true after an explicit offline status', () async {
+    repo.connect(_config);
+    final offlineFuture = repo.nodes.firstWhere((m) => m['node1']?.isOnline == false);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'online'));
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'offline'));
+    await offlineFuture;
+
+    final meshFuture = repo.nodes.firstWhere((m) => m['node1']?.parentId == 'bridge');
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node1',
+      '{"parent":"bridge","rank":1,"rssi":-60,"sleepy":true,'
+      '"battery_mv":3900,"zone":"zone1"}',
+    ));
+    final nodes = await meshFuture;
+    final node = nodes['node1']!;
+    expect(node.isOnline, isFalse);
+    expect(node.parentId, 'bridge');
+    expect(node.isSleepy, isTrue);
+  });
+
+  test('a first-ever battery event with no prior entry keeps its factory-default isOnline true', () async {
+    repo.connect(_config);
+    final future = repo.nodes.firstWhere((m) => m['node9'] != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttBattery('node9', '50.0'));
+    final nodes = await future;
+    expect(nodes['node9']?.isOnline, isTrue);
+    expect(nodes['node9']?.batteryPercent, 50.0);
+  });
+
+  test('a first-ever mesh event with no prior entry keeps its factory-default isOnline true', () async {
+    repo.connect(_config);
+    final future = repo.nodes.firstWhere((m) => m['node8'] != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node8',
+      '{"parent":"bridge","rank":1,"rssi":-50,"sleepy":false}',
+    ));
+    final nodes = await future;
+    expect(nodes['node8']?.isOnline, isTrue);
+    expect(nodes['node8']?.parentId, 'bridge');
+  });
+
   test('publishRules retains the message so the Pi can poll and catch it', () async {
     await repo.publishRules([
       const WeatherRule(
