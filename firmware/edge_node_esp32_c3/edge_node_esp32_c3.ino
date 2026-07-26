@@ -69,6 +69,13 @@ float soilPercent(int raw) {
 // the wake cycle's poll loop — volatile keeps the compiler from caching it.
 volatile int8_t g_lastTxStatus = -1;
 
+// Consecutive sleepy wakes that ended without a single confirmed delivery.
+// Survives deep sleep so a router channel change while asleep can't strand
+// the node forever: after 2 silent wakes (~30 min) the next wake ignores the
+// cached channel and pays for a full SSID scan — the only way back onto the
+// mesh's new channel. Reset to 0 by any confirmed delivery.
+RTC_DATA_ATTR uint8_t g_unconfirmedWakes = 0;
+
 void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
   bool ok = (status == ESP_NOW_SEND_SUCCESS);
   meshNotifyTxStatus(ok);   // shared by both roles: 3-consecutive-fail backstop
@@ -162,8 +169,9 @@ void runSleepyCycle() {
   uint32_t warmupStart = millis();
 
   uint8_t ch = meshRtcSavedChannel();
-  if (ch == 0) {
-    Serial.println("[wake] no saved channel — full SSID scan");
+  if (ch == 0 || g_unconfirmedWakes >= 2) {
+    Serial.printf("[wake] full SSID scan (%s)\n",
+                  ch == 0 ? "no saved channel" : "2+ silent wakes — channel may have moved");
     ch = (uint8_t)getWiFiChannel(WIFI_SSID);
   }
   esp_wifi_set_promiscuous(true);
@@ -218,11 +226,23 @@ void runSleepyCycle() {
       delay(10);
     }
     if (meshHasParent()) {
-      meshFlushBuffer();  // resends same-seq packets; bridge de-dups any that arrived
+      g_lastTxStatus = -1;  // flush result must not be judged by a stale status
+      meshFlushBuffer();    // resends same-seq packets; bridge de-dups any that arrived
+      uint32_t confirmStart = millis();
+      while (g_lastTxStatus == -1 && millis() - confirmStart < MESH_TX_CONFIRM_WAIT_MS &&
+             millis() < deadline) {
+        delay(5);
+      }
     } else {
       Serial.println("[wake] still unrouted — reading stays buffered");
     }
   }
+
+  // Channel self-heal bookkeeping: a confirmed delivery proves the cached
+  // channel is still right; anything else counts toward forcing a rescan.
+  bool confirmed = delivered || (meshHasParent() && g_lastTxStatus == 1);
+  if (confirmed) g_unconfirmedWakes = 0;
+  else if (g_unconfirmedWakes < 250) g_unconfirmedWakes++;
 
   goToSleep(ch);  // never returns
 }
