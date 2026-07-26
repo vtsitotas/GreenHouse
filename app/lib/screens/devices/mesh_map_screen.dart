@@ -234,8 +234,10 @@ class _NodeDetailSheet extends StatelessWidget {
       ('Last seen', lastSeen),
     ];
 
+    // Scrollable so the full row list stays reachable when the sheet's max
+    // height is smaller than the content (short screens, large text scale).
     return SafeArea(
-      child: Padding(
+      child: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
           mainAxisSize: MainAxisSize.min,
