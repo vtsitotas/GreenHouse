@@ -9,6 +9,7 @@
 
 #include <Arduino.h>
 #include <esp_now.h>
+#include <esp_sleep.h>
 #include <WiFi.h>
 #include <string.h>
 #include "mesh_config.h"
@@ -375,6 +376,101 @@ static void meshSendReading(const SensorPacket* payload) {
     meshFlushBuffer();
   }
   meshUnicastToParent(&pkt);
+}
+
+// ── RTC-persistent state (deep-sleep wake cycles) ─────────────────────────────
+// Deep sleep wipes normal RAM: every static above is reborn zeroed on wake.
+// Four things must survive (spec §What must survive deep sleep):
+//   - seq counters: a reset-to-0 dataSeq would collide with the bridge's
+//     (origin_mac, seq) de-dup cache and silently eat the first readings
+//     after every wake;
+//   - the parent hint (+ its rank): skips discovery on the healthy path;
+//   - the WiFi channel: skips the ~2 s SSID scan every wake;
+//   - the reading buffer: isolation across sleep cycles must not lose data.
+// ~350 bytes total — well inside the ESP32/C3 8 KB RTC slow memory.
+#define MESH_RTC_MAGIC 0x47534C50UL  // 'GSLP'
+
+typedef struct {
+  uint32_t       magic;
+  uint16_t       dataSeq;
+  uint16_t       beaconSeq;
+  int8_t         parentIdx;    // hint only, revalidated on wake; -1 = none
+  uint8_t        parentRank;
+  uint8_t        channel;      // last known WiFi channel (1-14), 0 = unknown
+  uint8_t        bufCount;
+  uint8_t        bufHead;
+  MeshDataPacket buf[MESH_DATA_BUFFER_SIZE];
+} MeshRtcState;
+
+RTC_DATA_ATTR static MeshRtcState meshRtcState;
+
+// Channel saved by the last meshRtcPersist(), 0 if none/invalid — lets the
+// sketch skip the boot-time SSID scan on the healthy wake path.
+static uint8_t meshRtcSavedChannel() {
+  if (meshRtcState.magic != MESH_RTC_MAGIC) return 0;
+  return (meshRtcState.channel >= 1 && meshRtcState.channel <= 14)
+             ? meshRtcState.channel : 0;
+}
+
+// Restore persisted mesh state after a deep-sleep timer wake. Returns true
+// when the parent hint was restored (healthy fast path). Guarantees:
+//   - seq counters are restored whenever the magic is valid, EVEN on a
+//     power-on/flash/brown-out reset — a manual reset must not re-collide
+//     seq with the bridge's de-dup cache. Everything else is trusted only
+//     after a genuine timer wake.
+//   - the restored parent is a HINT, not truth: parentLastHeard is stamped
+//     "now" and the advertised interval is pinned to the trickle ceiling, so
+//     the beacon-timeout check (3 × interval = 180 s) can never fire inside
+//     a ≤10 s wake window — a dead parent is instead caught by the wake
+//     cycle's TX-confirm fallback, which is both faster and definitive.
+//   - buffer indices are bounds-checked; anything inconsistent discards the
+//     buffer rather than trusting corrupt RTC memory.
+// Call after WiFi.mode() and before meshInit() radio traffic.
+static bool meshRtcRestore() {
+  bool magicOk   = (meshRtcState.magic == MESH_RTC_MAGIC);
+  bool timerWake = (esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER);
+
+  if (magicOk) {
+    meshDataSeq   = meshRtcState.dataSeq;
+    meshBeaconSeq = meshRtcState.beaconSeq;
+  }
+  if (!magicOk || !timerWake) return false;
+
+  if (meshRtcState.bufCount <= MESH_DATA_BUFFER_SIZE &&
+      meshRtcState.bufHead  <  MESH_DATA_BUFFER_SIZE) {
+    meshBufCount = meshRtcState.bufCount;
+    meshBufHead  = meshRtcState.bufHead;
+    memcpy(meshBuf, meshRtcState.buf, sizeof(meshBuf));
+  }
+
+  if (meshRtcState.parentIdx >= 0 &&
+      meshRtcState.parentIdx <  TRUSTED_NODE_COUNT &&
+      meshRtcState.parentRank != MESH_RANK_UNROUTED &&
+      !TRUSTED_NODES[(int)meshRtcState.parentIdx].sleepy) {
+    meshParentIdx         = meshRtcState.parentIdx;
+    meshParentRank        = meshRtcState.parentRank;
+    meshMyRank            = (uint8_t)(meshRtcState.parentRank + 1);
+    meshParentLastHeardMs = millis();
+    meshParentIntervalMs  = MESH_BEACON_INTERVAL_MAX_MS;
+    meshParentRssi        = -128;  // unknown until a fresh beacon is heard
+    return true;
+  }
+  return false;
+}
+
+// Snapshot the statics back into RTC memory. Call as the LAST mesh operation
+// before esp_deep_sleep_start(), on every exit path — including the
+// max-awake backstop — so no path can lose the seq counters or the buffer.
+static void meshRtcPersist(uint8_t channel) {
+  meshRtcState.magic      = MESH_RTC_MAGIC;
+  meshRtcState.dataSeq    = meshDataSeq;
+  meshRtcState.beaconSeq  = meshBeaconSeq;
+  meshRtcState.parentIdx  = (int8_t)meshParentIdx;
+  meshRtcState.parentRank = meshParentRank;
+  meshRtcState.channel    = channel;
+  meshRtcState.bufCount   = (uint8_t)meshBufCount;
+  meshRtcState.bufHead    = (uint8_t)meshBufHead;
+  memcpy(meshRtcState.buf, meshBuf, sizeof(meshBuf));
 }
 
 // Wake-cycle data-loss guarantee: if the send callback reports the unicast
