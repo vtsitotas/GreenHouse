@@ -1,5 +1,10 @@
 import 'dart:convert';
 
+/// Which MQTT topic a `NodeStatus` event was derived from — lets the
+/// repository merge own `isOnline` exclusively to `/status` events while
+/// still folding `/battery` and `/mesh` facets into the same node entry.
+enum NodeStatusSource { status, battery, mesh }
+
 class NodeStatus {
   final String nodeId;
   final bool isOnline;
@@ -13,6 +18,7 @@ class NodeStatus {
   final bool? isSleepy;
   final String? zone;
   final int? batteryMv;
+  final NodeStatusSource source;
 
   const NodeStatus({
     required this.nodeId,
@@ -25,12 +31,14 @@ class NodeStatus {
     this.isSleepy,
     this.zone,
     this.batteryMv,
+    this.source = NodeStatusSource.status,
   });
 
   factory NodeStatus.fromMqttStatus(String nodeId, String payload) => NodeStatus(
         nodeId: nodeId,
         isOnline: payload.trim() == 'online',
         lastSeen: DateTime.now(),
+        source: NodeStatusSource.status,
       );
 
   factory NodeStatus.fromMqttBattery(String nodeId, String payload) => NodeStatus(
@@ -38,6 +46,7 @@ class NodeStatus {
         isOnline: true,
         batteryPercent: double.tryParse(payload.trim()),
         lastSeen: DateTime.now(),
+        source: NodeStatusSource.battery,
       );
 
   // Liveness-hint semantics match fromMqttBattery: a `/mesh` message implies
@@ -56,6 +65,7 @@ class NodeStatus {
       isSleepy: json['sleepy'] as bool?,
       zone: json['zone'] as String?,
       batteryMv: (json['battery_mv'] as num?)?.toInt(),
+      source: NodeStatusSource.mesh,
     );
   }
 
@@ -81,5 +91,6 @@ class NodeStatus {
         isSleepy: isSleepy ?? this.isSleepy,
         zone: zone ?? this.zone,
         batteryMv: batteryMv ?? this.batteryMv,
+        source: source,
       );
 }
