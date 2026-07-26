@@ -1,18 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:greenhouse_app/models/node_status.dart';
+import 'package:greenhouse_app/screens/devices/battery_icon.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
 
 class NodeListTile extends StatelessWidget {
   final NodeStatus node;
   const NodeListTile({required this.node, super.key});
-
-  IconData _batteryIcon(double? p) {
-    if (p == null) return Icons.battery_unknown;
-    if (p > 80) return Icons.battery_full;
-    if (p > 50) return Icons.battery_5_bar;
-    if (p > 20) return Icons.battery_3_bar;
-    return Icons.battery_alert;
-  }
 
   @override
   Widget build(BuildContext context) => ListTile(
@@ -21,7 +14,7 @@ class NodeListTile extends StatelessWidget {
         subtitle: Text('Last seen: ${node.lastSeen.hour.toString().padLeft(2,'0')}:${node.lastSeen.minute.toString().padLeft(2,'0')}'),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           if (node.batteryPercent != null) ...[
-            Icon(_batteryIcon(node.batteryPercent), size: 18),
+            Icon(batteryIconFor(node.batteryPercent), size: 18),
             const SizedBox(width: 4),
             Text('${node.batteryPercent!.toStringAsFixed(0)} %'),
             const SizedBox(width: 12),
