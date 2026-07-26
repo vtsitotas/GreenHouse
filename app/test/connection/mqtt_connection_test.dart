@@ -1,5 +1,7 @@
+import 'dart:async';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:greenhouse_app/connection/mqtt_connection.dart';
+import 'package:greenhouse_app/models/node_status.dart';
 
 void main() {
   group('MqttConnection topic routing helpers', () {
@@ -21,6 +23,13 @@ void main() {
     test('isNodeBatteryTopic matches only .../battery', () {
       expect(MqttConnection.isNodeBatteryTopic('greenhouse/nodes/node1/battery'), isTrue);
       expect(MqttConnection.isNodeBatteryTopic('greenhouse/nodes/node1/status'), isFalse);
+    });
+
+    test('isNodeMeshTopic matches only .../mesh, not lookalikes or deeper paths', () {
+      expect(MqttConnection.isNodeMeshTopic('greenhouse/nodes/node1/mesh'), isTrue);
+      expect(MqttConnection.isNodeMeshTopic('greenhouse/nodes/node1/meshx'), isFalse);
+      expect(MqttConnection.isNodeMeshTopic('greenhouse/nodes/node1/mesh/extra'), isFalse);
+      expect(MqttConnection.isNodeMeshTopic('greenhouse/nodes/node1/status'), isFalse);
     });
 
     test('isActuatorStateTopic matches only .../state (not .../set)', () {
@@ -50,6 +59,43 @@ void main() {
     test('isCamLiveFrameTopic matches only the live frame topic', () {
       expect(MqttConnection.isCamLiveFrameTopic('greenhouse/cam/live/frame'), isTrue);
       expect(MqttConnection.isCamLiveFrameTopic('greenhouse/cam/live/start'), isFalse);
+    });
+  });
+
+  group('MqttConnection mesh topic routing', () {
+    test('a publish on .../mesh emits a NodeStatus with parentId set and isOnline true', () async {
+      final conn = MqttConnection();
+      final events = <dynamic>[];
+      final sub = conn.events.listen(events.add);
+
+      conn.routeForTest(
+        'greenhouse/nodes/n1/mesh',
+        '{"parent":"bridge","rank":1,"rssi":-55,"sleepy":false,"battery_mv":4100,"zone":"zone1"}',
+      );
+      await Future(() {}); // let the broadcast controller's event reach the listener
+
+      expect(events, hasLength(1));
+      final status = events.single as NodeStatus;
+      expect(status.nodeId, 'n1');
+      expect(status.parentId, 'bridge');
+      expect(status.isOnline, isTrue);
+      expect(status.meshRank, 1);
+      expect(status.parentRssi, -55);
+
+      await sub.cancel();
+    });
+
+    test('a malformed payload on .../mesh emits nothing and does not throw', () async {
+      final conn = MqttConnection();
+      final events = <dynamic>[];
+      final sub = conn.events.listen(events.add);
+
+      expect(() => conn.routeForTest('greenhouse/nodes/n1/mesh', '{not json'), returnsNormally);
+      await Future(() {});
+
+      expect(events, isEmpty);
+
+      await sub.cancel();
     });
   });
 }
