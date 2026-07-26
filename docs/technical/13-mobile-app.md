@@ -174,3 +174,42 @@ Future<Map<String, dynamic>?> fetchHistoryViaMqtt({...}) async {
 αυτό το κανάλι δουλεύει ανεξάρτητα από το αν η εφαρμογή/MQTT σύνδεση είναι
 ενεργή, γιατί το FCM delivery γίνεται από τους δικούς του servers της
 Google, όχι από το Pi απευθείας στη συσκευή.
+
+## 11. Mesh Map — ζωντανή απεικόνιση τοπολογίας
+
+Νέα οθόνη (`screens/devices/mesh_map_screen.dart`), προσβάσιμη από το
+εικονίδιο `Icons.hub` στο `AppBar` της οθόνης Devices
+(`screens/devices/devices_screen.dart`). Δείχνει τη **ζωντανή τοπολογία**
+του mesh: κάθε κόμβος (bridge + αισθητήρες) ως κάρτα πάνω σε πανoραμικό/
+zoomable καμβά (`InteractiveViewer`), συνδεδεμένος με τον γονιό του
+(`parentId`) μέσω γραμμής χρωματισμένης βάσει RSSI
+(`mesh_map/mesh_link_painter.dart`, βλ. `05-mqtt-broker.md §4` για το
+`/mesh` topic contract).
+
+Πηγή δεδομένων: το ίδιο `nodesProvider`/`GreenhouseRepository` που
+τροφοδοτεί την οθόνη Devices — τα mesh πεδία (`parentId`, `meshRank`,
+`parentRssi`, `isSleepy`, `zone`, `batteryMv`) φτάνουν από τα retained
+`greenhouse/nodes/<id>/mesh` μηνύματα (§6, `_route()`) και συγχωνεύονται
+στο ίδιο `NodeStatus` instance με τα `/status`/`/battery` πεδία — καμία
+νέα σύνδεση ή provider δεν χρειάστηκε.
+
+Χαρακτηριστικά:
+- **Αυτόματο layout βάσει mesh rank** (`mesh_map/mesh_layout.dart`,
+  καθαρό Dart, χωρίς Flutter imports) — σειρές ανά rank, σταθερή σειρά
+  εντός σειράς (zone αλλιώς node id), unplaced σειρά για άγνωστο rank.
+- **Drag-to-pin**: μεταφορά κάρτας με το δάχτυλο κρατά τη νέα θέση μόνιμα
+  αποθηκευμένη σε `SharedPreferences`
+  (`mesh_map/node_positions_store.dart`, κλειδί
+  `mesh_map_positions_v1`) — επιζεί restart της εφαρμογής. Long-press
+  ξεκαρφιτσώνει (επιστροφή στο αυτόματο layout) με επιβεβαίωση.
+- **Γραμμές χρωματισμένες βάσει RSSI** με thresholds −60/−75 dBm
+  (`LinkQuality.of`) — γκρι/διακεκομμένη όταν ο κόμβος είναι offline ή
+  δεν υπάρχει RSSI τιμή ακόμα.
+- **Badges μπαταρίας/sleepy** πάνω σε κάθε κάρτα (`mesh_map/mesh_node_card.dart`)
+  — το εικονίδιο μπαταρίας είναι κοινό helper
+  (`screens/devices/battery_icon.dart`) με το `NodeListTile` της απλής
+  λίστας συσκευών· φεγγάρι-badge όταν `isSleepy == true`.
+- **Degraded-data banner**: αν υπάρχουν κόμβοι αλλά κανείς δεν έχει ακόμα
+  αναφέρει mesh δεδομένα (πραγματικός στόλος πριν αναβαθμιστεί το
+  firmware — δες `TODO.md §App feature gaps`), εμφανίζεται προειδοποίηση
+  αντί σιωπηλά κενού χάρτη.

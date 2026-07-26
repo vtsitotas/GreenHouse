@@ -158,10 +158,16 @@ class MqttConnection implements GreenhouseConnection {
       _events.add(NodeStatus.fromMqttStatus(extractNodeId(topic), payload));
     } else if (isNodeBatteryTopic(topic)) {
       _events.add(NodeStatus.fromMqttBattery(extractNodeId(topic), payload));
+    } else if (isNodeMeshTopic(topic)) {
+      try { _events.add(NodeStatus.fromMqttMesh(extractNodeId(topic), payload)); } catch (_) {}
     } else if (isActuatorStateTopic(topic)) {
       _events.add(ActuatorState.fromMqttState(extractActuatorId(topic), payload));
     }
   }
+
+  // Test seam: drives the same dispatch `_handleMessages` uses, without a
+  // live broker connection.
+  void routeForTest(String topic, String payload) => _route(topic, payload);
 
   @override
   Future<void> sendCommand(String actuatorId, bool on) async {
@@ -232,6 +238,9 @@ class MqttConnection implements GreenhouseConnection {
 
   static bool isNodeBatteryTopic(String t) =>
       RegExp(r'^greenhouse/nodes/[^/]+/battery$').hasMatch(t);
+
+  static bool isNodeMeshTopic(String t) =>
+      RegExp(r'^greenhouse/nodes/[^/]+/mesh$').hasMatch(t);
 
   static bool isActuatorStateTopic(String t) =>
       RegExp(r'^greenhouse/actuators/[^/]+/state$').hasMatch(t);

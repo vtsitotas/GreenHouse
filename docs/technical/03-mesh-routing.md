@@ -14,8 +14,10 @@ typedef struct __attribute__((packed)) {
   uint8_t  rank;                 // τρέχον rank αποστολέα (255 = unrouted)
   uint16_t seq;                  // μονοτονικός μετρητής ανά αποστολέα
   uint32_t beacon_interval_ms;   // πότε θα στείλει το ΕΠΟΜΕΝΟ beacon
-  uint32_t window_duration_ms;   // forward-compat για μελλοντικό deep sleep
-} MeshBeacon;                    // 18 bytes
+  uint32_t window_duration_ms;   // forward-compat για Phase-2 deep sleep
+  uint8_t  flags;                // bit0 MESH_FLAG_SLEEPY: κόμβος μπαταρίας —
+                                 // ποτέ υποψήφιος γονέας (leaf-only)
+} MeshBeacon;                    // 19 bytes
 
 // Unicast προς τον επιλεγμένο γονέα, πάντα κρυπτογραφημένο (PMK/LMK).
 typedef struct __attribute__((packed)) {
@@ -25,10 +27,16 @@ typedef struct __attribute__((packed)) {
   uint8_t      ttl;               // μειώνεται ανά hop, drop στο 0
   uint16_t     seq;               // ανά-origin μετρητής, για de-dup
   SensorPacket payload;           // {temperature, humidity, soil_moisture}
-} MeshDataPacket;                 // 23 bytes
+  // Τηλεμετρία — ιδιοκτησία του origin (όπως το origin_mac): τα relays
+  // ΔΕΝ τα ξαναγράφουν ποτέ. Τροφοδοτεί τα MQTT topics /battery + /mesh.
+  uint16_t     battery_mv;        // millivolts μπαταρίας, 0 = χωρίς μέτρηση
+  uint8_t      parent_mac[6];     // ο γονέας του origin τη στιγμή αποστολής
+  int8_t       parent_rssi;       // RSSI που μέτρησε ο origin για τον γονέα του
+  uint8_t      flags;             // bit0 MESH_FLAG_SLEEPY
+} MeshDataPacket;                 // 33 bytes
 ```
 
-Το μέγεθος (18 vs 23 bytes) λειτουργεί ως έμμεσος διαχωριστής τύπου
+Το μέγεθος (19 vs 33 bytes) λειτουργεί ως έμμεσος διαχωριστής τύπου
 μηνύματος στο receive callback — δες `02-esp-now-protocol.md §Layer 2`.
 
 ## 2. Καταστάσεις ανά κόμβο (per-node state)
@@ -56,6 +64,13 @@ Pseudocode βασισμένο στο `meshHandleBeacon()` (`mesh_node.h:181-231`
 όταν ληφθεί beacon B από MAC src:
   αν src ΔΕΝ είναι στο TRUSTED_NODES[]:
       αγνόησέ το εντελώς (δεν γίνεται ποτέ candidate)
+      return
+
+  αν B.flags έχει το MESH_FLAG_SLEEPY:                 // deep sleep Phase 1
+      // κόμβος μπαταρίας = μόνο φύλλο· το ράδιό του θα σβήσει σε λίγα
+      // δευτερόλεπτα, άρα δεν γίνεται ΠΟΤΕ γονέας. Το liveness του
+      // καταγράφηκε κανονικά παραπάνω.
+      αν src == τρέχων_γονέας: drop τον γονέα (άλλαξε ρόλο), ξαναγίνε unrouted
       return
 
   αν src == τρέχων_γονέας:

@@ -128,9 +128,13 @@ implies.
   schedule, `docs/technical/03-mesh-routing.md`) — just needs to be wired
   into this scheme once deep sleep is actually built.
 
-Not yet written into `EDGE_NODE_POWER_OPTIMIZATION.md` itself — this TODO
-entry is the only record of the design until someone formalizes it there or
-into a dedicated spec.
+**Update 2026-07-26:** this design is now formally recorded as "Phase 2" in
+`docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md` §Phase 2
+(explicitly deferred — do not build until Phase 1's bench run produces real
+per-board RTC-drift measurements; the Phase 1 wake logs collect exactly that
+data). Phase 1 (leaf-only sleep, which sidesteps the clock-sync problem by
+keeping every possible parent always-on) is implemented — see §4 Field
+hardening below.
 
 ---
 
@@ -234,9 +238,14 @@ untestable-without-hardware reason as the channel discovery item above.
       everything validated so far is against `tools/simulator.py`, not real
       sensor nodes in a real greenhouse.
 - [ ] Field hardening: solar/18650 battery power, IP65 enclosures, cellular
-      fallback — **not started**. `docs/EDGE_NODE_POWER_OPTIMIZATION.md` is a
-      plan document only; zero deep-sleep code exists in any `.ino` file yet
-      (confirmed — edge nodes still loop with `delay()`, radio always on).
+      fallback — hardware side **not started**, but the firmware side now
+      exists: deep-sleep Phase 1 (leaf sleep) is fully coded per
+      `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md` Tasks 1-5
+      (sleepy wake cycle in both edge sketches, RTC-persistent mesh state,
+      battery ADC, bridge telemetry/per-role offline windows). **Never
+      compiled or bench-tested on real hardware** — that's the plan's Task 6
+      checklist, plus the physical mods (LED desolder, divider soldering)
+      from `docs/EDGE_NODE_POWER_OPTIMIZATION.md §1`.
 - [ ] Golden SD image + clone path unproven on a second physical unit.
 
 ### ML / analytics
@@ -249,9 +258,21 @@ untestable-without-hardware reason as the channel discovery item above.
 
 ### App feature gaps
 - [ ] Screen-by-screen UX enhancement pass for dashboard, control, devices,
-      pairing, settings — only the history screen (2026-07-08/09 sessions)
-      and the weather/rules screen (2026-07-10 rule builder) have had this
-      treatment so far.
+      pairing, settings — only the history screen (2026-07-08/09 sessions),
+      the weather/rules screen (2026-07-10 rule builder), and now the
+      devices screen (2026-07-26 Mesh Map entry point + screen, see
+      `docs/technical/13-mobile-app.md §11`) have had this treatment so far.
+- [x] Devices screen gained a live Mesh Map (hub icon in the `AppBar` →
+      `MeshMapScreen`): topology, RSSI-colored links, drag-to-pin,
+      battery/sleepy badges — app side is fully implemented and tested
+      against `pi/tools/simulator.py`'s `/mesh` topic.
+- [x] Firmware-side `/mesh` and `/battery` publishing — implemented
+      (bridge publishes both, plus its own root `/mesh` record and an MQTT
+      LWT; wire-format v2 carries battery mV / parent MAC / parent RSSI).
+      Caveat: like all firmware in this repo, never compiled or flashed on
+      real hardware yet — until the fleet is reflashed (deep-sleep plan
+      Task 6), the Mesh Map's degraded-data banner still shows on the real
+      fleet.
 - [ ] CSV export of history data — not started.
 - [ ] Smartwatch/widget glance view — not started.
 - [ ] iOS — completely untested (Android-only device used throughout

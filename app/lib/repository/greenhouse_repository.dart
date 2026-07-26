@@ -100,13 +100,46 @@ class GreenhouseRepository {
       _readingsCtrl.add(Map.from(_readings));
     } else if (event is NodeStatus) {
       final prev = _nodes[event.nodeId];
-      _nodes[event.nodeId] = prev != null
-          ? prev.copyWith(
-              isOnline:      event.isOnline,
+      if (prev == null) {
+        // No existing entry: store the event as-is regardless of source —
+        // its factory default `isOnline` stands until a `/status` event
+        // arrives to claim ownership.
+        _nodes[event.nodeId] = event;
+      } else {
+        switch (event.source) {
+          case NodeStatusSource.status:
+            // `/status` exclusively owns isOnline.
+            _nodes[event.nodeId] = prev.copyWith(
+              isOnline:       event.isOnline,
               batteryPercent: event.batteryPercent ?? prev.batteryPercent,
-              lastSeen:      event.lastSeen,
-            )
-          : event;
+              lastSeen:       event.lastSeen,
+            );
+            break;
+          case NodeStatusSource.battery:
+            // Merge battery facet only; isOnline stays whatever `/status`
+            // last said, never flipped by a `/battery` message.
+            _nodes[event.nodeId] = prev.copyWith(
+              isOnline:       prev.isOnline,
+              batteryPercent: event.batteryPercent ?? prev.batteryPercent,
+              lastSeen:       event.lastSeen,
+            );
+            break;
+          case NodeStatusSource.mesh:
+            // Merge mesh facet only; isOnline stays whatever `/status`
+            // last said, never flipped (up or down) by a `/mesh` message.
+            _nodes[event.nodeId] = prev.copyWith(
+              isOnline:    prev.isOnline,
+              parentId:    event.parentId ?? prev.parentId,
+              meshRank:    event.meshRank ?? prev.meshRank,
+              parentRssi:  event.parentRssi ?? prev.parentRssi,
+              isSleepy:    event.isSleepy ?? prev.isSleepy,
+              zone:        event.zone ?? prev.zone,
+              batteryMv:   event.batteryMv ?? prev.batteryMv,
+              lastSeen:    event.lastSeen,
+            );
+            break;
+        }
+      }
       _nodesCtrl.add(Map.from(_nodes));
     } else if (event is ActuatorState) {
       _actuators[event.actuatorId] = event;
