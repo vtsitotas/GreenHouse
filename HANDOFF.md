@@ -1,12 +1,143 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-20 (documentation deep-dive + design specs session)
-**Status:** ✅ `main` is clean, all work merged, CI is green. This session was
-**documentation and design only — no application code changed**. Corrected
-two stale claims found in this file (see below) and in the ESP32-CAM entry
-right below: the camera feature was actually already fully implemented back
-on 2026-07-11, contrary to what this file said until now. See "Next step"
-below for what's actually still open.
+**Last updated:** 2026-07-26 (mesh deep sleep + mesh field visualization
+session; ESP32-CAM bench debugging in progress)
+**Status:** ✅ `main` has PR #13 merged, CI green (Pi + Flutter — firmware
+is never CI-covered, see below). ESP32-CAM real-hardware bench-testing
+started this session and is **still in progress, not concluded** — see
+"Next step".
+
+---
+
+## TL;DR of this session (2026-07-26, mesh deep sleep + field visualization + cam bench start)
+
+Two features, both taken all the way from brainstorm → design spec →
+implementation plan → full implementation (via background Sonnet
+sub-agents, each reviewed before push), merged as **PR #13** (`a79d9ce`).
+Then started real-hardware bench debugging of the ESP32-CAM (see below).
+
+### 1. Mesh deep sleep — Phase 1 (leaf sleep), for real battery-life energy optimization
+Spec: `docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md`. Plan:
+`docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md`.
+
+Extends the 2026-07-09 dynamic mesh relay so battery-powered ("sleepy")
+edge nodes deep-sleep 15 minutes between readings instead of looping with
+the radio always on (`docs/EDGE_NODE_POWER_OPTIMIZATION.md`'s ~290µA
+average-draw target, 200+ days on an 18650). Key design constraint: a
+sleepy node must **never** be relied on as a parent (its radio is about to
+go dark), so the fix is one new routing rule — a beacon's new `flags` bit
+marks the sender sleepy, and sleepy-flagged beacons are recorded for
+neighbor liveness but never adopted as a parent. Everything else in the
+existing mesh (strict-rank loop safety, trickle beaconing, TTL/dedup) is
+untouched.
+
+Implemented (Tasks 1-5 of 6; Task 6 is the physical bench checklist, not
+run yet — no compiler/hardware in the dev sandbox, same caveat as every
+other firmware slice in this project):
+- **Wire format v2:** `MeshBeacon` 18→19 bytes (sleepy flag),
+  `MeshDataPacket` 23→33 bytes (battery millivolts, origin's parent MAC,
+  parent RSSI, flags — all origin-owned, relays never rewrite them). Not
+  backward compatible; the whole fleet reflashes together, same as the
+  original mesh rollout.
+- **RTC-persistent state** across deep sleep: seq counters (protects the
+  bridge's de-dup cache from resetting to 0 every wake), a parent hint
+  (revalidated, not trusted — its timeout is pinned to the trickle ceiling
+  so it can't fire spuriously inside a ≤10s wake), the WiFi channel
+  (skips a ~2s scan most wakes), and the 10-reading buffer.
+- **The sleepy wake cycle** (both edge sketches — role picked by the
+  node's own MAC in `TRUSTED_NODES[]`, so one firmware image serves both
+  roles): sensor warm-up runs concurrently with radio bring-up; one
+  sleepy-flagged wake beacon trickle-resets nearby awake neighbors so the
+  parent (or a new candidate) is heard inside the warm-up window; a
+  TX-confirm check with a bounded orphan-rediscovery fallback; a hard 10s
+  max-awake backstop where every exit path (including `esp_now_init()`
+  failure — sleeps, never restart-loops) persists state and sleeps.
+  Two guarantees added beyond the plan after tracing failure cases: an
+  unconfirmed reading is re-queued with the **same** sequence number (the
+  bridge's existing de-dup drops it if the "failure" was only a lost ack,
+  otherwise the resend delivers it), and a **stale-channel self-heal** — 2
+  consecutive silent wakes force a full SSID rescan, so a router channel
+  change while a node sleeps can't strand it permanently.
+- **Bridge:** per-role offline windows (45 min for sleepy nodes, 15s for
+  always-on, same `MESH_OFFLINE_AFTER` multiplier applied to a per-role
+  expected interval), a LiFePO4 millivolt→percent curve, retained
+  `greenhouse/nodes/<MAC>/battery` + `/mesh` topology JSON publishing, the
+  bridge's own root `/mesh` record, and an MQTT Last-Will on its own
+  `/status` topic (nothing reported bridge liveness at all before this).
+- **Battery sensing:** a 2×220kΩ resistor divider on a spare ADC pin,
+  8-sample `analogReadMilliVolts()` average; an unfitted (mains) node reads
+  under 2000mV and is reported as "not measured", not zero.
+
+### 2. Live mesh field visualization — Mesh Map screen
+Spec: `docs/superpowers/specs/2026-07-26-mesh-field-visualization-design.md`.
+Plan: `docs/superpowers/plans/2026-07-26-mesh-field-visualization.md`.
+
+A new **Mesh Map** screen in the Flutter app (Devices screen → hub icon):
+every node (bridge + sensors) as an icon card on a pannable/zoomable
+canvas, connected to its parent by an animated RSSI-colored link, showing
+battery %, zone, online/offline, and a sleepy-node moon badge —
+auto-laid-out by mesh rank with drag-to-pin (persisted in
+`SharedPreferences`). Fully implemented, all 6 plan tasks:
+- `pi/tools/simulator.py` publishes the same `/mesh` MQTT contract the
+  real firmware now targets, with a small shifting fake topology (one node
+  periodically re-parents) — so the whole screen was buildable and
+  demoable **before** any real firmware existed, and still works without
+  hardware today.
+- `NodeStatus` (`app/lib/models/node_status.dart`) gained mesh fields +
+  `fromMqttMesh`; `MqttConnection` routes the new `/mesh` topic.
+- `GreenhouseRepository`'s merge became source-aware (`NodeStatusSource`
+  enum): `/status` exclusively owns online/offline, `/battery` and `/mesh`
+  events fold their own facets into the same node entry without ever
+  flipping liveness.
+- New `app/lib/screens/devices/mesh_map/`: a pure rank-row layout engine
+  (with pinned-position override), an RSSI→color/dashed link-quality
+  mapping + animated `CustomPainter`, the node card widget, and a
+  `SharedPreferences`-backed pinned-position store — then the screen
+  itself (pan/zoom, drag-to-pin, tap-for-detail-sheet, a degraded-data
+  banner for when no `/mesh` data is being published yet).
+- 30+ new Flutter tests + 12 new Python tests, all green in CI.
+
+**Process note on this session's sub-agent use:** implemented via ~9
+background Sonnet sub-agents dispatched in dependency-respecting waves
+(simulator/model/routing in parallel, then repository-merge + layout/
+painter/card in parallel, then the screen, then the entry point), each
+reviewed against the spec before its commit was pushed. Two CI failures
+occurred and were fixed directly (both `unnecessary_import` lints in new
+test files — `dart:async`/`dart:ui` already re-exported by
+`flutter_test.dart`) and one widget-test overflow (the detail bottom sheet
+needed to be scrollable). The deep-sleep firmware's most safety-critical
+pieces (wire format, the sleepy routing rule, RTC persistence) were written
+directly rather than delegated, given the cost of a subtle firmware bug
+only surfacing on a real bench day; the two edge sketches and the bridge
+changes were sub-agent-implemented then reviewed, and one real gap a
+sub-agent's own failure-case trace surfaced (no recovery from a router
+channel change during sleep) was fixed immediately after review, before
+push.
+
+### 3. ESP32-CAM bench debugging — started, not concluded
+The camera feature (`firmware/cam_esp32/cam_esp32.ino` +
+`pi/scripts/cam_bridge.py` + app-side camera screen) had **never once been
+on physical hardware** before this session (see `TODO.md §3`, previously
+accurate). User began real bench-testing on an AI-Thinker ESP32-CAM +
+ESP32-CAM-MB downloader base:
+- Code-review pass (no hardware access from this environment) surfaced
+  several real risks worth having in mind at the bench: `HTTPClient`
+  POSTing to `greenhouse.local` (mDNS-name resolution from the ESP32 side
+  isn't guaranteed — the leading suspect if snapshot POSTs fail with
+  `code=-1`); the already-documented `IMPROVEMENTS.md §B3` (LAN live
+  view's blocking `handleStream()` loop starves motion detection for the
+  whole viewing session); the `CAM_TOKEN` hand-sync requirement between
+  the flashed `secrets.h` and `/etc/greenhouse/cam_token.txt`; and no WiFi
+  reconnect watchdog on the cam sketch (the bridge got one in an earlier
+  session for the same class of failure, `IMPROVEMENTS.md §B4`).
+- First flash attempt failed with a memory-related error at upload time
+  (exact text not captured); on a later attempt it flashed successfully
+  without a clearly isolated fix — not investigated further since it
+  stopped recurring. **This is the current state: it flashes, runtime
+  behavior (WiFi connect / snapshot loop / MQTT online status) not yet
+  observed** — next step is reading the serial monitor at 115200 baud.
+  **Do not treat the camera feature as validated on real hardware yet** —
+  update this entry and `TODO.md §3` again once the serial output is in.
 
 ---
 
@@ -148,29 +279,37 @@ All 8 implementation tasks done, each independently reviewed (Task 8 and the fin
 
 ## Next step
 
-No single obvious next step was chosen this session — it was documentation/
-design only. Candidates, roughly in order of how self-contained they are
-(see `TODO.md` for the full picture):
+**Immediate:** finish the ESP32-CAM bench debugging in progress (§3 above)
+— read the serial monitor at 115200 baud after boot, report what shows
+(camera/SD init, WiFi connect, the 3s snapshot-POST cadence success/
+failure), then fix whatever the actual symptom turns out to be as a small
+reviewed commit (leading hypothesis: `greenhouse.local` mDNS resolution
+from `HTTPClient`, per §3). Once the cam is confirmed working end-to-end
+(MQTT `greenhouse/cam/status` online, app LAN stream visible), do the same
+real-hardware bench pass for the mesh (deep-sleep Phase 1 + the original
+2026-07-09 relay, per `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md`
+Task 6 and the relay plan's Task 5) — this project's mesh and camera
+firmware have now both reached "flashes/compiles on real hardware" but
+neither has completed full runtime bench validation yet.
 
-1. **Direct-to-Pi pairing + PIN auth** (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`)
-   — approved in conversation, no implementation plan written yet. Would
-   need one written (mirroring the UART bridge spec's task-list format)
-   before subagent-driven-development could start.
-2. **UART-wired bridge** (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`
+**After that**, other candidates (see `TODO.md` for the full picture):
+
+1. **Phase 2 mesh deep sleep** (synchronized wake windows so relay-capable
+   nodes can sleep too) — deliberately deferred until Phase 1's bench run
+   produces real per-board RTC-drift measurements; see the deep-sleep
+   spec's §Phase 2.
+2. **Direct-to-Pi pairing + PIN auth** (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`)
+   — approved in conversation, no implementation plan written yet.
+3. **UART-wired bridge** (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`
    + `docs/superpowers/plans/2026-07-20-uart-bridge.md`) — spec and 5-task
-   plan both already written, ready to implement. Firmware task (Task 1)
-   can't be bench-tested without physical hardware, same caveat as
-   mesh-relay/ESP32-CAM before it.
-3. **Real-hardware field validation** of the mesh relay and ESP32-CAM
-   firmware — both are fully coded and have never been compiled or flashed
-   (no `arduino-cli` toolchain in any dev sandbox so far). This blocks
-   several `TODO.md` items from moving out of "designed, unvalidated."
-4. Work through `IMPROVEMENTS.md`'s remaining findings — Δ1 (CI) and Α6
-   (unused port 9001) are already done from this session; Α1 (rotate
-   committed WiFi/HiveMQ credentials) is probably the next highest-value one
-   given it's a live, real exposure.
+   plan both already written, ready to implement.
+4. Work through `IMPROVEMENTS.md`'s remaining open findings — Β3 (LAN
+   streaming blocks motion detection) is directly relevant to the cam bench
+   work above; Α1's rotation step (WiFi/HiveMQ credentials) is still a live
+   real exposure whenever convenient.
 
-Ask the user which before picking one — none was prioritized explicitly.
+Ask the user which before picking one — none was prioritized explicitly
+beyond the immediate cam debugging already underway.
 
 ---
 
@@ -275,10 +414,11 @@ ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -
 
 ```
 ┌─────────── FIELD / GREENHOUSE ───────────┐
-│  ESP-NOW sensor nodes, dynamic multi-hop  │  (firmware done, not yet
-│    mesh relay → ESP32 bridge              │   field-tested on real HW —
-│     → MQTT publish to Pi                  │   see docs/MESH_RELAY_EXPLAINED.md)
-└──────────────────┬─────────────────────────┘
+│  ESP-NOW sensor nodes, dynamic multi-hop  │  (mesh relay + deep-sleep
+│    mesh relay (+ Phase 1 deep sleep for   │   phase 1 firmware done, not
+│    battery nodes) → ESP32 bridge          │   yet field-tested on real HW
+│     → MQTT publish to Pi (+ /mesh, /battery)│  — see docs/MESH_RELAY_EXPLAINED.md
+└──────────────────┬─────────────────────────┘   + this session's specs)
                     │ MQTT (loopback 1883, internal services)
 ┌───────────────────▼───────────────────────────────┐
 │  Raspberry Pi Zero W                              │
@@ -293,8 +433,8 @@ ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -
                     │ LAN (port 8883/80) or HiveMQ Cloud bridge (remote)
 ┌───────────────────▼───────────────────────────────┐
 │  Flutter app (Android; iOS untested)              │
-│  Dashboard, Control, Devices, Weather+Rules,       │
-│  History (chart, this session's feature), Settings │
+│  Dashboard, Control, Devices (+ Mesh Map screen,   │
+│  2026-07-26), Weather+Rules, History, Settings     │
 └─────────────────────────────────────────────────────┘
 ```
 
@@ -325,6 +465,11 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `TODO.md` | Consolidated, code-verified list of designed-but-unbuilt and built-but-hardware-unvalidated work — 2026-07-20 |
 | `IMPROVEMENTS.md` | Code-verified list of things that work but could be better (security/correctness/performance/process), each with `file:line` — 2026-07-20 |
 | `.github/workflows/ci.yml` | pytest + flutter analyze/test on every PR — 2026-07-20, previously nothing ran automated |
+| `docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md` + plan | Deep-sleep Phase 1 (leaf sleep) design + 6-task implementation plan (Tasks 1-5 done) — this session |
+| `docs/superpowers/specs/2026-07-26-mesh-field-visualization-design.md` + plan | Mesh Map screen design + 6-task implementation plan (fully done) — this session |
+| `firmware/libraries/GreenhouseMesh/mesh_node.h` | Wire format v2 (sleepy flag, battery/parent telemetry), RTC-persistent state helpers — this session |
+| `app/lib/screens/devices/mesh_map_screen.dart` + `mesh_map/` | The live Mesh Map screen: layout engine, link painter, node card, pinned-position store — this session |
+| `pi/tools/simulator.py` | Also now publishes `/mesh` topology JSON (fake shifting topology) — this session |
 
 ---
 
@@ -334,11 +479,11 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 
 **Slice status:**
 - 1 App + Connectivity — ✅ done
-- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, including 2026-07-09's dynamic multi-hop relay upgrade (was pure star topology before); **not field-validated on real sensor hardware** (simulator only, and the new relay code has never even been compiled — no toolchain in the dev sandbox); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
+- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, including 2026-07-09's dynamic multi-hop relay upgrade and 2026-07-26's Phase 1 deep-sleep + telemetry upgrade; **still not field-validated on real sensor hardware** (simulator only — the relay and deep-sleep code have never been compiled/flashed, no toolchain in the dev sandbox); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
 - 3 Storage + History — ✅ done, reimplemented as a local SQLite recorder (not InfluxDB) + this session's chart feature
 - 4 Automation + Alerts — ✅ done, and this session made it fully customizable: in-app rule builder (any zone/metric/operator/threshold/duration/action, Weather screen → Rules tab → "Add rule") instead of six hardcoded thresholds, plus a real fix for rule edits never having reached the Pi (see this session's TL;DR above)
 - 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **partially done this session**: FCM push notifications now work (app closed/backgrounded still gets real alerts) via `pi/shared/push.py` + a retained-token registry topic; multi-customer accounts/device registry still **not started** — current remote access is still single-tenant HiveMQ Cloud
-- 6 Field Hardening (solar/18650, IP65 enclosures, cellular fallback) — **not started**; see `docs/EDGE_NODE_POWER_OPTIMIZATION.md` for the existing plan doc
+- 6 Field Hardening (solar/18650, IP65 enclosures, cellular fallback) — hardware mods **not started**, but the firmware duty-cycle side is now coded: 2026-07-26's deep-sleep Phase 1 (leaf sleep for battery nodes), see `docs/EDGE_NODE_POWER_OPTIMIZATION.md` and `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md`. Never compiled/flashed yet.
 
 **Fixed this session (2026-07-08, later):** Mosquitto's native `connection` bridge to HiveMQ Cloud had never actually worked — 0 successful handshakes across 9 days of logs, a real Mosquitto bridge-code incompatibility with this HiveMQ cluster (not a quota/account issue). Any prior appearance of "remote access working" was the app displaying a stale retained value, not live data. Replaced with `greenhouse-hivemq-bridge.service` (small paho-mqtt forwarder script) — verified live two-way delivery, stable connection, automated round-trip check added to `selftest.sh` (now 26/26).
 
@@ -389,16 +534,15 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 - [x] ~~Alerts don't arrive when the app is closed~~ — fixed 2026-07-10 via FCM push notifications. See this session's TL;DR above.
 - [x] ~~Hardcoded frost/daily-summary-only alerts, no per-sensor dry/humid duration rules~~ — fixed 2026-07-10 via the customizable rule builder (any zone/metric/operator/threshold/duration/action). See this session's TL;DR above.
 - [x] ~~Rule edits from the app didn't actually reach the Pi~~ — fixed 2026-07-10 (pre-existing bug found while writing the alert-rules plan; `publishRules()` now uses the retain+poll pattern proven for location sync).
-- [x] ~~ESP32-CAM live view + motion alerts~~ — **actually already fully
-      implemented**, contrary to what this line said until 2026-07-20. The
-      code (`firmware/cam_esp32/cam_esp32.ino`, `pi/scripts/cam_bridge.py`,
+- [x] ~~ESP32-CAM live view + motion alerts~~ — code fully implemented
+      (`firmware/cam_esp32/cam_esp32.ino`, `pi/scripts/cam_bridge.py`,
       `pi/shared/motion.py`/`cam_store.py`, app-side `camera_screen.dart` +
-      tests) was written in or shortly after the 2026-07-11 session but this
-      file was never updated to reflect it — a real "verify against the code,
-      not just prior notes" lesson. Still open: firmware has never been
-      flashed to physical hardware or bench-tested (same caveat as the mesh
-      relay). WebRTC remote streaming (Phase 2) remains genuinely not
-      planned/started.
+      tests). **Real-hardware bench-testing started 2026-07-26** (see this
+      session's TL;DR §3 above) — flashes successfully now; runtime
+      bring-up (WiFi connect, snapshot pipeline, MQTT online status) not
+      yet confirmed, so **do not mark this fully hardware-validated until
+      that's in** — update this entry again once confirmed. WebRTC remote
+      streaming (Phase 2) remains genuinely not planned/started.
 - [ ] Other nice-to-haves from the original vision, all unstarted: CSV export, a smartwatch/widget glance.
 
 **Housekeeping:**
