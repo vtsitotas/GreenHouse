@@ -151,15 +151,27 @@ the dev sandbox) or run on physical ESP32 hardware. See
 ### ESP32-CAM live view + motion alerts
 **Spec/plan:** `docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md`,
 `docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`
-**Status:** `HANDOFF.md` (last updated 2026-07-11) says this is only
-*designed*, not implemented — **that entry is stale.** The code is actually
-present and appears complete: `firmware/cam_esp32/cam_esp32.ino`,
+**Status:** Code present and complete: `firmware/cam_esp32/cam_esp32.ino`,
 `pi/scripts/cam_bridge.py`, `pi/shared/motion.py`, `pi/shared/cam_store.py`,
 plus app-side `camera_screen.dart`/`camera_provider.dart`/`cam_status.dart`,
 and tests (`pi/tests/test_cam_bridge.py`, `test_motion.py`, `test_cam_store.py`).
-**Still open:** firmware (Task 8 of the plan) has never been flashed to a
-physical ESP32-CAM or bench-tested — same caveat as the mesh relay above.
-Update `HANDOFF.md` to reflect this once confirmed.
+**Bench-testing started 2026-07-26** (first time on real hardware — an
+AI-Thinker ESP32-CAM on an ESP32-CAM-MB downloader base): the sketch
+compiles; an initial flash-time "memory"-related error did not reproduce on
+retry (root cause unconfirmed — possibly the Arduino IDE partition scheme,
+a boot-mode/cable fluke, or something else; not investigated further since
+it stopped recurring). Flashing itself now succeeds. **Still open:**
+runtime bring-up not yet confirmed — WiFi connect, the 3s snapshot-POST
+loop to the Pi, and whether `greenhouse.local` resolves correctly from the
+ESP32's `HTTPClient` (a real risk flagged during this session's code
+review: mDNS-name resolution from `HTTPClient` depends on Arduino core
+support and isn't guaranteed — if snapshots fail, expect
+`WARN: snapshot POST failed, code=-1` in the serial log as the symptom).
+Also flagged but not yet hit in practice: `IMPROVEMENTS.md §B3` (LAN
+live-view blocks motion detection) and the `CAM_TOKEN` file/firmware
+hand-sync requirement (`/etc/greenhouse/cam_token.txt` must match the
+flashed `secrets.h` exactly). Next bench step: read the serial monitor
+output at 115200 baud and continue from there.
 
 ### Phase 2 — WebRTC remote camera streaming
 Documented in the ESP32-CAM design spec's Phase 2 section, **deliberately
