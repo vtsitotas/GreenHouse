@@ -29,6 +29,14 @@
 WiFiClientSecure net;
 PubSubClient     mqtt(net);
 
+// Bridge's own identity, computed once in setup() right after WiFi.mode() —
+// WiFi.macAddress() is usable as soon as the driver is up, well before
+// meshInit() (which only runs later and fills meshSelfMac). Used for the
+// bridge's own /status + /mesh records and its MQTT LWT (spec §Telemetry:
+// "the bridge publishes its own /mesh record ... registers an MQTT LWT").
+char bridgeMac[13];
+char bridgeStatusTopic[64];
+
 // ── Node liveness (spec: Bridge Changes — offline detection) ──────────────────
 uint32_t lastSeenMs[TRUSTED_NODE_COUNT];
 bool     nodeOnline[TRUSTED_NODE_COUNT];
@@ -68,6 +76,45 @@ void mqttPublish(const char* topic, const char* payload, bool retain) {
   Serial.printf("  → %s  %s%s\n", topic, payload, retain ? "  (retained)" : "");
 }
 
+// LiFePO4 discharge curve is very flat -- piecewise-linear interpolation
+// over a handful of measured points (spec §Wire format changes) is plenty
+// accurate; a chain of if/else would encode the same table far less
+// legibly, so use a real table + loop instead. Descending by mv on purpose
+// (table walk below relies on it). Clamped outside the table's ends.
+static float batteryPctFromMv(uint16_t mv) {
+  static const struct { uint16_t mv; float pct; } kTable[] = {
+    { 3400, 100.0f }, { 3350, 90.0f }, { 3320, 80.0f }, { 3300, 70.0f },
+    { 3280,  60.0f }, { 3260, 50.0f }, { 3250, 40.0f }, { 3220, 30.0f },
+    { 3200,  20.0f }, { 3000, 10.0f }, { 2800,  0.0f },
+  };
+  const int n = sizeof(kTable) / sizeof(kTable[0]);
+  if (mv >= kTable[0].mv)     return kTable[0].pct;
+  if (mv <= kTable[n - 1].mv) return kTable[n - 1].pct;
+  for (int i = 0; i < n - 1; i++) {
+    if (mv <= kTable[i].mv && mv >= kTable[i + 1].mv) {
+      float frac = (float)(mv - kTable[i + 1].mv) / (float)(kTable[i].mv - kTable[i + 1].mv);
+      return kTable[i + 1].pct + frac * (kTable[i].pct - kTable[i + 1].pct);
+    }
+  }
+  return 0.0f;  // unreachable — table covers [2800, 3400] with no gaps
+}
+
+// Published once right after every successful MQTT (re)connect, from both
+// reconnectMQTT() and reconnectMQTTNonBlocking() — the bridge is the mesh's
+// rank-0 anchor and never sends a data packet through onDataRecv() for
+// itself, so this is the only place its own /status + /mesh get (re)stated.
+// Paired with the LWT registered at connect() time (spec §Telemetry: "the
+// bridge publishes its own /mesh record ... and registers an MQTT LWT").
+void publishOwnRecords() {
+  mqttPublish(bridgeStatusTopic, "online", true);
+  char topic[64];
+  snprintf(topic, sizeof(topic), "greenhouse/nodes/%s/mesh", bridgeMac);
+  mqttPublish(topic,
+              "{\"parent\":null,\"rank\":0,\"rssi\":null,\"sleepy\":false,"
+              "\"battery_mv\":null,\"zone\":null}",
+              true);
+}
+
 // One-time blocking connect, used only in setup() before the mesh starts
 // beaconing. loop() never calls this — it uses reconnectMQTTNonBlocking()
 // below instead, so a broker outage after boot doesn't stop beaconing.
@@ -76,8 +123,10 @@ void reconnectMQTT() {
     Serial.print("[mqtt] connecting... ");
     String id = "gh-bridge-";
     id += String((uint32_t)ESP.getEfuseMac(), HEX);
-    if (mqtt.connect(id.c_str(), MQTT_USER, MQTT_PASS)) {
+    if (mqtt.connect(id.c_str(), MQTT_USER, MQTT_PASS,
+                      bridgeStatusTopic, 1, true, "offline")) {
       Serial.println("OK");
+      publishOwnRecords();
     } else {
       Serial.printf("failed rc=%d, retry in 5s\n", mqtt.state());
       delay(5000);
@@ -95,8 +144,10 @@ void reconnectMQTTNonBlocking(uint32_t now) {
   Serial.print("[mqtt] connecting... ");
   String id = "gh-bridge-";
   id += String((uint32_t)ESP.getEfuseMac(), HEX);
-  if (mqtt.connect(id.c_str(), MQTT_USER, MQTT_PASS)) {
+  if (mqtt.connect(id.c_str(), MQTT_USER, MQTT_PASS,
+                    bridgeStatusTopic, 1, true, "offline")) {
     Serial.println("OK");
+    publishOwnRecords();
   } else {
     Serial.printf("failed rc=%d, retry in 5s\n", mqtt.state());
   }
@@ -133,8 +184,10 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   lastSeenMs[idx] = millis();
   nodeOnline[idx] = true;
 
-  Serial.printf("[esp-now] %s (zone=%s rank=%d ttl=%d) T=%.1f H=%.1f Soil=%.1f\n",
-                mac, zone, pkt.origin_rank, pkt.ttl,
+  Serial.printf("[esp-now] %s (zone=%s rank=%d ttl=%d battery_mv=%u sleepy=%d) "
+                "T=%.1f H=%.1f Soil=%.1f\n",
+                mac, zone, pkt.origin_rank, pkt.ttl, pkt.battery_mv,
+                (pkt.flags & MESH_FLAG_SLEEPY) ? 1 : 0,
                 pkt.payload.temperature, pkt.payload.humidity,
                 pkt.payload.soil_moisture);
 
@@ -165,6 +218,56 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
 
   snprintf(topic, sizeof(topic), "greenhouse/nodes/%s/status", mac);
   mqttPublish(topic, "online", true);
+
+  // Battery % (bridge does the mv→% mapping — spec: "single tunable place").
+  // Published only when the origin actually has a divider fitted; an
+  // unmeasured mains node sends battery_mv=0 and gets no /battery topic at
+  // all (not a zero reading, just absent — matches the simulator contract).
+  if (pkt.battery_mv > 0) {
+    snprintf(topic, sizeof(topic), "greenhouse/nodes/%s/battery", mac);
+    snprintf(payload, sizeof(payload), "%.1f", batteryPctFromMv(pkt.battery_mv));
+    mqttPublish(topic, payload, true);
+  }
+
+  // Mesh topology JSON (spec §Telemetry) — origin's own view of its uplink:
+  // parent MAC + RSSI it measured for that parent, its rank, sleepy flag,
+  // raw battery mv, and its zone. Built incrementally rather than one
+  // mega-format-string so the null/quoted-string branches stay readable.
+  {
+    static const uint8_t kZeroMac[6] = { 0, 0, 0, 0, 0, 0 };
+    bool hasParent = !meshMacEqual(pkt.parent_mac, kZeroMac);
+    char parentMac[13];
+    if (hasParent) meshFormatMac(pkt.parent_mac, parentMac);
+
+    char meshPayload[192];
+    int off = 0;
+    off += snprintf(meshPayload + off, sizeof(meshPayload) - off, "{\"parent\":");
+    if (hasParent) {
+      off += snprintf(meshPayload + off, sizeof(meshPayload) - off, "\"%s\",", parentMac);
+    } else {
+      off += snprintf(meshPayload + off, sizeof(meshPayload) - off, "null,");
+    }
+    off += snprintf(meshPayload + off, sizeof(meshPayload) - off,
+                     "\"rank\":%d,", pkt.origin_rank);
+    if (pkt.parent_rssi == -128) {
+      off += snprintf(meshPayload + off, sizeof(meshPayload) - off, "\"rssi\":null,");
+    } else {
+      off += snprintf(meshPayload + off, sizeof(meshPayload) - off,
+                       "\"rssi\":%d,", pkt.parent_rssi);
+    }
+    off += snprintf(meshPayload + off, sizeof(meshPayload) - off,
+                     "\"sleepy\":%s,", (pkt.flags & MESH_FLAG_SLEEPY) ? "true" : "false");
+    if (pkt.battery_mv == 0) {
+      off += snprintf(meshPayload + off, sizeof(meshPayload) - off, "\"battery_mv\":null,");
+    } else {
+      off += snprintf(meshPayload + off, sizeof(meshPayload) - off,
+                       "\"battery_mv\":%u,", pkt.battery_mv);
+    }
+    snprintf(meshPayload + off, sizeof(meshPayload) - off, "\"zone\":\"%s\"}", zone);
+
+    snprintf(topic, sizeof(topic), "greenhouse/nodes/%s/mesh", mac);
+    mqttPublish(topic, meshPayload, true);
+  }
 }
 
 // Publish "offline" once a node misses MESH_OFFLINE_AFTER expected reports —
@@ -177,8 +280,12 @@ void checkOfflineNodes(uint32_t now) {
   for (int i = 0; i < TRUSTED_NODE_COUNT; i++) {
     if (TRUSTED_NODES[i].zone == nullptr) continue;  // skip the bridge entry
     if (!nodeOnline[i]) continue;                    // already reported offline
-    if (now - lastSeenMs[i] >
-        (uint32_t)MESH_OFFLINE_AFTER * MESH_EXPECTED_REPORT_INTERVAL_MS) {
+    // Per-role expected cadence (spec §Bridge-side liveness): a sleepy leaf
+    // only reports once per MESH_SLEEP_INTERVAL_MS, so judging it by the
+    // always-on 5 s window would flag it offline between every wake.
+    uint32_t expectedMs = TRUSTED_NODES[i].sleepy ? MESH_SLEEP_INTERVAL_MS
+                                                   : MESH_EXPECTED_REPORT_INTERVAL_MS;
+    if (now - lastSeenMs[i] > (uint32_t)MESH_OFFLINE_AFTER * expectedMs) {
       nodeOnline[i] = false;
       char mac[13], topic[64];
       meshFormatMac(TRUSTED_NODES[i].mac, mac);
@@ -195,6 +302,19 @@ void setup() {
 
   // Print own MAC so it can be checked against TRUSTED_NODES[]
   WiFi.mode(WIFI_STA);
+
+  // Own 12-hex MAC + LWT status topic, computed right here rather than via
+  // meshSelfMac (mesh_node.h only fills that later, inside meshInit(),
+  // which itself runs after MQTT connects below) — WiFi.macAddress() is
+  // already valid as soon as the STA driver is up.
+  {
+    uint8_t ownMac[6];
+    WiFi.macAddress(ownMac);
+    meshFormatMac(ownMac, bridgeMac);
+  }
+  snprintf(bridgeStatusTopic, sizeof(bridgeStatusTopic),
+           "greenhouse/nodes/%s/status", bridgeMac);
+
   Serial.printf("\n[bridge] MAC: %s\n", WiFi.macAddress().c_str());
 
   // Connect WiFi
