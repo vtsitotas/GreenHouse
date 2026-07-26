@@ -103,11 +103,29 @@ greenhouse/actuators/<id>/set          weather.py/app → (actuator controller �
 greenhouse/actuators/<id>/state        (μόνο simulator σήμερα)
 ```
 
-### Κόμβοι (ζωντάνια/μπαταρία)
+### Κόμβοι (ζωντάνια/μπαταρία/mesh τοπολογία)
 ```
 greenhouse/nodes/<MAC-hex>/status      bridge → app, retained ("online"/"offline")
 greenhouse/nodes/<id>/battery          (μόνο simulator σήμερα — κανένα
-                                         πραγματικό firmware δεν αναφέρει μπαταρία)
+                                         πραγματικό firmware δεν αναφέρει μπαταρία
+                                         ακόμα· ο firmware publisher είναι
+                                         σχεδιασμένος αλλά όχι υλοποιημένος, δες
+                                         docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md
+                                         §Telemetry και το πλάνο
+                                         docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md)
+greenhouse/nodes/<id>/mesh             JSON, retained (μόνο simulator σήμερα —
+                                         ίδια κατάσταση με το /battery παραπάνω).
+                                         Authoritative contract:
+                                         docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md
+                                         §Telemetry. Σχήμα:
+                                         {"parent": "<12-hex MAC>|null",
+                                          "rank": <int>, "rssi": <int|null>,
+                                          "sleepy": <bool>,
+                                          "battery_mv": <int|null>,
+                                          "zone": "<string>|null",
+                                          "ts": <epoch-seconds, προαιρετικό>}
+                                         — καταναλώνεται από την οθόνη Mesh Map
+                                         της εφαρμογής (δες 13-mobile-app.md §11)
 ```
 
 ### Ιστορικό (over-MQTT path, για εκτός-LAN πρόσβαση)

@@ -249,9 +249,21 @@ untestable-without-hardware reason as the channel discovery item above.
 
 ### App feature gaps
 - [ ] Screen-by-screen UX enhancement pass for dashboard, control, devices,
-      pairing, settings — only the history screen (2026-07-08/09 sessions)
-      and the weather/rules screen (2026-07-10 rule builder) have had this
-      treatment so far.
+      pairing, settings — only the history screen (2026-07-08/09 sessions),
+      the weather/rules screen (2026-07-10 rule builder), and now the
+      devices screen (2026-07-26 Mesh Map entry point + screen, see
+      `docs/technical/13-mobile-app.md §11`) have had this treatment so far.
+- [x] Devices screen gained a live Mesh Map (hub icon in the `AppBar` →
+      `MeshMapScreen`): topology, RSSI-colored links, drag-to-pin,
+      battery/sleepy badges — app side is fully implemented and tested
+      against `pi/tools/simulator.py`'s `/mesh` topic.
+- [ ] Firmware-side `/mesh` and `/battery` publishing is still pending (only
+      the simulator publishes these topics today — see
+      `docs/technical/05-mqtt-broker.md §4`); plan:
+      `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md`. Until real
+      bridge/node firmware ships this, the Mesh Map's degraded-data banner
+      ("Mesh topology data not being published yet") will show on the real
+      fleet, not just in the simulator's absence.
 - [ ] CSV export of history data — not started.
 - [ ] Smartwatch/widget glance view — not started.
 - [ ] iOS — completely untested (Android-only device used throughout
