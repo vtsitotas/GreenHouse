@@ -79,15 +79,32 @@ class MqttConnection implements GreenhouseConnection {
   // self-signed cert — closes the MITM gap left by a blind accept-all.
   // Format must match the Pi's `openssl x509 -fingerprint -sha256`
   // output: colon-separated uppercase hex byte pairs.
-  static bool _matchesPinnedFingerprint(X509Certificate cert, String expectedFingerprint) {
-    if (expectedFingerprint.isEmpty) return false; // nothing to pin against — fail closed
+  //
+  // IMPORTANT: this fires once per cert in the chain that fails verification,
+  // and BOTH of the Pi's certs do, for different reasons:
+  //   - ca.crt   — self-signed, so never trusted by the platform store
+  //   - server.crt — CN=greenhouse.local with no SAN, so connecting by IP
+  //                  (unavoidable when mDNS is unavailable) is a hostname
+  //                  mismatch
+  // Returning false for either one aborts the handshake, so tls_fingerprint is
+  // a comma-separated list of every fingerprint we accept (CA first, then the
+  // leaf — see first_boot.sh). Pinning only the leaf, as this originally did,
+  // rejected the CA callback and silently broke every LAN connection.
+  @visibleForTesting
+  static bool matchesPinnedFingerprint(List<int> certDer, String expectedFingerprint) {
+    final expected = expectedFingerprint
+        .split(',')
+        .map((f) => f.trim().toUpperCase())
+        .where((f) => f.isNotEmpty)
+        .toSet();
+    if (expected.isEmpty) return false; // nothing to pin against — fail closed
     final actual = sha256
-        .convert(cert.der)
+        .convert(certDer)
         .bytes
         .map((b) => b.toRadixString(16).padLeft(2, '0'))
         .join(':')
         .toUpperCase();
-    return actual == expectedFingerprint.toUpperCase();
+    return expected.contains(actual);
   }
 
   Future<bool> _tryConnect(String host, String user, String pass,
@@ -99,8 +116,25 @@ class MqttConnection implements GreenhouseConnection {
     client.secure = true;
     // The Pi's cert is self-signed, so the platform trust check always calls
     // this back — the fingerprint comparison below is the only real check.
+    //
+    // The callback below MUST be typed (Object cert), not (X509Certificate
+    // cert), even though onBadCertificate's declared field type takes an
+    // X509Certificate (Dart's contravariant parameter rules allow assigning
+    // it either way). mqtt_client 10.11.11's MqttServerClient.connect()
+    // does `onBadCertificate as bool Function(Object certificate)?`
+    // internally (mqtt_server_client.dart:132) — an unsound cast that throws
+    // a runtime TypeError for any real X509Certificate-typed closure, before
+    // any certificate is even inspected. Every secure connection has failed
+    // on this line since TLS pinning was added (PR #12), and the exception
+    // was silently swallowed by _tryConnect's catch below, always presenting
+    // as a generic "Could not connect" — regardless of how correct the
+    // entered host/password/fingerprint were. Typing this closure's
+    // parameter as Object makes its runtime type match what that internal
+    // cast expects, side-stepping the bug entirely. Verified end-to-end
+    // against the real Pi: without this, connect() throws immediately on
+    // the cast; with it, TLS completes and CONNACK comes back accepted.
     client.onBadCertificate =
-        (X509Certificate cert) => _matchesPinnedFingerprint(cert, config.tlsFingerprint);
+        (Object cert) => matchesPinnedFingerprint((cert as X509Certificate).der, config.tlsFingerprint);
     client.logging(on: false);
     client.keepAlivePeriod = 30;
     client.connectTimeoutPeriod = 5000;

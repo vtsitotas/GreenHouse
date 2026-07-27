@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
+import 'package:greenhouse_app/services/multicast_lock.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 
 class PairingScreen extends ConsumerStatefulWidget {
@@ -148,8 +149,11 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       if (await _applyPair(res, base)) return;
     } catch (_) {}
 
-    // Fall back to mDNS service discovery (reliable on Android)
+    // Fall back to mDNS service discovery (reliable on Android — as long as
+    // the multicast lock below is held; Android may otherwise silently
+    // filter out incoming mDNS packets to save power, see MainActivity.kt).
     try {
+      await MulticastLock.acquire();
       String? ip;
       final client = MDnsClient();
       await client.start();
@@ -173,7 +177,10 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
             .timeout(const Duration(seconds: 5));
         if (await _applyPair(res, base)) return;
       }
-    } catch (_) {}
+    } catch (_) {
+    } finally {
+      await MulticastLock.release();
+    }
 
     setState(() {
       _error = 'Greenhouse not found. Make sure you are on the same WiFi.';

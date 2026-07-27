@@ -9,6 +9,7 @@
 // ═══════════════════════════════════════════════════════════════════════════
 #include <WiFi.h>
 #include <WebServer.h>
+#include <uri/UriBraces.h>
 #include <HTTPClient.h>
 #include <esp_camera.h>
 #include <SD_MMC.h>
@@ -21,7 +22,9 @@
 #include <secrets.h>
 
 // ── Pi cam_bridge endpoint ────────────────────────────────────────────────
-#define PI_HOST "greenhouse.local"
+// Plain HTTPClient can't resolve .local mDNS names reliably on this core --
+// use the Pi's current LAN IP directly. Update this if the Pi's IP changes.
+#define PI_HOST "10.19.153.202"
 #define PI_PORT 8090
 
 // ── AI-Thinker ESP32-CAM pin map (standard, from Espressif's camera examples) ─
