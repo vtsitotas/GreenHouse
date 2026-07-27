@@ -7,6 +7,13 @@ CONFIG_DIR="/etc/greenhouse"
 CONFIG="$CONFIG_DIR/device.json"
 PASSWD_FILE="/etc/mosquitto/passwd"
 CERT="/etc/mosquitto/certs/server.crt"
+# Pin against the CA, not the leaf: Dart/BoringSSL hands onBadCertificate the
+# cert that failed verification, which for this self-signed chain is the root
+# CA -- never the leaf. Publishing the leaf's fingerprint here made the app's
+# pin check compare two different certs, so it could never match and every LAN
+# connection failed closed. Pinning the CA is also stable across server-cert
+# renewal. See app/lib/connection/mqtt_connection.dart.
+CA_CERT="/etc/mosquitto/certs/ca.crt"
 
 [ -f "$SENTINEL" ] && exit 0
 
@@ -25,9 +32,14 @@ PASSWORD=$(openssl rand -base64 21 | tr -d '/+=\n' | head -c 20)
 # when flashing bridge_esp32.
 BRIDGE_PASSWORD=$(openssl rand -base64 21 | tr -d '/+=\n' | head -c 20)
 
-# TLS fingerprint (empty string if cert not yet deployed)
-FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "$CERT" 2>/dev/null \
+# Comma-separated list of every cert fingerprint the app should accept, CA
+# first then the leaf (empty string if certs not yet deployed). Both are needed
+# -- see the CA_CERT note above.
+CA_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "$CA_CERT" 2>/dev/null \
   | cut -d= -f2 || echo "")
+LEAF_FINGERPRINT=$(openssl x509 -fingerprint -sha256 -noout -in "$CERT" 2>/dev/null \
+  | cut -d= -f2 || echo "")
+FINGERPRINT=$(printf '%s,%s' "$CA_FINGERPRINT" "$LEAF_FINGERPRINT" | sed 's/^,//; s/,$//')
 
 # 6-digit numeric PIN: proof-of-possession for POST /pair/confirm (read off
 # the unit's physical label, see docs/superpowers/specs/
