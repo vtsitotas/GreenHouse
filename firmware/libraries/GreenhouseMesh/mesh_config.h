@@ -37,6 +37,17 @@
                                                 // router channel (router may have
                                                 // moved channels)
 
+// ── Fixed channel (UART-bridge / no-router deployments) ───────────────────────
+// The default deployment scans for a home router's SSID purely to agree on a
+// channel — no node ever actually joins that WiFi. In a deployment with no
+// router at all (bridge wired directly to the Pi over UART instead of WiFi,
+// see docs/superpowers/specs/2026-07-20-uart-bridge-design.md), there's
+// nothing to scan for, so every node — bridge included — locks to this
+// constant instead. Change it if 2.4GHz channel 1 is noisy on site; every
+// node in the fleet must be reflashed together if it does (same one-shot
+// reflash requirement as any other mesh_config.h change).
+#define MESH_FIXED_CHANNEL  1
+
 // ── Deep sleep (Phase 1: leaf sleep — spec 2026-07-26-mesh-deep-sleep) ────────
 #define MESH_FLAG_SLEEPY          0x01      // beacon/data flags bit: sender is a
                                             // battery node — NEVER adopt as parent

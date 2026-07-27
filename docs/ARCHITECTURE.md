@@ -19,10 +19,11 @@
   Ο listener WebSocket στη θύρα 9001 **αφαιρέθηκε εντελώς** (2026-07-20) —
   ποτέ δεν τον χρησιμοποίησε κανένα client (δοκιμάστηκε αρχικά, βρέθηκε bug
   του `mqtt_client` 10.x με Mosquitto 2.x, εγκαταλείφθηκε).
-- Η γέφυρα (gateway) είναι **ασύρματη** (ESP-NOW → WiFi/MQTT). Η σύνδεση USB
-  serial στο Pi ήταν παλιό σχέδιο και δεν υπάρχει σήμερα (υπάρχει πλέον ως
-  νέο, εναλλακτικό **design spec** για μελλοντική υλοποίηση — δες
-  `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`).
+- Η γέφυρα (gateway) πλέον συνδέεται στο Pi **ενσύρματα, μέσω UART GPIO
+  pins** (ESP-NOW προς αισθητήρες, JSON-over-UART προς το Pi) — **όχι**
+  πια WiFi/MQTT/TLS. Δες `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`
+  και `docs/technical/04-bridge-gateway.md`. Η παλιά WiFi/MQTT υλοποίηση
+  παραμένει μόνο στο git history.
 - Οι κόμβοι αισθητήρων μπορούν να μιλούν **είτε απευθείας στη γέφυρα είτε
   μέσω άλλων κόμβων ως relay** (dynamic multi-hop mesh, όχι πια απλά
   single-hop) — δες `docs/MESH_RELAY_EXPLAINED.md`.
@@ -62,32 +63,34 @@ layers: `docs/technical/02-esp-now-protocol.md`. Ο αλγόριθμος επι�
 
 ---
 
-### 1.2 Γέφυρα → Pi — MQTT ingest (πρωτόκολλα & θύρες)
+### 1.2 Γέφυρα → Pi — UART ingest (πρωτόκολλα & pins)
 
 ```mermaid
 flowchart LR
     classDef hw fill:#e1f5fe,stroke:#0288d1,stroke-width:2px;
     classDef sw fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
-    Bridge["Γέφυρα ESP32<br/>WiFi STA client"]:::hw
-    Broker["Mosquitto :8883<br/>(όλα τα interfaces)"]:::sw
+    Bridge["Γέφυρα ESP32-C3<br/>rank 0"]:::hw
+    Serial["pi/scripts/serial_bridge.py<br/>/dev/serial0"]:::sw
+    Broker["Mosquitto :1883<br/>127.0.0.1"]:::sw
 
-    Bridge -->|"1. WiFi 802.11 WPA2<br/>(σπιτικό router)"| Bridge
-    Bridge ==>|"2. TCP :8883<br/>3. TLS 1.2 (setInsecure — χωρίς επικύρωση cert)<br/>4. MQTT 3.1.1 (user 'app' + password)<br/>5. publish retain=true, QoS 0"| Broker
+    Bridge ==>|"1. UART GPIO4/5 ↔ Pi GPIO14/15<br/>115200 8N1, 3.3V, καμία μετατροπή τάσης<br/>2. newline-delimited JSON γραμμές"| Serial
+    Serial ==>|"3. MQTT 3.1.1 (loopback, χωρίς TLS)<br/>4. publish retain=true"| Broker
 ```
 
-**Στοίβα πρωτοκόλλων, από κάτω προς τα πάνω:**
-1. Η γέφυρα συνδέεται σαν κανονικός WiFi client στο σπιτικό router (802.11,
-   WPA2) — μοναδικό σημείο όπου η γέφυρα μπαίνει σε "κανονικό" δίκτυο.
-2. TCP σύνδεση στη θύρα **8883** του Pi (`greenhouse.local` μέσω mDNS).
-3. TLS 1.2 handshake πάνω από αυτό το TCP socket — **αλλά** η γέφυρα κάνει
-   `setInsecure()`: κρυπτογραφεί το κανάλι, δεν επικυρώνει όμως το
-   πιστοποιητικό του server (βλ. `docs/technical/10-security.md §3`).
-4. Μέσα στο κρυπτογραφημένο κανάλι, MQTT 3.1.1 framing — αυθεντικοποίηση με
-   username/password (`app` / μοναδικό ανά μονάδα).
-5. Δημοσίευση μετρήσεων σε topics `greenhouse/<zone>/air/temperature` κλπ.,
-   πάντα με `retain=true` ώστε η εφαρμογή να βλέπει αμέσως την τελευταία
-   τιμή σε reconnect. Πλήρης ανάλυση: `docs/technical/04-bridge-gateway.md`.
+**Στοίβα, από κάτω προς τα πάνω:**
+1. Φυσικό σύρμα, καμία ραδιοζεύξη σε αυτό το hop — 3 σύρματα (TX/RX/GND),
+   και τα δύο άκρα 3.3V λογική, καμία IP διεύθυνση, καμία θύρα TCP/UDP.
+2. Η γέφυρα γράφει ένα JSON object ανά γραμμή (`{"type":"reading",...}`
+   κλπ., δες `04-bridge-gateway.md §3`) — καμία σύνδεση/handshake στο
+   επίπεδο αυτό, μόνο ένα-κατεύθυνσης serial stream.
+3. Το `serial_bridge.py` (νέα υπηρεσία στο Pi) διαβάζει `/dev/serial0`,
+   παρσάρει κάθε γραμμή, και είναι ο **μοναδικός** MQTT client πλέον —
+   συνδέεται στον τοπικό Mosquitto (loopback, χωρίς TLS — ήδη μέσα στο
+   ίδιο μηχάνημα).
+4. Δημοσίευση στα ίδια topics με πριν (`greenhouse/<zone>/air/temperature`
+   κλπ., συν `/battery` και `/mesh`), πάντα με `retain=true`. Πλήρης
+   ανάλυση: `docs/technical/04-bridge-gateway.md`.
 
 ---
 
@@ -97,11 +100,13 @@ flowchart LR
 flowchart LR
     classDef sw fill:#f3e5f5,stroke:#7b1fa2,stroke-width:2px;
 
+    SerialBridge["greenhouse-serial-bridge<br/>UART ← γέφυρα (§1.2)"]:::sw
     Broker["Mosquitto :1883<br/>127.0.0.1 μόνο, χωρίς auth"]:::sw
     Weather["greenhouse-weather<br/>Open-Meteo, κανόνες αυτοματισμού"]:::sw
     RecEntry["greenhouse-recorder<br/>(buffer εισόδου — §1.4)"]:::sw
     CamBridge["greenhouse-cam-bridge<br/>motion detection, live relay"]:::sw
 
+    SerialBridge -->|"publish: greenhouse/+/air/+ κλπ,<br/>nodes/+/status|battery|mesh"| Broker
     Broker <-->|"MQTT plaintext, loopback<br/>(αδύνατο να φτάσει έξω)"| Weather
     Broker -->|"subscribe: greenhouse/+/air/+ κλπ"| RecEntry
     Broker <-->|"subscribe: cam/event/*, cam/live/*"| CamBridge

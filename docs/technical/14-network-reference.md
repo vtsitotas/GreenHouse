@@ -8,14 +8,14 @@
 | # | Ζεύξη | Θύρα | L1/L2 | L3/L4 | L5-7 (πρωτόκολλο) | Κρυπτογράφηση | Λεπτομέρεια |
 |---|---|---|---|---|---|---|---|
 | 1 | Αισθητήρας → Γέφυρα | — (radio, όχι TCP/IP θύρα) | 802.11 PHY, ESP-NOW (Action Frames) | καμία (L2-only) | Custom `MeshBeacon`/`MeshDataPacket` | AES-128-CTR (data), plaintext (beacons) | `02`, `03` |
-| 2 | Γέφυρα → Mosquitto (τοπικό) | TCP/8883 | 802.11 WiFi STA (WPA2, σπιτικό router) | TCP | MQTT 3.1.1 πάνω από TLS | TLS 1.2, `setInsecure()` (χωρίς επικύρωση) | `04`, `10 §3` |
+| 2 | Γέφυρα → `serial_bridge.py` (Pi) | — (καλώδιο, όχι TCP/IP θύρα) | UART GPIO, καλωδιακό (3.3V logic, 115200 8N1) | καμία (L1-only σειριακή γραμμή) | Custom JSON γραμμές (newline-delimited) | Καμία (φυσικό σύρμα, τοπικό — δες `10`) | `04` |
 | 3 | Εφαρμογή → Mosquitto (LAN) | TCP/8883 | WiFi (τοπικό δίκτυο) | TCP | MQTT πάνω από TLS | TLS, `onBadCertificate=true` (χωρίς επικύρωση) | `13 §5`, `10 §4` |
 | 4 | Mosquitto → HiveMQ Cloud | TCP/8883 | Ethernet/WiFi → Internet | TCP | MQTT πάνω από TLS 1.2 | Πλήρης TLS επικύρωση (δημόσιο CA store) | `08`, `10 §5` |
 | 5 | Εφαρμογή → HiveMQ Cloud (remote) | TCP/8883 | Κινητό δίκτυο/WiFi → Internet | TCP | MQTT πάνω από TLS | `onBadCertificate=true` (ίδιο με #3) | `13 §5` |
 | 6 | Εφαρμογή → Portal (LAN μόνο) | TCP/80 | WiFi (τοπικό) | TCP | HTTP/1.1 (Flask) | **Καμία** (plaintext HTTP) | `09` |
 | 7 | Κάμερα → cam_bridge.py | TCP/8090 | WiFi (τοπικό) | TCP | HTTP/1.1 (Flask) | **Καμία** | `12 §2, §7` |
 | 8 | cam_bridge.py → Κάμερα (poll/delete) | TCP/80 (στην κάμερα) | WiFi (τοπικό) | TCP | HTTP/1.1 | **Καμία** | `12 §7` |
-| 9 | Internal loopback (weather/recorder/simulator → Mosquitto) | TCP/1883 | loopback interface | TCP | MQTT plaintext, anonymous | Καμία (network-isolated, `127.0.0.1` bind) | `05 §2` |
+| 9 | Internal loopback (weather/recorder/simulator/`serial_bridge.py` → Mosquitto) | TCP/1883 | loopback interface | TCP | MQTT plaintext, anonymous | Καμία (network-isolated, `127.0.0.1` bind) | `05 §2`, `04` |
 | 10 | Πρώτη εγκατάσταση: Κινητό → Pi AP | — | 802.11 (ανοιχτό δίκτυο, χωρίς WPA) | TCP | HTTP (captive portal) | **Καμία** | `09 §2-4` |
 | 11 | weather.py → Open-Meteo | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`urllib.request`) | TLS (δημόσιο API, standard library validation) | `11 §1` |
 | 12 | push.py → Firebase Cloud Messaging | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`firebase_admin` SDK) | TLS | `13 §10` |
@@ -33,15 +33,15 @@
 | Θύρα | Υπηρεσία | Ποιος συνδέεται |
 |---|---|---|
 | 80 | `greenhouse-portal` (Flask) | Κινητό, μόνο LAN/AP |
-| 1883 | Mosquitto, loopback plaintext | `weather.py`, `recorder.py`, `cam_bridge.py`, `simulator.py` — όλα τοπικά |
-| 8883 | Mosquitto, TLS | Γέφυρα ESP32, Εφαρμογή (LAN) |
+| 1883 | Mosquitto, loopback plaintext | `weather.py`, `recorder.py`, `cam_bridge.py`, `simulator.py`, `serial_bridge.py` — όλα τοπικά |
+| 8883 | Mosquitto, TLS | Εφαρμογή (LAN) — **όχι** πια η γέφυρα, δες σημείωση παρακάτω |
 | 8090 | `greenhouse-cam-bridge` (Flask) | ESP32-CAM (POST snapshots) |
 | 22 | SSH (OpenSSH, εκτός εμβέλειας project code) | Διαχείριση/deploy |
 
 ### ESP32 συσκευές
 | Συσκευή | Θύρες server | Client προς |
 |---|---|---|
-| Bridge | Καμία (καθαρά client) | Mosquitto :8883 (MQTT client) |
+| Bridge | Καμία (καθαρά client, ούτε καν TCP/IP client) | Κανένα δίκτυο — μόνο UART GPIO προς `serial_bridge.py` στο Pi |
 | Edge nodes (C3/WROOM) | Καμία (ESP-NOW μόνο, χωρίς IP stack χρήσης) | — |
 | ESP32-CAM | 80 (WebServer: `/capture`, `/stream`, `/event/<id>`) | `greenhouse.local:8090` (POST snapshots) |
 
@@ -57,15 +57,17 @@
 | Υποσύστημα | L1 Physical | L2 Data Link | L3 Network | L4 Transport | L5-7 Application |
 |---|---|---|---|---|---|
 | Mesh αισθητήρων | 2.4GHz ISM, 802.11 PHY | ESP-NOW (Action Frames, MAC addressing) | **Ανύπαρκτο** (custom rank routing στο app layer) | **Ανύπαρκτο** (single ACK, καμία retransmission) | Custom `MeshBeacon`/`MeshDataPacket` structs |
-| Γέφυρα↔Router↔Pi | 2.4GHz 802.11 b/g/n | 802.11 (association, WPA2) | IPv4 | TCP | MQTT 3.1.1 + TLS 1.2 |
+| Γέφυρα↔Pi (UART) | Καλώδιο, 3.3V logic | Ανύπαρκτο (raw serial, καμία framing πέρα από newline) | Ανύπαρκτο | Ανύπαρκτο | Custom JSON γραμμές |
 | Pi↔HiveMQ | Ethernet/WiFi (physical uplink) | Ethernet/802.11 | IPv4/IPv6 (Internet routing) | TCP | MQTT + TLS 1.2 (πλήρης επικύρωση) |
 | Κινητό↔Pi (HTTP) | 802.11 | 802.11 | IPv4 | TCP | HTTP/1.1, Flask/Jinja2 |
 | Κινητό↔Cloud | Κινητό δίκτυο/WiFi | LTE/5G ή 802.11 | IPv4/IPv6 | TCP | MQTT/HTTPS |
 
 Σημειώσεις:
-- Το mesh layer (αισθητήρες) είναι το **μοναδικό** σημείο του συστήματος
-  όπου δεν υπάρχει καθόλου IP στοίβα — καθαρό L2 πρωτόκολλο. Όλα τα
-  υπόλοιπα (γέφυρα προς τα πάνω, Pi, εφαρμογή, cloud) είναι κλασικό
+- Δύο σημεία του συστήματος δεν έχουν καθόλου IP στοίβα: το mesh layer
+  (αισθητήρες↔γέφυρα, καθαρό L2 ESP-NOW) **και τώρα** η ζεύξη γέφυρα↔Pi
+  (καλωδιακό UART, δεν είναι καν radio — raw σειριακή γραμμή, ούτε L2
+  framing πέρα από newline-delimited JSON). Ό,τι είναι πέρα από το
+  `serial_bridge.py` στο Pi (Mosquitto, εφαρμογή, cloud) παραμένει κλασικό
   TCP/IP.
 - Δεν υπάρχει UDP οπουδήποτε στη ροή δεδομένων αισθητήρα→εφαρμογή· το
   μόνο UDP στο σύστημα είναι υποδομής (mDNS ανακάλυψη, DHCP/DNS στο setup

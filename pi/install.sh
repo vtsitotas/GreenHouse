@@ -24,6 +24,7 @@ apt-get install -y -qq \
   python3-paho-mqtt \
   python3-pil \
   python3-pip \
+  python3-serial \
   openssl \
   dnsmasq-base \
   iptables \
@@ -139,6 +140,7 @@ cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-hivemq-bridge.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-cam-bridge.service     /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-serial-bridge.service  /etc/systemd/system/
 # demo-only, disabled by default -- enable manually with
 # `sudo systemctl enable --now greenhouse-simulator` only on units with no
 # real sensors attached (see pi/tools/simulator.py)
@@ -158,7 +160,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge greenhouse-cam-bridge >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge greenhouse-cam-bridge greenhouse-serial-bridge >/dev/null 2>&1
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.
@@ -240,7 +242,28 @@ systemctl restart greenhouse-portal
 systemctl restart greenhouse-weather
 systemctl restart greenhouse-recorder
 systemctl restart greenhouse-hivemq-bridge
+# greenhouse-serial-bridge is deliberately NOT restarted here (same as
+# greenhouse-cam-bridge above) -- it's enabled for next boot only. Until the
+# one-time raspi-config step below has run and the Pi has rebooted,
+# /dev/serial0 is still the login console, so starting it now would just
+# restart-loop against a port it can't use yet.
 
+echo ""
+echo "════════════════════════════════════════════════════════════════════════"
+echo "  MANUAL STEP REQUIRED (not automated by this script):"
+echo "  greenhouse-serial-bridge talks to the bridge_esp32 over the Pi's"
+echo "  primary UART (/dev/serial0), which Raspberry Pi OS wires to the login"
+echo "  console by default. Free it up:"
+echo "    sudo raspi-config"
+echo "      Interface Options -> Serial Port"
+echo "        'login shell over serial'      -> No"
+echo "        'serial port hardware enabled' -> Yes"
+echo "    then reboot."
+echo "  This is a manual step on purpose: it edits boot config, and getting it"
+echo "  wrong can lock out serial-console access on a unit someone already"
+echo "  depends on -- not something this script should risk doing unattended."
+echo "  See INSTRUCTIONS.md for the wiring diagram and full steps."
+echo "════════════════════════════════════════════════════════════════════════"
 echo ""
 echo "==> Done. Verify with:  sudo bash $REPO/scripts/selftest.sh"
 echo "    When happy, prep for cloning:  sudo bash $REPO/scripts/prep_image.sh"
