@@ -1,7 +1,17 @@
 # UART-Wired Bridge (replace WiFi bridge uplink) — Design Spec
 
 **Date:** 2026-07-20
-**Status:** Proposed — needs approval before implementation planning
+**Status:** Approved and implemented (2026-07-27) — see
+`docs/superpowers/plans/2026-07-20-uart-bridge.md` for the as-built plan.
+Two corrections made during implementation, not reflected in this spec's
+body below (kept as-written for historical record): `Serial2` doesn't
+exist on the ESP32-C3 (only two hardware UARTs) — the real firmware uses
+`Serial1` on GPIO4 (TX) / GPIO5 (RX); and the JSON protocol carries three
+more message types (`battery`, `mesh`, `heartbeat`) beyond the
+`reading`/`status` pair sketched here, since this spec predates the mesh
+deep-sleep telemetry work (`2026-07-26-mesh-deep-sleep-design.md`) that the
+bridge now also has to carry over this link. Never bench-tested on real
+hardware — same caveat as every other firmware slice in this repo.
 
 ## Background
 
