@@ -162,12 +162,26 @@ directly compatible, **no level shifter needed**:
 | GPIO4 (TX) | Physical pin 10 = GPIO15 (RXD) | ESP32 → Pi |
 | GPIO5 (RX) | Physical pin 8 = GPIO14 (TXD) | Pi → ESP32 |
 | GND | Any GND pin | common ground |
+| 5V | Physical pin 2 or 4 (5V) | **power — see below** |
 
 ```
 ESP32 (bridge)  GPIO4 (TX)  ──────────────►  Pi pin 10 / GPIO15 (RXD)
 ESP32 (bridge)  GPIO5 (RX)  ◄──────────────  Pi pin  8 / GPIO14 (TXD)
 ESP32 (bridge)  GND         ───────────────  Pi GND
+ESP32 (bridge)  5V          ◄──────────────  Pi pin 2 or 4 (5V)
 ```
+
+**The ESP32 needs its own power — the three data/ground wires don't provide
+any.** If the board's power LED is dark, it isn't running at all and nothing
+will ever appear on the UART, no matter how the Pi is configured. Either:
+- run a **USB cable** to the bridge (simplest during bench work — it also
+  gives you the serial monitor for the boot log), or
+- wire the ESP32's **5V pin** to Pi header pin 2 or 4 as above (its onboard
+  regulator drops it to 3.3V). Don't feed 5V into the 3V3 pin, which bypasses
+  that regulator.
+
+Only one power source at a time: if the board is powered over USB, leave the
+5V header wire disconnected.
 
 115200 baud, 8N1. On the Pi side this is `/dev/serial0`.
 
