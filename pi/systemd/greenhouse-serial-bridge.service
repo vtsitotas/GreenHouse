@@ -1,0 +1,32 @@
+[Unit]
+Description=Greenhouse Serial Bridge (UART link to bridge_esp32, replaces the WiFi/MQTT/TLS uplink)
+After=network.target mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/serial_bridge.py
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+NoNewPrivileges=yes
+ProtectSystem=strict
+ProtectHome=read-only
+
+# No ReadWritePaths= entry: this service only reads/writes the /dev/serial0
+# device node and talks to Mosquitto on loopback, it doesn't touch the
+# filesystem beyond that. Device-node access is governed by Unix group
+# membership, not by ProtectSystem=strict's filesystem allowlist -- as long
+# as `pi` is in the `dialout` group (the default on Raspberry Pi OS; nothing
+# install.sh needs to set up), the kernel already grants this access.
+#
+# /dev/serial0 only carries real data once the one-time `raspi-config`
+# Serial Port step has freed it from the login console -- see INSTRUCTIONS.md.
+
+[Install]
+WantedBy=multi-user.target

@@ -2,94 +2,103 @@
 
 Ο κόμβος-γέφυρα (`firmware/bridge_esp32/bridge_esp32.ino`) είναι ο μοναδικός
 κόμβος που μιλάει **δύο** πρωτόκολλα ταυτόχρονα: ESP-NOW προς τους
-αισθητήρες, και WiFi+MQTT+TLS προς το Raspberry Pi. Τροφοδοτείται από ρεύμα
-(όχι μπαταρία), γι' αυτό δεν κάνει καμία εξοικονόμηση ενέργειας.
+αισθητήρες, και ένα σύρμα UART προς το Raspberry Pi. Τροφοδοτείται από
+ρεύμα (όχι μπαταρία), γι' αυτό δεν κάνει καμία εξοικονόμηση ενέργειας.
+
+> **Update:** η γέφυρα δεν χρησιμοποιεί πλέον WiFi/MQTT/TLS καθόλου — δες
+> §2 παρακάτω. Πηγή αλήθειας: `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`.
+> Η παλιά WiFi/MQTT υλοποίηση παραμένει μόνο στο git history (πριν την
+> commit `25e8f0f`), όχι στο τρέχον firmware.
 
 ## 1. Ρόλος στο mesh — rank 0 άγκυρα
 
 Όπως αναλύεται στο `03-mesh-routing.md`, η γέφυρα δεν επιλέγει ποτέ γονέα —
 είναι πάντα `rank = 0`, το σταθερό σημείο αναφοράς όλου του δικτύου. Στέλνει
 το δικό της beacon σε **σταθερό** interval 2000ms χωρίς trickle backoff
-(`MESH_BRIDGE_BEACON_INTERVAL_MS`, `bridge_esp32.ino:200-205`) — δεν υπάρχει
-λόγος οικονομίας αφού τροφοδοτείται μόνιμα.
+(`MESH_BRIDGE_BEACON_INTERVAL_MS`) — δεν υπάρχει λόγος οικονομίας αφού
+τροφοδοτείται μόνιμα. Το ίδιο interval τροφοδοτεί και το heartbeat της §2.
 
-## 2. WiFi STA — σύνδεση στο σπιτικό router
+## 2. UART link προς το Pi — αντικατέστησε εντελώς το WiFi/MQTT/TLS
+
+Η γέφυρα γράφει μία γραμμή JSON ανά γεγονός στο `Serial1` (**όχι** `Serial2`
+— το ESP32-C3 έχει μόνο δύο hardware UART controllers, `Serial`
+[USB-CDC, χρησιμοποιείται μόνο για debug logs] και `Serial1`):
 
 ```c
-WiFi.begin(WIFI_SSID, WIFI_PASSWORD);
-while (WiFi.status() != WL_CONNECTED) { delay(500); ... }
+Serial1.begin(115200, SERIAL_8N1, /*RX=*/5, /*TX=*/4);
 ```
-(`bridge_esp32.ino:160-163`) — **blocking** σύνδεση, αλλά μόνο στο `setup()`,
-όχι στο `loop()`. Αν το WiFi κοπεί μετά την εκκίνηση, δεν υπάρχει ρητή
-επανασύνδεση σε αυτόν τον κώδικα — η βιβλιοθήκη `WiFi.h` του Arduino-ESP32
-core χειρίζεται εσωτερικά κάποιο reconnect, αλλά δεν υπάρχει δικιά μας
-non-blocking retry λογική για το ίδιο το WiFi layer (σε αντίθεση με το MQTT
-layer από πάνω, βλ. §4). SSID/password είναι hardcoded plaintext strings στο
-firmware (`#define WIFI_SSID`/`WIFI_PASSWORD`, γραμμές 10-11) — καμία
-μηχανή προαιρετικής ρύθμισης μέσω portal για τη γέφυρα (σε αντίθεση με το Pi,
-που έχει captive portal — βλ. `09-setup-portal.md`).
 
-## 3. MQTT Client — PubSubClient πάνω από TLS
+**Καλωδίωση** (και οι δύο πλευρές 3.3V λογική — καμία μετατροπή τάσης):
 
-- **Βιβλιοθήκη:** `PubSubClient` (Nick O'Leary) πάνω από `WiFiClientSecure`.
-- **Θύρα/host:** `greenhouse.local:8883` (mDNS resolve στο Pi, βλ.
-  `09-setup-portal.md` §Avahi), TLS listener του Mosquitto.
-- **Πιστοποιητικό:** `net.setInsecure()` (`bridge_esp32.ino:166`) —
-  **δεν γίνεται καμία επικύρωση πιστοποιητικού** από τη γέφυρα. Η γέφυρα
-  εμπιστεύεται οποιονδήποτε server απαντήσει στο TLS handshake σε αυτό το
-  host/port, βασιζόμενη αποκλειστικά στο ότι βρίσκεται στο ίδιο LAN + σωστό
-  username/password. Αυτό είναι ρητή τεχνική επιλογή για self-signed
-  πιστοποιητικά σε τοπικό δίκτυο (δες πλήρη ανάλυση trade-off στο
-  `10-security.md`), όχι παράλειψη.
-- **Buffer size:** `mqtt.setBufferSize(512)` (γραμμή 168) — το default του
-  `PubSubClient` είναι μόλις 256 bytes, ανεπαρκές αν το topic string +
-  payload ξεπεράσουν αυτό το όριο· μεγαλώθηκε προληπτικά.
-- **Client ID:** `"gh-bridge-" + hex(ESP.getEfuseMac())` (γραμμή 45-46) —
-  μοναδικό ανά φυσική συσκευή (βασισμένο στο eFuse MAC, μόνιμα καμένο στο
-  silicon), ώστε ο broker να μην αποσυνδέσει τη γέφυρα λόγω duplicate
-  client ID αν ποτέ τρέξουν δύο instances.
-- **Credentials:** χρήστης `"bridge"` — ξεχωριστός λογαριασμός από την
-  εφαρμογή του κινητού (`MQTT_USER`/`MQTT_PASS` έρχονται πλέον από
-  `firmware/libraries/GreenhouseSecrets/secrets.h`, gitignored — δες
-  IMPROVEMENTS.md findings A1/A3). Ο λογαριασμός `bridge` είναι **publish-
-  only** σε sensor/node-status topics μέσω `pi/mosquitto/acl` — μια
-  παραβιασμένη γέφυρα δεν μπορεί να στείλει εντολές σε actuators ή να
-  διαβάσει τίποτα (δες `10-security.md §6`).
+```
+ESP32-C3 GPIO4 (TX) ──────────► Pi physical pin 10 = GPIO15 (RXD)
+ESP32-C3 GPIO5 (RX) ◄────────── Pi physical pin  8 = GPIO14 (TXD)
+ESP32-C3 GND         ─────────── Pi GND (οποιοδήποτε GND pin)
+```
 
-## 4. Non-blocking MQTT reconnect — κρίσιμη αρχιτεκτονική απόφαση
+Αποφυγή GPIO2/8/9 (C3 SuperMini boot-strapping pins / onboard LED). Στο Pi,
+το `/dev/serial0` πρέπει πρώτα να ελευθερωθεί από το login console
+(`sudo raspi-config` → Interface Options → Serial Port → όχι login shell,
+ναι hardware enabled → reboot) — εφάπαξ χειροκίνητο βήμα OS, τεκμηριωμένο
+στο `INSTRUCTIONS.md`, όχι κάτι που κάνει αυτόματα το `install.sh` (ρίσκο
+να "κλειδώσει" κάποιον έξω από serial console σε μονάδα που το χρειάζεται).
 
-Υπάρχουν **δύο** ξεχωριστές συναρτήσεις reconnect, σκόπιμα:
+**Γιατί:** αφαιρεί την εξάρτηση από σπιτικό router, ολόκληρο τον TLS/MQTT
+client stack από το ESP32, και τα credentials WiFi/MQTT που ήταν πριν
+hardcoded στο firmware (`IMPROVEMENTS.md §Α1`). Κατάλληλο μόνο όταν γέφυρα
+και Pi είναι φυσικά κοντά (καλωδιακή απόσταση) — δες το design spec's
+Non-goals για τα όρια αυτής της απόφασης.
 
-- `reconnectMQTT()` (γραμμές 42-54) — **blocking** `while` loop με
-  `delay(5000)` μεταξύ προσπαθειών. Καλείται **μόνο μία φορά**, μέσα στο
-  `setup()`, πριν αρχίσει καν το mesh να κάνει beacon.
-- `reconnectMQTTNonBlocking()` (γραμμές 59-71) — καλείται σε **κάθε**
-  iteration του `loop()`. Ελέγχει αν έχουν περάσει 5000ms από την τελευταία
-  προσπάθεια πριν ξαναδοκιμάσει, **χωρίς ποτέ να μπλοκάρει**.
+## 3. Πρωτόκολλο — newline-delimited JSON, ένα object ανά γραμμή
 
-**Γιατί έχει σημασία:** η γέφυρα είναι η άγκυρα rank-0 όλου του mesh. Αν το
-`loop()` μπλόκαρε σε ένα blocking `while` περιμένοντας τον MQTT broker να
-επιστρέψει (π.χ. κατά τη διάρκεια ενός restart του Mosquitto ή προσωρινού
-δικτυακού προβλήματος), θα σταματούσε να στέλνει το δικό της beacon για όλη
-τη διάρκεια της διακοπής — και ολόκληρο το mesh θα κατέρρεε ασύγχρονα
-(όλοι οι rank-1 κόμβοι θα έχαναν τον γονέα τους, μετά οι rank-2, κ.ο.κ.),
-ακόμα κι αν το radio πρόβλημα ήταν αποκλειστικά στο MQTT/Pi σκέλος. Το
-`loop()` καλεί πάντα `meshSendBeaconNow()` ανεξάρτητα από την κατάσταση
-MQTT (`bridge_esp32.ino:191-208`).
+Καμία binary encoding· ίδια φιλοσοφία με κάθε άλλο payload σε αυτό το
+project (πάντα human-readable strings/JSON, ποτέ packed binary). Έξι τύποι
+γραμμών:
+
+```json
+{"type":"heartbeat","mac":"206EF16C6B50"}
+{"type":"reading","zone":"zone1","group":"air","metric":"temperature","value":23.4}
+{"type":"status","mac":"206EF16CA1B0","status":"online"}
+{"type":"battery","mac":"206EF16CA1B0","pct":76.0}
+{"type":"mesh","mac":"206EF16CA1B0","parent":"206EF16C6B50","rank":1,"rssi":-55,"sleepy":true,"battery_mv":3312,"zone":"zone1"}
+```
+
+Το Pi-side `pi/scripts/serial_bridge.py` διαβάζει αυτές τις γραμμές από
+`/dev/serial0` και τις ξαναδημοσιεύει στον τοπικό loopback Mosquitto —
+**ίδια topics/payloads/retain συμπεριφορά** με πριν (§6), ώστε recorder/
+weather/portal/HiveMQ-bridge/app να μη βλέπουν καμία διαφορά.
+
+## 4. Heartbeat — αντικατέστησε το παλιό MQTT Last-Will
+
+Πριν, η γέφυρα ήταν η ίδια ο MQTT client· ένας θάνατος της σήμαινε
+αποσυνδεδεμένο TCP socket, και ο broker ενεργοποιούσε αυτόματα το LWT
+(`greenhouse/nodes/<own-mac>/status` = `offline`). Τώρα ο **μοναδικός** MQTT
+client είναι το `serial_bridge.py` στο Pi — ένα UART link δεν έχει
+"σύνδεση" με την έννοια του TCP (η γέφυρα απλά συνεχίζει να κάνει
+`Serial1.println()` ό,τι κι αν συμβαίνει στην άλλη άκρη).
+
+Λύση: η γέφυρα στέλνει `{"type":"heartbeat","mac":"<own>"}` κάθε 2000ms
+(ίδιο interval με το beacon, §1). Το `serial_bridge.py` κρατά πότε άκουσε
+τελευταία heartbeat και δημοσιεύει `offline` (retained) αν περάσουν
+`MESH_OFFLINE_AFTER × 2000ms` = 6s χωρίς κανένα· `online` (retained) στο
+πρώτο heartbeat μετά από τέτοια σιωπή (ή στο πρώτο ποτέ). Ίδιο μοτίβο
+πολλαπλασιαστή με το offline detection των edge nodes (`03-mesh-routing.md §9`).
 
 ## 5. Zone lookup βάσει `origin_mac`, όχι άμεσου αποστολέα
 
 ```c
 int idx = meshTrustedIndex(pkt.origin_mac);   // ΟΧΙ info->src_addr
 ```
-(`bridge_esp32.ino:90`). Αυτή είναι η **μοναδική** λειτουργική αλλαγή που
-έφερε το multi-hop mesh στη γέφυρα σε σχέση με το παλιό star-topology
-σχέδιο: πριν, ο ESP-NOW `src_addr` ήταν πάντα ο πραγματικός αισθητήρας
-(κάθε κόμβος έστελνε απευθείας). Τώρα, το `src_addr` μπορεί να είναι ένας
-ενδιάμεσος relay — το `origin_mac` μέσα στο ίδιο το `MeshDataPacket` είναι
-το μόνο αξιόπιστο στοιχείο για ποιος πραγματικά μέτρησε.
 
-## 6. Δημοσίευση MQTT — topics, retain, QoS
+Αυτή είναι η **μοναδική** λειτουργική αλλαγή που έφερε το multi-hop mesh
+στη γέφυρα σε σχέση με το παλιό star-topology σχέδιο: πριν, ο ESP-NOW
+`src_addr` ήταν πάντα ο πραγματικός αισθητήρας (κάθε κόμβος έστελνε
+απευθείας). Τώρα, το `src_addr` μπορεί να είναι ένας ενδιάμεσος relay — το
+`origin_mac` μέσα στο ίδιο το `MeshDataPacket` είναι το μόνο αξιόπιστο
+στοιχείο για ποιος πραγματικά μέτρησε. Άσχετο με το UART/WiFi transport
+της §2 — καθαρά mesh-επίπεδο λογική, αμετάβλητη.
+
+## 6. Δημοσίευση MQTT (μέσω `serial_bridge.py`) — topics, retain
 
 Για κάθε έγκυρο πακέτο (ranked, de-dup-checked, γνωστό `origin_mac`):
 
@@ -98,26 +107,19 @@ greenhouse/<zone>/air/temperature     → "%.1f"
 greenhouse/<zone>/air/humidity        → "%.1f"
 greenhouse/<zone>/soil/moisture       → "%.1f"
 greenhouse/nodes/<MAC-hex>/status     → "online"
+greenhouse/nodes/<MAC-hex>/battery    → "%.1f"  (μόνο αν battery_mv > 0)
+greenhouse/nodes/<MAC-hex>/mesh       → JSON, δες 03-mesh-routing.md
 ```
 
-Όλα με **`retain = true`** (`mqttPublish(topic, payload, true)`,
-`bridge_esp32.ino:113-126`). Πριν από αυτή τη σχεδιαστική αλλαγή (mesh
-relay session), η δημοσίευση γινόταν χωρίς retain — αποτέλεσμα: μετά από
-κάθε restart του broker, οι κάρτες ζώνης στην εφαρμογή έμεναν άδειες μέχρι
-την επόμενη πραγματική μέτρηση (έως 5 δευτερόλεπτα, αλλά αισθητό UX κενό).
-Με retain, ο broker κρατά **το τελευταίο** μήνυμα ανά topic και το στέλνει
-αμέσως σε κάθε νέο subscriber (όπως η εφαρμογή στο restart/reconnect).
-
-QoS: `mqtt.publish()` του `PubSubClient` χωρίς ρητή παράμετρο QoS
-χρησιμοποιεί πάντα **QoS 0** (fire-and-forget, καμία εγγύηση παράδοσης σε
-επίπεδο MQTT) — αποδεκτό εδώ γιατί ο ίδιος ο μηχανισμός mesh+retain παρέχει
-ήδη επαρκή αξιοπιστία στην πράξη (νέα μέτρηση κάθε 5s, οπότε η απώλεια ενός
-μηνύματος αντικαθίσταται σχεδόν αμέσως).
+Όλα με **`retain = true`**. Το mv→% mapping (LiFePO4 discharge curve,
+piecewise-linear) γίνεται στη γέφυρα (`batteryPctFromMv()`), όχι στο Pi —
+ένα σημείο συντήρησης για την καμπύλη.
 
 ## 7. Ανίχνευση offline κόμβων
 
-Ανάλυση αλγορίθμου στο `03-mesh-routing.md §9`. Σημειώνεται εδώ ότι ο
-έλεγχος γίνεται **μόνο όταν η γέφυρα είναι ήδη συνδεδεμένη στο MQTT**
-(`if (!mqtt.connected()) return;`, `bridge_esp32.ino:133`) — σκόπιμα, ώστε
-να μη "χαθεί" μια μετάβαση online→offline απλά επειδή ο broker ήταν
-προσωρινά κάτω τη στιγμή που θα έπρεπε να δημοσιευτεί.
+Ανάλυση αλγορίθμου στο `03-mesh-routing.md §9`. Η γέφυρα η ίδια δεν
+"γνωρίζει" πλέον αν το MQTT της Pi-πλευράς είναι συνδεδεμένο (δεν είναι
+πια MQTT client) — στέλνει πάντα τη γραμμή UART, ό,τι κι αν συμβαίνει στην
+άλλη άκρη (δες §4). Ο έλεγχος `checkOfflineNodes()` τρέχει κάθε 1000ms
+ανεξάρτητα, per-role expected interval (sleepy vs always-on, δες
+`docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md §Bridge-side liveness`).

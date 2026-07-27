@@ -27,12 +27,6 @@
 #define SOIL_DRY_VAL  3163
 #define SOIL_WET_VAL  1529
 
-// ── Network (channel scan only — never connects) ──────────────────────────────
-// WIFI_SSID: copy secrets.h.example to secrets.h in
-// firmware/libraries/GreenhouseSecrets/ and fill in real values (gitignored
-// -- see IMPROVEMENTS.md finding A1).
-#include <secrets.h>
-
 // ── Timing ────────────────────────────────────────────────────────────────────
 #define SEND_INTERVAL_MS  5000   // must match MESH_EXPECTED_REPORT_INTERVAL_MS
 #define SENSOR_WARMUP_MS  2000   // sensor power-up settle time
@@ -48,12 +42,15 @@ uint32_t    phaseStartMs = 0;
 uint32_t    lastCycleMs  = 0;
 uint32_t    lastRescanMs = 0;
 
-int32_t getWiFiChannel(const char* ssid) {
-  int32_t n = WiFi.scanNetworks();
-  for (int i = 0; i < n; i++) {
-    if (strcmp(ssid, WiFi.SSID(i).c_str()) == 0) return WiFi.channel(i);
-  }
-  return 1;
+// Deployments with a router used to scan for its SSID purely to pick a
+// channel to agree on. A UART-wired fleet (no router at all) has nothing to
+// scan for, so every node just locks to the fixed constant instead — see
+// MESH_FIXED_CHANNEL's comment in mesh_config.h. Kept as its own function
+// (rather than inlining the constant at each call site) so every call site
+// below is otherwise byte-for-byte unchanged — same self-heal scaffolding,
+// same signature, only the channel-acquisition primitive underneath swapped.
+int32_t getMeshChannel() {
+  return MESH_FIXED_CHANNEL;
 }
 
 float soilPercent(int raw) {
@@ -171,9 +168,9 @@ void runSleepyCycle() {
 
   uint8_t ch = meshRtcSavedChannel();
   if (ch == 0 || g_unconfirmedWakes >= 2) {
-    Serial.printf("[wake] full SSID scan (%s)\n",
-                  ch == 0 ? "no saved channel" : "2+ silent wakes — channel may have moved");
-    ch = (uint8_t)getWiFiChannel(WIFI_SSID);
+    Serial.printf("[wake] channel lookup (%s)\n",
+                  ch == 0 ? "no saved channel" : "2+ silent wakes — re-confirming");
+    ch = (uint8_t)getMeshChannel();
   }
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
@@ -267,9 +264,8 @@ void setup() {
   // firmware image as the C3 — role is config, not code.
   if (meshIsSelfSleepy()) runSleepyCycle();  // never returns
 
-  Serial.print("[wifi] scanning channel for " WIFI_SSID "...");
-  int32_t ch = getWiFiChannel(WIFI_SSID);
-  Serial.printf(" ch%d\n", ch);
+  int32_t ch = getMeshChannel();
+  Serial.printf("[wifi] fixed mesh channel: ch%d\n", ch);
 
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
@@ -336,17 +332,19 @@ void loop() {
       break;
   }
 
-  // Continuously unrouted for a minute → maybe the router changed channels.
-  // Re-scan and retune (peers use channel 0, so no re-registration needed).
+  // No router to change channels on a fixed-channel fleet, so this can no
+  // longer be a real recovery action — re-applying the same constant is a
+  // harmless no-op, kept only so a continuously-unrouted node still logs
+  // something periodically for bench visibility, without adding a new
+  // "why is this node stuck" code path just for that.
   if (!meshHasParent()) {
     if (now - lastRescanMs >= MESH_RESCAN_AFTER_MS) {
       lastRescanMs = now;
-      Serial.println("[esp-now] unrouted too long — re-scanning WiFi channel");
-      int32_t ch = getWiFiChannel(WIFI_SSID);
+      int32_t ch = getMeshChannel();
       esp_wifi_set_promiscuous(true);
       esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
       esp_wifi_set_promiscuous(false);
-      Serial.printf("[esp-now] tuned to ch%d\n", ch);
+      Serial.printf("[esp-now] still unrouted, confirmed on ch%d\n", ch);
     }
   } else {
     lastRescanMs = now;
