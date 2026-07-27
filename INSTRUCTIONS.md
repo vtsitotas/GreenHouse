@@ -131,7 +131,7 @@ You re-cut the image **only** so newly-flashed cards start with the latest code.
 
 ### ESP-NOW specifically (two separate pieces)
 - **ESP32 firmware** (C3 sensors + bridge) → flashed *directly to the ESP32* with esptool/Arduino. **Never part of `greenhouse.img`.**
-- **Pi-side bridge** (reads the ESP32 over USB serial `/dev/ttyACM0` → publishes to MQTT) → a new script + systemd unit (+ maybe `python3-serial`). Add it to `install.sh`, deploy to existing units over SSH, and fold it into the **next** image for new hardware.
+- **Pi-side bridge** (`greenhouse-serial-bridge.service`, reads the bridge_esp32 over a wired GPIO UART link on `/dev/serial0` → publishes to MQTT) → deployed like any other Pi script/systemd unit via `install.sh`. See **Part 6** below for the physical wiring and the one-time `raspi-config` step it needs. *(Older notes here described this as USB serial over `/dev/ttyACM0` — that was an earlier idea; the wiring actually built and shipped is the raw GPIO UART link in Part 6.)*
 
 ### Mental model
 ```
@@ -140,6 +140,75 @@ GitHub repo ─(install.sh on a fresh Pi)→ master ─(prep_image + clone)→ g
      └── update existing units over SSH / git pull ─────────────────────────┘  (no re-image)
 ```
 Day-to-day you edit the repo and deploy over SSH. You only rebuild `greenhouse.img` when you want a fresh baseline for flashing **new** SD cards.
+
+---
+
+## Part 6 — UART-wired bridge (no WiFi router needed)
+
+For units where the bridge (`firmware/bridge_esp32`) sits close enough to the
+Pi to run three wires between them, the bridge talks to the Pi directly over
+a GPIO UART link instead of joining WiFi and speaking MQTT-over-TLS. No
+router, no `WIFI_SSID`/MQTT credentials baked into the bridge firmware. This
+is what `greenhouse-serial-bridge.service` (installed by `install.sh`, see
+Part 1 Step 3) is for.
+
+### Wiring
+
+Both sides run **3.3V logic** — the ESP32 and the Pi's GPIO header are
+directly compatible, **no level shifter needed**:
+
+| ESP32 (bridge) | Pi | Direction |
+|---|---|---|
+| GPIO4 (TX) | Physical pin 10 = GPIO15 (RXD) | ESP32 → Pi |
+| GPIO5 (RX) | Physical pin 8 = GPIO14 (TXD) | Pi → ESP32 |
+| GND | Any GND pin | common ground |
+
+```
+ESP32 (bridge)  GPIO4 (TX)  ──────────────►  Pi pin 10 / GPIO15 (RXD)
+ESP32 (bridge)  GPIO5 (RX)  ◄──────────────  Pi pin  8 / GPIO14 (TXD)
+ESP32 (bridge)  GND         ───────────────  Pi GND
+```
+
+115200 baud, 8N1. On the Pi side this is `/dev/serial0`.
+
+### One-time Pi setup: free the UART from the login console
+
+Raspberry Pi OS routes `/dev/serial0` to a login console by default, which
+`greenhouse-serial-bridge.service` can't use. Fix this once, on the Pi:
+
+```
+pi@greenhouse:~ $ sudo raspi-config
+```
+- **Interface Options → Serial Port**
+- *"Would you like a login shell to be accessible over serial?"* → **No**
+- *"Would you like the serial port hardware to be enabled?"* → **Yes**
+- **Finish**, then reboot.
+
+`install.sh` does **not** do this step for you — it only prints a reminder.
+Flipping this setting touches boot config, and doing it wrong on a unit
+someone is already relying on risks locking out serial-console access to it,
+so it's left as a deliberate manual step instead of something the installer
+changes on its own.
+
+After rebooting, confirm it worked:
+```
+pi@greenhouse:~ $ ls -l /dev/serial0
+```
+should point at the UART device with no `getty` attached to it. Then wire
+the bridge up per the table above and check
+`sudo systemctl status greenhouse-serial-bridge` is active.
+
+### This replaces the bridge's WiFi/MQTT setup, not the Pi's
+
+For units wired this way, the bridge no longer needs (and no longer has) any
+`WIFI_SSID`/`MQTT_HOST`/`MQTT_USER`/`MQTT_PASS` configuration at all — that
+whole client stack is gone from the firmware. The only wireless-shaped
+settings still relevant to this deployment mode are:
+- the mesh's fixed ESP-NOW channel (`MESH_FIXED_CHANNEL` in
+  `mesh_config.h`), shared by every sensor node and the bridge, and
+- the Pi's **own** upstream connectivity (WiFi client / cellular / none),
+  which is unrelated and only matters for the separate HiveMQ Cloud bridge
+  (`greenhouse-hivemq-bridge.service`) used for remote/app access.
 
 ---
 
