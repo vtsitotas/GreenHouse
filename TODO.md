@@ -40,25 +40,6 @@ itself is spoofable (no identity guarantee):
 - `INSTRUCTIONS.md`: no PIN-label printing step added to the mass-production
   process yet.
 
-### UART-wired bridge (replace WiFi bridge uplink)
-**Spec/plan:** `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`,
-`docs/superpowers/plans/2026-07-20-uart-bridge.md`
-**Status:** Proposed, spec + 5-task implementation plan written, **no code
-yet**.
-
-For deployments where the bridge and Pi will always sit physically close
-together, replaces the bridge's WiFi+MQTT+TLS uplink with a direct 3-wire
-GPIO UART connection (both ESP32 and Pi GPIO run 3.3V logic — no level
-shifter needed). Removes the router dependency and the WiFi credentials
-currently baked into `bridge_esp32.ino` (the same committed-secret problem
-flagged in `IMPROVEMENTS.md §Α1`). Newline-delimited JSON over the wire; a
-new `pi/scripts/serial_bridge.py` republishes to the existing loopback
-Mosquitto exactly as the current bridge does today, so nothing downstream
-(recorder/weather/portal/app) needs to change. Also switches the ESP-NOW
-mesh to a fixed radio channel instead of scanning a router's SSID, since no
-router is assumed present in this deployment mode. Explicitly scoped to the
-bridge↔Pi hop only — the Pi's own upstream/HiveMQ connectivity is untouched.
-
 ---
 
 ## 2. Mesh protocol enhancements discussed but not yet written as specs
@@ -139,6 +120,38 @@ hardening below.
 ---
 
 ## 3. Code exists, never validated on real hardware
+
+### UART-wired bridge (replace WiFi bridge uplink)
+**Spec/plan:** `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`,
+`docs/superpowers/plans/2026-07-20-uart-bridge.md`
+**Status:** Fully implemented 2026-07-27 (PR #15) — spec/plan Tasks 1-4
+done. Task 5 (physical bench validation) is the only thing left, and it's
+entirely the user's — no compiler or hardware access from this dev sandbox.
+
+For deployments where the bridge and Pi sit physically close together,
+replaces the bridge's WiFi+MQTT+TLS uplink with a direct 3-wire GPIO UART
+connection (`firmware/bridge_esp32/bridge_esp32.ino`, `Serial1` on GPIO4
+TX / GPIO5 RX, 115200 8N1 — not `Serial2`, corrected from the original
+spec's placeholder since the C3 only has two hardware UARTs). Removes the
+router dependency and the WiFi/MQTT credentials that were baked into the
+bridge firmware. New `pi/scripts/serial_bridge.py` (18 tests, TDD) reads
+the newline-delimited JSON stream and republishes to the existing loopback
+Mosquitto with identical topics/payloads/retain to today — recorder/
+weather/portal/app see no difference. Also carries the deep-sleep-era
+battery/mesh-topology telemetry (added after the original spec was
+written) and a heartbeat line that replaces the old MQTT Last-Will for
+bridge-liveness detection, since the bridge is no longer an MQTT client
+itself. The whole mesh fleet now locks to a fixed ESP-NOW channel instead
+of scanning a router's SSID — edge nodes no longer need `secrets.h` at
+all. New `greenhouse-serial-bridge.service` + `install.sh` wiring +
+`INSTRUCTIONS.md` Part 6 (wiring diagram, one-time `raspi-config` step).
+
+**Still open (Task 5 — user's bench, not started):** wire per the pinout,
+free `/dev/serial0` from the login console, flash the new bridge firmware,
+confirm the JSON stream with `cat /dev/serial0` before trusting the
+parser, then `mosquitto_sub -t 'greenhouse/#' -v` should show output
+identical in shape to the old WiFi bridge (spec's Testing/Validation
+section has the full checklist).
 
 ### Dynamic mesh relay (multi-hop ESP-NOW)
 **Spec/plan:** `docs/superpowers/specs/2026-07-09-dynamic-mesh-relay-design.md`,
