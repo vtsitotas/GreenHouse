@@ -1,11 +1,82 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-26 (mesh deep sleep + mesh field visualization
-session; ESP32-CAM bench debugging in progress)
-**Status:** ✅ `main` has PR #13 merged, CI green (Pi + Flutter — firmware
-is never CI-covered, see below). ESP32-CAM real-hardware bench-testing
-started this session and is **still in progress, not concluded** — see
+**Last updated:** 2026-07-27 (UART-wired bridge implementation)
+**Status:** ✅ `main` has PR #15 merged, CI green (Pi + Flutter — firmware
+is never CI-covered, see below). Three firmware slices now sit fully coded
+but **never bench-tested on real hardware** (mesh relay, deep sleep, UART
+bridge) plus the ESP32-CAM whose bench-test is mid-flight — see
 "Next step".
+
+---
+
+## TL;DR of this session (2026-07-27, UART-wired bridge)
+
+Implemented the already-approved `docs/superpowers/specs/2026-07-20-uart-bridge-design.md`
++ `docs/superpowers/plans/2026-07-20-uart-bridge.md` end to end (Tasks 1-4;
+Task 5 is the user's physical bench pass, not run), merged as **PR #15**
+(`3fb6112`). Triggered by the user asking how to wire the bridge
+(ESP32-C3 SuperMini) directly to the Pi Zero W's GPIO header instead of
+over WiFi — the answer led straight to this pre-existing, unimplemented
+spec/plan, and the user asked to build it.
+
+Replaces the bridge's WiFi+MQTT+TLS uplink with a direct 3-wire UART
+connection to the Pi's GPIO header — no router, no WiFi/MQTT credentials
+on the bridge firmware at all anymore.
+
+- **Firmware** (`firmware/bridge_esp32/bridge_esp32.ino`, rewritten):
+  drops `WiFiClientSecure`/`PubSubClient` entirely; prints newline-
+  delimited JSON over `Serial1` (GPIO4 TX / GPIO5 RX, 115200 8N1). Two
+  corrections made during implementation, since the 2026-07-20 spec
+  predates work merged since: (1) `Serial2` doesn't exist on the ESP32-C3
+  (only two hardware UARTs) — the spec's placeholder was wrong for this
+  specific chip, corrected to `Serial1` with concrete pins; (2) the JSON
+  protocol also carries `battery`/`mesh`/`heartbeat` message types beyond
+  the spec's original `reading`/`status` pair, because the mesh deep-sleep
+  telemetry work (2026-07-26, PR #13) added bridge-side battery/topology
+  publishing and an MQTT Last-Will that this rewrite would otherwise have
+  silently regressed. The heartbeat line (piggybacked on the existing
+  rank-0 beacon cadence) is the UART-link replacement for that Last-Will,
+  since the bridge is no longer an MQTT client itself and a wired serial
+  link has no "connection" state of its own to hang liveness off of.
+- Every mesh node (bridge + both edge variants) now locks to a fixed
+  ESP-NOW channel (`MESH_FIXED_CHANNEL`, `mesh_config.h`) instead of
+  scanning for a router's SSID — there's no router in this deployment
+  mode. Edge nodes no longer need `secrets.h` at all.
+- **`pi/scripts/serial_bridge.py`** (new): reads the UART JSON stream,
+  republishes to the existing loopback Mosquitto with identical topics/
+  payloads/retain to the old WiFi bridge — recorder/weather/portal/app see
+  no difference. 18 new tests (mocked serial port), TDD. Plus
+  `greenhouse-serial-bridge.service` (sandboxed like its siblings) and
+  `install.sh` wiring (prints, doesn't automate, the one-time
+  `raspi-config` step needed to free `/dev/serial0` from the login
+  console — editing boot config unattended risks locking a unit out of
+  serial-console access).
+- Docs: `INSTRUCTIONS.md` gained a wiring-diagram section (Part 6);
+  `docs/technical/04-bridge-gateway.md` fully rewritten (was already
+  stale even before this change — missing the deep-sleep telemetry
+  additions); `ARCHITECTURE.md`, `01-sensor-node-hardware.md`,
+  `14-network-reference.md` synced; the design spec marked approved +
+  implemented with both corrections noted inline.
+
+**Process note:** the safety-critical firmware pieces (wire protocol, the
+fixed-channel change across the whole fleet, the heartbeat-liveness
+redesign) were written directly rather than delegated — same reasoning as
+the 2026-07-26 deep-sleep session: a subtle firmware bug here only
+surfaces on a real bench day. `serial_bridge.py` and the systemd/
+install.sh wiring were sub-agent-implemented in parallel, then fully
+reviewed before push; the systemd-wiring agent caught and fixed a stale
+`/dev/ttyACM0` reference in `INSTRUCTIONS.md` on its own initiative. One
+CI failure occurred and was fixed directly: `pyserial` (needed by the new
+`serial_bridge.py`/its tests) was installed ad-hoc in the sub-agent's
+sandbox but never added to `.github/workflows/ci.yml`'s hardcoded pip
+list, so `test_serial_bridge.py` failed to import in CI — added.
+
+**Not done in this session:** any deployment to real hardware. This dev
+sandbox cannot reach `greenhouse.local` (confirmed — it's mDNS on the
+user's home LAN, unreachable from this cloud container), so the Pi/phone
+update is entirely the user's next step (`deploy.ps1` for the Pi,
+`flutter build apk --release` + `flutter install` for the phone), same as
+every prior session's deployment step.
 
 ---
 
@@ -279,18 +350,28 @@ All 8 implementation tasks done, each independently reviewed (Task 8 and the fin
 
 ## Next step
 
-**Immediate:** finish the ESP32-CAM bench debugging in progress (§3 above)
-— read the serial monitor at 115200 baud after boot, report what shows
-(camera/SD init, WiFi connect, the 3s snapshot-POST cadence success/
-failure), then fix whatever the actual symptom turns out to be as a small
-reviewed commit (leading hypothesis: `greenhouse.local` mDNS resolution
-from `HTTPClient`, per §3). Once the cam is confirmed working end-to-end
-(MQTT `greenhouse/cam/status` online, app LAN stream visible), do the same
-real-hardware bench pass for the mesh (deep-sleep Phase 1 + the original
-2026-07-09 relay, per `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md`
-Task 6 and the relay plan's Task 5) — this project's mesh and camera
-firmware have now both reached "flashes/compiles on real hardware" but
-neither has completed full runtime bench validation yet.
+**Immediate:** none of this session's firmware has touched real hardware
+yet from this environment (it can't — no compiler, no device access, and
+`greenhouse.local` doesn't even resolve from this sandbox). Four bench
+passes are now queued on the user's own machine, in whatever order suits:
+
+1. **ESP32-CAM bench debugging**, already in progress (§ earlier TL;DR) —
+   read the serial monitor at 115200 baud after boot, report what shows
+   (camera/SD init, WiFi connect, the 3s snapshot-POST cadence success/
+   failure). Leading hypothesis for a failed snapshot loop:
+   `greenhouse.local` mDNS resolution from `HTTPClient`.
+2. **UART-wired bridge** (this session) — wire per
+   `INSTRUCTIONS.md` Part 6, run the one-time `raspi-config` step, flash
+   the rewritten `bridge_esp32.ino`, `cat /dev/serial0` to eyeball the raw
+   JSON stream before trusting `serial_bridge.py`'s parser, then
+   `mosquitto_sub -t 'greenhouse/#' -v` should look identical in shape to
+   the old WiFi bridge's output.
+3. **Mesh relay + deep-sleep Phase 1** — per
+   `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md` Task 6 and the
+   original relay plan's Task 5. Note: if doing this on a UART-wired unit
+   (item 2), the two features compose — same fleet, same reflash.
+4. Once all four are confirmed working end-to-end, this repo will finally
+   have its firmware fully field-validated, not just code-reviewed.
 
 **After that**, other candidates (see `TODO.md` for the full picture):
 
@@ -300,13 +381,13 @@ neither has completed full runtime bench validation yet.
    spec's §Phase 2.
 2. **Direct-to-Pi pairing + PIN auth** (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`)
    — approved in conversation, no implementation plan written yet.
-3. **UART-wired bridge** (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`
-   + `docs/superpowers/plans/2026-07-20-uart-bridge.md`) — spec and 5-task
-   plan both already written, ready to implement.
-4. Work through `IMPROVEMENTS.md`'s remaining open findings — Β3 (LAN
+3. Work through `IMPROVEMENTS.md`'s remaining open findings — Β3 (LAN
    streaming blocks motion detection) is directly relevant to the cam bench
    work above; Α1's rotation step (WiFi/HiveMQ credentials) is still a live
-   real exposure whenever convenient.
+   real exposure whenever convenient, and is now smaller in scope than
+   before — the bridge no longer has WiFi/MQTT credentials to rotate at
+   all after this session's change (only the cam's WiFi credentials and
+   the Pi's own HiveMQ credentials remain).
 
 Ask the user which before picking one — none was prioritized explicitly
 beyond the immediate cam debugging already underway.
@@ -415,13 +496,15 @@ ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -
 ```
 ┌─────────── FIELD / GREENHOUSE ───────────┐
 │  ESP-NOW sensor nodes, dynamic multi-hop  │  (mesh relay + deep-sleep
-│    mesh relay (+ Phase 1 deep sleep for   │   phase 1 firmware done, not
-│    battery nodes) → ESP32 bridge          │   yet field-tested on real HW
-│     → MQTT publish to Pi (+ /mesh, /battery)│  — see docs/MESH_RELAY_EXPLAINED.md
-└──────────────────┬─────────────────────────┘   + this session's specs)
-                    │ MQTT (loopback 1883, internal services)
+│    mesh relay (+ Phase 1 deep sleep for   │   phase 1 + UART bridge
+│    battery nodes) → ESP32-C3 bridge       │   firmware all done, not
+└──────────────────┬─────────────────────────┘   yet field-tested on real
+                    │ UART GPIO, 3.3V, no router     HW — see this session's
+                    │ (replaces WiFi/MQTT/TLS,        specs + docs/MESH_
+                    │  2026-07-27)                    RELAY_EXPLAINED.md)
 ┌───────────────────▼───────────────────────────────┐
 │  Raspberry Pi Zero W                              │
+│  ├─ greenhouse-serial-bridge — UART→loopback MQTT  │
 │  ├─ Mosquitto — local TLS 8883 + HiveMQ Cloud bridge│
 │  ├─ greenhouse-recorder — SQLite history (minute   │
 │  │    buckets → hourly rollup, 90d/2yr retention)  │
@@ -470,6 +553,10 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 | `firmware/libraries/GreenhouseMesh/mesh_node.h` | Wire format v2 (sleepy flag, battery/parent telemetry), RTC-persistent state helpers — this session |
 | `app/lib/screens/devices/mesh_map_screen.dart` + `mesh_map/` | The live Mesh Map screen: layout engine, link painter, node card, pinned-position store — this session |
 | `pi/tools/simulator.py` | Also now publishes `/mesh` topology JSON (fake shifting topology) — this session |
+| `docs/superpowers/specs/2026-07-20-uart-bridge-design.md` + plan | UART-wired bridge design + 5-task plan, now approved+implemented (2026-07-27) |
+| `firmware/bridge_esp32/bridge_esp32.ino` | Rewritten: UART (`Serial1`) instead of WiFi/MQTT/TLS, heartbeat liveness, battery/mesh telemetry over the wire — 2026-07-27 |
+| `pi/scripts/serial_bridge.py` | New — reads the bridge's UART JSON stream, republishes to loopback Mosquitto — 2026-07-27 |
+| `pi/systemd/greenhouse-serial-bridge.service` | New systemd unit for the above — 2026-07-27 |
 
 ---
 
@@ -479,7 +566,7 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 
 **Slice status:**
 - 1 App + Connectivity — ✅ done
-- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, including 2026-07-09's dynamic multi-hop relay upgrade and 2026-07-26's Phase 1 deep-sleep + telemetry upgrade; **still not field-validated on real sensor hardware** (simulator only — the relay and deep-sleep code have never been compiled/flashed, no toolchain in the dev sandbox); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
+- 2 Field Firmware (ESP-NOW mesh, WROOM bridges) — firmware done, including 2026-07-09's dynamic multi-hop relay upgrade, 2026-07-26's Phase 1 deep-sleep + telemetry upgrade, and 2026-07-27's UART-wired bridge (full replacement — the old WiFi/MQTT/TLS bridge code no longer exists in the tree, only in git history); **still not field-validated on real sensor hardware** (simulator only — none of the relay/deep-sleep/UART-bridge code has ever been compiled/flashed, no toolchain in the dev sandbox); BLE pairing was planned but superseded by the working mDNS/QR discovery instead
 - 3 Storage + History — ✅ done, reimplemented as a local SQLite recorder (not InfluxDB) + this session's chart feature
 - 4 Automation + Alerts — ✅ done, and this session made it fully customizable: in-app rule builder (any zone/metric/operator/threshold/duration/action, Weather screen → Rules tab → "Add rule") instead of six hardcoded thresholds, plus a real fix for rule edits never having reached the Pi (see this session's TL;DR above)
 - 5 Cloud Relay (multi-customer accounts, device registry, FCM push) — **partially done this session**: FCM push notifications now work (app closed/backgrounded still gets real alerts) via `pi/shared/push.py` + a retained-token registry topic; multi-customer accounts/device registry still **not started** — current remote access is still single-tenant HiveMQ Cloud
