@@ -1,6 +1,10 @@
 import 'dart:convert';
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
+import 'package:greenhouse_app/services/history_service.dart' show kPortalHttpsPort;
+import 'package:greenhouse_app/utils/cert_pinning.dart';
 import 'package:multicast_dns/multicast_dns.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
@@ -24,13 +28,20 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   final _port       = TextEditingController(text: '8883');
   final _fp         = TextEditingController();
   final _user       = TextEditingController(text: 'app');
+  // Machine secrets, same category as the TLS fingerprint above: normally
+  // filled in automatically by QR/PIN pairing, but exposed under Advanced so
+  // the fully-manual path (used whenever mDNS discovery can't find the unit)
+  // can still reach the token-gated history API and camera stream.
+  final _apiToken   = TextEditingController();
+  final _camToken   = TextEditingController();
   bool _busy = false;
   bool _showAdvanced = false;
   String? _error;
 
   @override
   void dispose() {
-    for (final c in [_host, _pass, _remoteHost, _remoteUser, _remotePass, _port, _fp, _user]) {
+    for (final c in [_host, _pass, _remoteHost, _remoteUser, _remotePass, _port,
+                     _fp, _user, _apiToken, _camToken]) {
       c.dispose();
     }
     super.dispose();
@@ -47,6 +58,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       _fp.text         = j['tls_fingerprint'] ?? '';
       _user.text       = j['username']        ?? 'app';
       _pass.text       = j['password']        ?? '';
+      _apiToken.text   = j['api_token']       ?? '';
+      _camToken.text   = j['cam_token']       ?? '';
     } catch (_) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid QR code')));
     }
@@ -71,18 +84,122 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     return false;
   }
 
+  /// POST the PIN over TLS if the unit offers it, falling back to plaintext.
+  ///
+  /// This is the one request that carries real secrets in both directions (the
+  /// PIN up, MQTT credentials + API/cam tokens back), so how its certificate
+  /// is treated decides whether an active man-in-the-middle can steal them.
+  ///
+  /// Two cases, and the difference matters:
+  ///
+  /// * **Fingerprint already known out of band** — scanned from the QR code, or
+  ///   typed into Advanced. The connection is then *pinned* exactly like every
+  ///   post-pairing request: a MITM presenting its own certificate is rejected
+  ///   before the PIN is ever sent. This closes first-contact MITM completely,
+  ///   and is why QR is the recommended pairing path.
+  /// * **No fingerprint yet** (mDNS discovery, first ever pair) — there is
+  ///   nothing to verify against, so the certificate is accepted on trust for
+  ///   this one exchange. That still defeats a PASSIVE eavesdropper, which is
+  ///   the realistic threat on shared WiFi, but not an ACTIVE MITM. A 6-digit
+  ///   PIN cannot fix this: any proof-of-knowledge it could carry is
+  ///   brute-forceable offline from a single captured exchange, so the honest
+  ///   answer is out-of-band fingerprint delivery, not more PIN cryptography.
+  ///   The UI says so when this path is taken.
+  Future<http.Response> _postPin(String baseUrl, String pin) async {
+    final body = jsonEncode({'pin': pin});
+    const headers = {'Content-Type': 'application/json'};
+    final host = Uri.parse(baseUrl).host;
+    final knownFingerprint = _fp.text.trim();
+
+    final httpClient = knownFingerprint.isNotEmpty
+        ? pinnedHttpClient(knownFingerprint, timeout: const Duration(seconds: 5))
+        : (HttpClient()..connectionTimeout = const Duration(seconds: 5));
+    if (knownFingerprint.isEmpty) {
+      httpClient.badCertificateCallback = (_, __, ___) => true;
+    }
+    final secure = IOClient(httpClient);
+    try {
+      return await secure
+          .post(Uri(scheme: 'https', host: host, port: kPortalHttpsPort,
+                    path: '/pair/confirm'),
+              headers: headers, body: body)
+          .timeout(const Duration(seconds: 6));
+    } on HandshakeException {
+      // With a known fingerprint this is a PIN MISMATCH, not an old Pi:
+      // something presented a certificate we don't trust. Never silently fall
+      // back to plaintext here — that would hand the PIN to whatever it was.
+      if (knownFingerprint.isNotEmpty) rethrow;
+    } catch (_) {
+      // Pi not redeployed yet (no HTTPS listener) — use the plaintext port.
+      if (knownFingerprint.isNotEmpty) rethrow;
+    } finally {
+      secure.close();
+    }
+    return http
+        .post(Uri.parse('$baseUrl/pair/confirm'), headers: headers, body: body)
+        .timeout(const Duration(seconds: 5));
+  }
+
+  /// Make pairing without certificate verification an explicit choice.
+  ///
+  /// When no fingerprint is known in advance, the app cannot tell the real
+  /// greenhouse from something impersonating it on the network. Silently
+  /// trusting it is the wrong default: SSH asks before accepting an unknown
+  /// host key, and browsers refuse unverified certificates outright. This is
+  /// the same idea — proceed only if the user knowingly accepts it, and tell
+  /// them exactly how to check afterwards.
+  ///
+  /// Returns true when the user chose to continue.
+  Future<bool> _confirmUnverifiedPairing() async {
+    final proceed = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => AlertDialog(
+        icon: const Icon(Icons.gpp_maybe_outlined),
+        title: const Text('Cannot verify this greenhouse'),
+        content: const Text(
+          'This greenhouse has not been identified before, so the app cannot '
+          'confirm it is really yours rather than another device answering on '
+          'the network.\n\n'
+          'The most secure option is to cancel and pair by scanning the QR '
+          'code instead.\n\n'
+          'If you continue, check afterwards that Settings → Safety code '
+          'matches the code shown by "selftest.sh" on the Pi.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Continue anyway'),
+          ),
+        ],
+      ),
+    );
+    return proceed ?? false;
+  }
+
   Future<bool> _confirmWithPin(String baseUrl) async {
+    // Secure by default: an unverifiable greenhouse needs an informed decision
+    // before any secret is exchanged, not after.
+    if (_fp.text.trim().isEmpty && !await _confirmUnverifiedPairing()) {
+      setState(() {
+        _error = 'Pairing cancelled. Scan the QR code on the unit to pair '
+                 'securely, or enter its TLS fingerprint under Advanced.';
+        _busy = false;
+      });
+      return true;
+    }
+    if (!mounted) return true;
     final pin = await _promptForPin();
     if (pin == null) {
       setState(() { _busy = false; });
       return true;
     }
     try {
-      final res = await http
-          .post(Uri.parse('$baseUrl/pair/confirm'),
-              headers: {'Content-Type': 'application/json'},
-              body: jsonEncode({'pin': pin}))
-          .timeout(const Duration(seconds: 5));
+      final res = await _postPin(baseUrl, pin);
       if (res.statusCode == 200) {
         final j = jsonDecode(res.body) as Map<String, dynamic>;
         _host.text       = j['host_lan']        ?? '';
@@ -93,13 +210,22 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
         _fp.text         = j['tls_fingerprint'] ?? '';
         _user.text       = j['username']        ?? 'app';
         _pass.text       = j['password']        ?? '';
+        _apiToken.text   = j['api_token']       ?? '';
+        _camToken.text   = j['cam_token']       ?? '';
       } else if (res.statusCode == 401) {
         _error = 'Incorrect PIN.';
       } else if (res.statusCode == 429) {
-        _error = 'Too many incorrect PINs. Restart the Pi to try again.';
+        _error = 'Too many incorrect PINs from this device. '
+                 'Wait a few minutes and try again.';
       } else {
         _error = 'Could not confirm pairing.';
       }
+    } on HandshakeException {
+      // Only reachable when a fingerprint was known up front, so this is a
+      // certificate that does not match the greenhouse we expected.
+      _error = 'Security warning: this device presented an unexpected '
+               'certificate. Someone may be impersonating your greenhouse. '
+               'Pairing was cancelled and no PIN was sent.';
     } catch (e) {
       _error = 'Could not reach the greenhouse: $e';
     }
@@ -200,6 +326,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       password:       _pass.text,
       remoteUsername: _remoteUser.text.trim(),
       remotePassword: _remotePass.text,
+      apiToken:       _apiToken.text.trim(),
+      camToken:       _camToken.text.trim(),
     );
     try {
       final ok = await ref.read(mqttConnectionProvider).testConnect(config);
@@ -256,6 +384,20 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                 icon: const Icon(Icons.qr_code_scanner),
                 label: const Text('Scan QR code'),
               ),
+              // The QR carries the unit's certificate fingerprint out of band,
+              // which is what lets pairing verify the identity of whatever
+              // answers on the network. Worth saying plainly rather than
+              // leaving the two buttons looking equivalent.
+              Padding(
+                padding: const EdgeInsets.only(top: 6),
+                child: Text(
+                  _fp.text.trim().isEmpty
+                      ? 'Scanning the QR is the most secure option — it lets the '
+                        'app verify the greenhouse\'s identity.'
+                      : 'Greenhouse identity known — pairing will be verified.',
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
               const Padding(
                 padding: EdgeInsets.symmetric(vertical: 16),
                 child: Row(children: [
@@ -286,6 +428,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                     validator: (v) => int.tryParse(v ?? '') == null ? 'Must be a number' : null),
                 _field(_user, 'Username'),
                 _field(_fp, 'TLS fingerprint', validator: (_) => null),
+                _field(_apiToken, 'History API token', obscure: true, validator: (_) => null),
+                _field(_camToken, 'Camera token', obscure: true, validator: (_) => null),
               ],
               const SizedBox(height: 8),
               if (_error != null) ...[

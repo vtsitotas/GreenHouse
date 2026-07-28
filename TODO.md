@@ -47,26 +47,33 @@ itself is spoofable (no identity guarantee):
 Smaller than the items above — captured here so the design thinking isn't
 lost before someone formalizes it properly.
 
-### Adaptive TTL (mesh routing)
-**Discussed:** 2026-07-20, no spec file yet.
+### Adaptive TTL (mesh routing) — ✅ DONE
+**Discussed:** 2026-07-20, no spec file yet at the time. **Implemented:**
+shipped in PR #12 (`527c71f`, "security/reliability" pass) — confirmed still
+in the tree at `firmware/libraries/GreenhouseMesh/mesh_node.h`'s
+`meshSendReading()` and `mesh_config.h`'s `MESH_TTL_MARGIN`/`MESH_MAX_TTL`.
+This entry was stale (still describing it as a future proposal) until this
+pass cross-checked it against the code. Left below for the historical
+rationale, since it's still accurate — just already built, not proposed.
 
-Today `MESH_MAX_TTL` is a fixed constant (4) in `mesh_config.h`, applied the
-same to every packet regardless of how deep in the mesh it originated. Real
-consequence: a packet from a node whose rank is ≥6 gets silently dropped one
-hop before reaching the bridge (`docs/technical/03-mesh-routing.md §4`
-TTL walkthrough) — the network is structurally capped at ~5 hops deep no
-matter the physical layout.
+`MESH_MAX_TTL` used to be a fixed constant (4) in `mesh_config.h`, applied
+the same to every packet regardless of how deep in the mesh it originated.
+Real consequence: a packet from a node whose rank was ≥6 got silently
+dropped one hop before reaching the bridge (`docs/technical/03-mesh-routing.md
+§4` TTL walkthrough) — the network was structurally capped at ~5 hops deep
+no matter the physical layout.
 
-Proposed fix: make TTL **adaptive per-packet** instead of a global constant
-— set it from the origin node's own already-known rank plus a small margin,
-in `meshSendReading()` (`mesh_node.h`):
+Fix: TTL is now **adaptive per-packet** instead of a global constant — set
+from the origin node's own already-known rank plus a small margin, in
+`meshSendReading()` (`mesh_node.h`):
 ```c
-// today:
+// before:
 pkt.ttl = MESH_MAX_TTL;
-// proposed:
-pkt.ttl = meshMyRank + MESH_TTL_MARGIN;   // e.g. MESH_TTL_MARGIN = 2
+// now:
+pkt.ttl = (meshMyRank == MESH_RANK_UNROUTED) ? MESH_MAX_TTL
+                                              : meshMyRank + MESH_TTL_MARGIN;  // MESH_TTL_MARGIN = 2
 ```
-Zero wire-format change (the `ttl` field already exists at its current
+Zero wire-format change (the `ttl` field already existed at its current
 size), zero new coordination needed (rank is already known locally). No
 safety downside — the actual anti-loop protection is the strict-rank parent
 rule, not TTL (`docs/technical/03-mesh-routing.md §4`), so a larger
@@ -146,12 +153,19 @@ of scanning a router's SSID — edge nodes no longer need `secrets.h` at
 all. New `greenhouse-serial-bridge.service` + `install.sh` wiring +
 `INSTRUCTIONS.md` Part 6 (wiring diagram, one-time `raspi-config` step).
 
-**Still open (Task 5 — user's bench, not started):** wire per the pinout,
-free `/dev/serial0` from the login console, flash the new bridge firmware,
-confirm the JSON stream with `cat /dev/serial0` before trusting the
-parser, then `mosquitto_sub -t 'greenhouse/#' -v` should show output
-identical in shape to the old WiFi bridge (spec's Testing/Validation
-section has the full checklist).
+**Still open (Task 5 — user's bench, in progress, blocked):** wiring and
+power were confirmed correct against `INSTRUCTIONS.md` Part 6 (2026-07-27,
+later session) — GPIO4→pin10/RXD, GPIO5←pin8/TXD, GND, 5V, board's LED
+lit — but `/dev/serial0` shows **zero bytes** across repeated samples.
+Leading suspect (unconfirmed): the board may not actually have been
+reflashed with the current `bridge_esp32.ino` (UART version) since the
+rewrite — next step is to verify that before looking elsewhere. A
+temporary fallback exists if this doesn't resolve quickly:
+`firmware/bridge_esp32_wifi_fallback/` (the last pre-UART bridge firmware,
+restored from git history, updated to current credentials, with a real
+`bridge` MQTT account already provisioned on the Pi) restores sensor data
+flow over WiFi/MQTT while the UART link is debugged. See `HANDOFF.md`'s
+"Next step" for the full current checklist.
 
 ### Dynamic mesh relay (multi-hop ESP-NOW)
 **Spec/plan:** `docs/superpowers/specs/2026-07-09-dynamic-mesh-relay-design.md`,
@@ -168,22 +182,31 @@ the dev sandbox) or run on physical ESP32 hardware. See
 `pi/scripts/cam_bridge.py`, `pi/shared/motion.py`, `pi/shared/cam_store.py`,
 plus app-side `camera_screen.dart`/`camera_provider.dart`/`cam_status.dart`,
 and tests (`pi/tests/test_cam_bridge.py`, `test_motion.py`, `test_cam_store.py`).
-**Bench-testing started 2026-07-26** (first time on real hardware — an
-AI-Thinker ESP32-CAM on an ESP32-CAM-MB downloader base): the sketch
-compiles; an initial flash-time "memory"-related error did not reproduce on
-retry (root cause unconfirmed — possibly the Arduino IDE partition scheme,
-a boot-mode/cable fluke, or something else; not investigated further since
-it stopped recurring). Flashing itself now succeeds. **Still open:**
-runtime bring-up not yet confirmed — WiFi connect, the 3s snapshot-POST
-loop to the Pi, and whether `greenhouse.local` resolves correctly from the
-ESP32's `HTTPClient` (a real risk flagged during this session's code
-review: mDNS-name resolution from `HTTPClient` depends on Arduino core
-support and isn't guaranteed — if snapshots fail, expect
-`WARN: snapshot POST failed, code=-1` in the serial log as the symptom).
+**Bench-testing started 2026-07-26, continued 2026-07-27** (first time on
+real hardware — an AI-Thinker ESP32-CAM on an ESP32-CAM-MB downloader
+base): the camera never connected at all during the 2026-07-26 session
+(`greenhouse/cam/status` stuck at `online: false`) — root cause found
+2026-07-27: `secrets.h` never existed for this sketch, so the firmware
+couldn't even compile. Fixed: created it (gitignored, per-device), added
+the missing Arduino-library junction (same pattern as `GreenhouseMesh`),
+set a real `CAM_TOKEN` on the Pi (was still the install-time placeholder),
+and fixed two real compile bugs found while actually trying to flash:
+missing `#include <uri/UriBraces.h>`, and `PI_HOST` switched from
+`greenhouse.local` to a direct IP (confirmed, not just suspected as of the
+2026-07-26 entry: `HTTPClient` doesn't resolve mDNS reliably on this core —
+same class of bug as the `mqtt_client` TLS-callback fix in the app). **It
+compiles now; not yet flashed/bench-tested** — the earlier 2026-07-26
+"flashing itself now succeeds" note describes a *prior* flash attempt of
+firmware that, per the above, couldn't have actually been running
+(compile-blocked by the missing `secrets.h`) — treat runtime behavior as
+entirely unconfirmed until the current firmware is actually flashed and
+observed. **Still open:** WiFi connect, the 3s snapshot-POST loop to the
+Pi, and confirming the direct-IP fix actually resolves the snapshot path.
 Also flagged but not yet hit in practice: `IMPROVEMENTS.md §B3` (LAN
 live-view blocks motion detection) and the `CAM_TOKEN` file/firmware
 hand-sync requirement (`/etc/greenhouse/cam_token.txt` must match the
-flashed `secrets.h` exactly). Next bench step: read the serial monitor
+flashed `secrets.h` exactly — now set to a real value, see above). Next
+bench step: flash, then read the serial monitor
 output at 115200 baud and continue from there.
 
 ### Phase 2 — WebRTC remote camera streaming
@@ -193,31 +216,39 @@ relay server; flagged risk: Pi Zero W may lack CPU headroom to encode a live
 WebRTC track (no hardware video encoder) — needs a bench test before
 committing to this track.
 
-### ESP32-CAM `/stream` token auth (app-side half of IMPROVEMENTS.md A5)
-`/capture` and `GET|DELETE /event/<id>` are now `CAM_TOKEN`-gated (see A5) —
-the Pi is the only caller for those three, so the fix was self-contained.
-`/stream` is the one endpoint the **app** calls directly
-(`camera_screen.dart:113`, LAN direct view) and it's still unprotected: the
-app has no way to learn `CAM_TOKEN` today. Full fix needs: `cam_token` added
-to `/pair`'s response schema (`portal.py`'s `_pairing_payload()`, reading
-from a new field in `device.json` or the existing `cam_token.txt`),
-`ConnectionConfig.camToken`, `pairing_screen.dart`'s manual/QR entry, and
-`camera_screen.dart` appending `?token=` to the stream URL. Left out of the
-A5 pass because it's cross-stack (firmware + Pi + app) and untestable here
-without real camera hardware — bench-test each hop before shipping this.
+### ESP32-CAM `/stream` token auth (app-side half of IMPROVEMENTS.md A5) — ✅ DONE 2026-07-28
+Every endpoint on the camera is now `CAM_TOKEN`-gated, `/stream` included.
+The cross-stack chain that was missing got built end to end: `portal.py`'s
+`_pairing_payload()` returns `cam_token` → `ConnectionConfig.camToken` →
+`camera_screen.dart`'s `streamUrl()` appends `?token=` →
+`cam_esp32.ino`'s `handleStream()` calls `checkCamToken()`. The token rides
+the already-PIN-gated `/pair/confirm` response, so no new user-facing step;
+the manual-entry path takes it from the pairing screen's Advanced section.
 
-### Adaptive ESP-NOW channel discovery for edge nodes (IMPROVEMENTS.md B5)
-Edge nodes currently find their ESP-NOW channel by scanning for the
-hardcoded home-router `WIFI_SSID` (`edge_node_esp32.ino`,
-`edge_node_esp32_c3.ino`) even though they never actually join WiFi —
-renaming the router forces a reflash of every node. Proposed fix: scan all
-13 channels listening for the bridge's own beacon (`MESH_MAGIC`, rank 0)
-instead of the router's SSID — decouples the mesh from router config
-entirely. Not attempted in this pass: changes the edge nodes' boot-time
-channel-acquisition logic, which is exactly the kind of change that's
-risky to get subtly wrong without a physical bench test (nodes that can't
-find their channel don't join the mesh at all — silent failure, hard to
-diagnose remotely).
+**Bench-test note:** the Pi and app halves are covered by tests, but the
+firmware half (`handleStream()`'s new gate) shares the general caveat that
+nothing in `firmware/` has been compiled or flashed from this sandbox —
+confirm the live view still loads once the camera is actually flashed.
+
+### Adaptive ESP-NOW channel discovery for edge nodes (IMPROVEMENTS.md B5) — ✅ RESOLVED (differently than proposed)
+Edge nodes used to find their ESP-NOW channel by scanning for the hardcoded
+home-router `WIFI_SSID` (`edge_node_esp32.ino`, `edge_node_esp32_c3.ino`)
+even though they never actually joined WiFi — renaming the router forced a
+reflash of every node. The proposed fix below (scan for the bridge's own
+beacon instead of the router's SSID) was never built — instead, the
+2026-07-27 UART-wired-bridge work (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`)
+made the whole problem moot: every node (bridge + both edge variants) now
+locks to a fixed constant, `MESH_FIXED_CHANNEL` in `mesh_config.h`, with no
+scanning at all — confirmed via `grep` across both edge sketches, no
+`WIFI_SSID` reference remains in either. This was a side effect of removing
+the router dependency for the UART deployment mode, not a deliberate fix
+of this specific finding, but it closes it: renaming the router (or having
+none at all) no longer requires reflashing any node. Kept below for
+historical context (the originally-proposed alternative was never built).
+
+Original proposal (not implemented, superseded): scan all 13 channels
+listening for the bridge's own beacon (`MESH_MAGIC`, rank 0) instead of the
+router's SSID — decouples the mesh from router config entirely.
 
 ### LAN camera streaming blocks motion detection (IMPROVEMENTS.md B3)
 `cam_esp32.ino`'s `WebServer` is single-threaded; `handleStream()`'s
@@ -240,9 +271,17 @@ untestable-without-hardware reason as the channel discovery item above.
 - [x] `/pair` had no authentication beyond LAN/hotspot reachability + a 600s
       boot-time window — fixed: `/pair` now only confirms existence, real
       credentials require the PIN via `POST /pair/confirm` (see §1 above).
-- [ ] `/api/history*` still has no authentication beyond LAN/hotspot
-      reachability — not covered by the PIN fix (read-only history data, a
-      smaller exposure than credential handoff was).
+- [x] `/api/history*` had no authentication beyond LAN/hotspot reachability —
+      fixed 2026-07-28: per-unit `api_token` (generated in `first_boot.sh`,
+      backfilled onto existing units by `install.sh`), required as
+      `Authorization: Bearer`, constant-time compared, fail-closed. Delivered
+      to the app inside the already-PIN-gated `/pair/confirm` response.
+- [x] **`POST /cam/frame` was completely unauthenticated** — found and fixed
+      2026-07-28; the most serious hole in the system. One POST from any LAN
+      host hijacked the Pi's notion of the camera's IP, which then leaked
+      `CAM_TOKEN` (the token authorizing `DELETE /event/<id>`) to the
+      attacker on the next fetch, relayed attacker images to the app, and
+      allowed unbounded motion-alert/push spam. See `IMPROVEMENTS.md §Α7`.
 - [ ] No per-customer/multi-tenant device registry — confirmed: one shared
       HiveMQ Cloud account hardcoded for the entire fleet
       (`pi/install.sh:105-112`). Current model is single-tenant.

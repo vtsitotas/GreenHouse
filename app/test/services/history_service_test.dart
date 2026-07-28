@@ -95,4 +95,74 @@ void main() {
       expect(series[1].zone, isNull);
     });
   });
+
+  group('history API authentication', () {
+    test('authHeaders sends a Bearer token when one is configured', () {
+      expect(HistoryService.authHeaders('tok123'),
+          {'Authorization': 'Bearer tok123'});
+    });
+
+    test('authHeaders sends no header at all when the token is empty', () {
+      expect(HistoryService.authHeaders(''), isEmpty);
+    });
+
+    test('fetchPoints attaches the Authorization header', () async {
+      late http.Request captured;
+      final client = MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode({'points': []}), 200);
+      });
+      await HistoryService(client: client).fetchPoints(
+        lanHost: 'greenhouse.local',
+        zone: 'zone1',
+        metric: 'air_temperature',
+        apiToken: 'sekret',
+      );
+      expect(captured.headers['Authorization'], 'Bearer sekret');
+    });
+
+    test('fetchSeries attaches the Authorization header', () async {
+      late http.Request captured;
+      final client = MockClient((req) async {
+        captured = req;
+        return http.Response(jsonEncode([]), 200);
+      });
+      await HistoryService(client: client)
+          .fetchSeries(lanHost: 'greenhouse.local', apiToken: 'sekret');
+      expect(captured.headers['Authorization'], 'Bearer sekret');
+    });
+
+    test('a 401 from an unauthorized history fetch surfaces as an error', () async {
+      final client = MockClient(
+          (_) async => http.Response(jsonEncode({'error': 'unauthorized'}), 401));
+      expect(
+        () => HistoryService(client: client).fetchPoints(
+          lanHost: 'greenhouse.local',
+          zone: 'zone1',
+          metric: 'air_temperature',
+        ),
+        throwsA(isA<Exception>()),
+      );
+    });
+  });
+
+  group('TLS transport', () {
+    test('httpsUri targets the portal HTTPS port, not plaintext 80', () {
+      final uri = HistoryService.httpsUri('greenhouse.local', '/api/history',
+          {'metric': 'air_temperature'});
+      expect(uri.scheme, 'https');
+      expect(uri.port, kPortalHttpsPort);
+      expect(uri.path, '/api/history');
+      expect(uri.queryParameters['metric'], 'air_temperature');
+    });
+
+    test('httpUri stays on plaintext for the compatibility fallback', () {
+      final uri = HistoryService.httpUri('greenhouse.local', '/api/history/series');
+      expect(uri.scheme, 'http');
+    });
+
+    test('kPortalHttpsPort does not collide with the captive portal on 80', () {
+      expect(kPortalHttpsPort, isNot(80));
+    });
+  });
 }

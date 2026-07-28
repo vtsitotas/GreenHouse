@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'dart:io';
-import 'package:crypto/crypto.dart';
 import 'package:flutter/foundation.dart';
+import 'package:greenhouse_app/utils/cert_pinning.dart' as pinning;
 import 'package:mqtt_client/mqtt_client.dart';
 import 'package:mqtt_client/mqtt_server_client.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -90,22 +90,12 @@ class MqttConnection implements GreenhouseConnection {
   // a comma-separated list of every fingerprint we accept (CA first, then the
   // leaf — see first_boot.sh). Pinning only the leaf, as this originally did,
   // rejected the CA callback and silently broke every LAN connection.
+  // Delegates to the shared implementation in utils/cert_pinning.dart, which
+  // the portal's HTTPS client uses too — both links pin the same per-unit
+  // fingerprint, so the check must not drift between them.
   @visibleForTesting
-  static bool matchesPinnedFingerprint(List<int> certDer, String expectedFingerprint) {
-    final expected = expectedFingerprint
-        .split(',')
-        .map((f) => f.trim().toUpperCase())
-        .where((f) => f.isNotEmpty)
-        .toSet();
-    if (expected.isEmpty) return false; // nothing to pin against — fail closed
-    final actual = sha256
-        .convert(certDer)
-        .bytes
-        .map((b) => b.toRadixString(16).padLeft(2, '0'))
-        .join(':')
-        .toUpperCase();
-    return expected.contains(actual);
-  }
+  static bool matchesPinnedFingerprint(List<int> certDer, String expectedFingerprint) =>
+      pinning.matchesPinnedFingerprint(certDer, expectedFingerprint);
 
   Future<bool> _tryConnect(String host, String user, String pass,
       ConnectionConfig config, int gen) async {

@@ -31,6 +31,7 @@ class _CameraScreenState extends ConsumerState<CameraScreen> {
           _LiveViewCard(
             connectionStatus: connectionStatus,
             cameraIp: camStatus?.ip,
+            camToken: ref.watch(savedConfigProvider).valueOrNull?.camToken ?? '',
           ),
         ],
       ),
@@ -70,11 +71,29 @@ class _StatusCard extends StatelessWidget {
 class _LiveViewCard extends ConsumerStatefulWidget {
   final ConnectionStatus? connectionStatus;
   final String? cameraIp;
-  const _LiveViewCard({required this.connectionStatus, required this.cameraIp});
+
+  /// Shared camera token, appended to the direct-LAN `/stream` URL. The
+  /// camera rejects an unauthenticated `/stream` now, so an empty token here
+  /// (config paired before this existed) shows the camera's 401 rather than a
+  /// picture — re-pair to pick the token up.
+  final String camToken;
+
+  const _LiveViewCard({
+    required this.connectionStatus,
+    required this.cameraIp,
+    required this.camToken,
+  });
 
   @override
   ConsumerState<_LiveViewCard> createState() => _LiveViewCardState();
 }
+
+/// Direct-LAN MJPEG URL for the camera, carrying the shared token the camera
+/// firmware's `checkCamToken()` requires. Query param (not a header) because
+/// the MJPEG client has no way to set headers on the stream request.
+@visibleForTesting
+String streamUrl(String cameraIp, String camToken) =>
+    'http://$cameraIp/stream?token=${Uri.encodeQueryComponent(camToken)}';
 
 class _LiveViewCardState extends ConsumerState<_LiveViewCard> {
   @override
@@ -110,7 +129,7 @@ class _LiveViewCardState extends ConsumerState<_LiveViewCard> {
     if (widget.connectionStatus == ConnectionStatus.local && widget.cameraIp != null) {
       return Card(
         clipBehavior: Clip.antiAlias,
-        child: Mjpeg(stream: 'http://${widget.cameraIp}/stream', isLive: true),
+        child: Mjpeg(stream: streamUrl(widget.cameraIp!, widget.camToken), isLive: true),
       );
     }
     if (widget.connectionStatus == ConnectionStatus.remote) {

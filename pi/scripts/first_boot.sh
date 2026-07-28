@@ -46,6 +46,26 @@ FINGERPRINT=$(printf '%s,%s' "$CA_FINGERPRINT" "$LEAF_FINGERPRINT" | sed 's/^,//
 # 2026-07-17-direct-pi-pairing-design.md). Zero-padded so it's always 6 digits.
 PAIR_PIN=$(printf '%06d' $(( $(od -An -N4 -tu4 /dev/urandom) % 1000000 )))
 
+# Bearer token for the portal's read-only history API (/api/history,
+# /api/history/series). Those endpoints used to be reachable by anything on
+# the LAN/hotspot with no authentication at all -- a full dump of the unit's
+# sensor history to any joined device. Handed to the app in the same PIN-gated
+# /pair/confirm response as the MQTT credentials, so it inherits that flow's
+# proof-of-possession rather than adding a second thing for the user to enter.
+API_TOKEN=$(openssl rand -base64 33 | tr -d '/+=\n' | head -c 32)
+
+# Per-unit camera token. Generated here (not copied from the tracked example)
+# so every cloned unit gets its own instead of the whole fleet sharing one
+# value that is public in the repo. Must be copied into CAM_TOKEN in the
+# camera's flashed secrets.h -- a deliberate manual sync step, surfaced by
+# selftest.sh, because the camera is separately flashed hardware.
+if [ ! -f "$CONFIG_DIR/cam_token.txt" ]; then
+  openssl rand -base64 33 | tr -d '/+=\n' | head -c 32 > "$CONFIG_DIR/cam_token.txt"
+  echo "" >> "$CONFIG_DIR/cam_token.txt"
+  chown root:pi "$CONFIG_DIR/cam_token.txt"
+  chmod 640 "$CONFIG_DIR/cam_token.txt"
+fi
+
 # Device ID = last 4-5 hex chars of MAC (tail -c 5 accounts for sysfs newline) (uppercase)
 DEVICE_ID=$(cat /sys/class/net/wlan0/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
 
@@ -63,6 +83,7 @@ cat > "$CONFIG" <<EOF
   "port": 8883,
   "tls_fingerprint": "${FINGERPRINT}",
   "pair_pin": "${PAIR_PIN}",
+  "api_token": "${API_TOKEN}",
   "bridge_username": "bridge",
   "bridge_password": "${BRIDGE_PASSWORD}"
 }

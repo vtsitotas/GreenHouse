@@ -7,6 +7,8 @@
 # app over MQTT. See docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md.
 # ═══════════════════════════════════════════════════════════════════════════
 import base64
+import hashlib
+import hmac
 import json
 import os
 import sys
@@ -23,6 +25,11 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 import cam_store
 import motion
 from push import send_push
+try:
+    from security_log import log_security_event
+except Exception:  # pragma: no cover - logging must never break the intake
+    def log_security_event(*_a, **_kw):
+        return {}
 
 # ── Config ───────────────────────────────────────────────────────────────────
 CAM_HTTP_PORT = 8090
@@ -47,9 +54,186 @@ def _load_cam_token() -> str:
 
 CAM_TOKEN = _load_cam_token()
 
+# Whether a plain bearer token (rather than a signature) still authenticates a
+# frame POST. Kept on by default so a camera that hasn't been reflashed with
+# signing firmware keeps working; create /etc/greenhouse/no_unsigned_cam to
+# turn it off once every camera on site is updated. Same opt-in-hardening
+# pattern as the portal's /etc/greenhouse/require_https.
+ALLOW_UNSIGNED_CAM_AUTH = not os.path.exists('/etc/greenhouse/no_unsigned_cam')
+
 
 def _cam_url(camera_ip: str, path: str) -> str:
     return f'http://{camera_ip}{path}?token={CAM_TOKEN}'
+
+
+# Max accepted snapshot body. A VGA JPEG at quality 12 is ~40-60KB; 2MB is
+# generous headroom while still bounding what an unauthenticated-until-checked
+# request can make this process allocate.
+MAX_FRAME_BYTES = 2 * 1024 * 1024
+
+
+def _token_ok(supplied: str) -> bool:
+    """Constant-time check of a caller-supplied token against CAM_TOKEN.
+
+    Fails closed when no token is provisioned: an empty/missing
+    /etc/greenhouse/cam_token.txt must not silently degrade into "everyone is
+    authorized". install.sh always writes at least the placeholder, so an
+    empty value here means genuine misconfiguration, not a normal state.
+    """
+    if not CAM_TOKEN:
+        return False
+    return hmac.compare_digest(supplied or '', CAM_TOKEN)
+
+
+# ── Signed requests (keeps CAM_TOKEN off the wire) ───────────────────────────
+# The camera link is plain HTTP: the ESP32 has no practical way to validate a
+# per-unit self-signed certificate without firmware-side provisioning. A bearer
+# token over that link is readable by any passive sniffer on the LAN, and once
+# read it authorizes DELETE /event/<id> on the camera — i.e. destroying stored
+# motion evidence.
+#
+# Signing fixes the part that matters without needing TLS: the camera proves
+# knowledge of CAM_TOKEN by sending HMAC-SHA256(token, timestamp + body-hash)
+# instead of the token itself. A sniffer sees only a signature, which is bound
+# to one timestamp and one exact body, so it can neither recover the token nor
+# replay the request. Frame *contents* are still visible — that needs TLS — but
+# the credential no longer leaks.
+SIGNATURE_WINDOW_SECONDS = 300  # tolerate modest clock skew, bound replay
+_seen_signatures: dict = {}     # signature -> monotonic first-seen
+_MAX_SEEN_SIGNATURES = 512
+
+
+def _expected_signature(timestamp: str, body: bytes) -> str:
+    msg = timestamp.encode() + b'.' + hashlib.sha256(body).hexdigest().encode()
+    return hmac.new(CAM_TOKEN.encode(), msg, hashlib.sha256).hexdigest()
+
+
+def _replayed(signature: str) -> bool:
+    """True if this exact signature was already accepted inside the window."""
+    now = time.monotonic()
+    for old, seen in list(_seen_signatures.items()):
+        if now - seen > SIGNATURE_WINDOW_SECONDS:
+            _seen_signatures.pop(old, None)
+    if signature in _seen_signatures:
+        return True
+    if len(_seen_signatures) >= _MAX_SEEN_SIGNATURES:
+        _seen_signatures.pop(min(_seen_signatures, key=_seen_signatures.get), None)
+    _seen_signatures[signature] = now
+    return False
+
+
+# ── Frame encryption ─────────────────────────────────────────────────────────
+# Signing keeps CAM_TOKEN off the wire, but the JPEGs themselves were still
+# readable by anyone sniffing the LAN — i.e. a passive observer could watch the
+# greenhouse. TLS on the ESP32 would need the Pi's per-unit certificate
+# provisioned into firmware; encrypting the payload instead achieves the same
+# confidentiality with a key both ends already share.
+#
+# AES-256-GCM. Key derived from CAM_TOKEN by HMAC (trivially reproducible with
+# mbedtls on the ESP32, which has a hardware AES engine). Wire format:
+#   body = nonce(12) || ciphertext || tag(16)
+# The request signature covers this encrypted body, so authenticity and replay
+# protection are unchanged.
+#
+# cryptography arrives as a firebase-admin dependency (install.sh), so this
+# adds nothing new to deploy — but the import is guarded so a unit missing it
+# degrades to "reject encrypted frames" rather than crashing on startup.
+try:
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    _AESGCM_AVAILABLE = True
+except ImportError:  # pragma: no cover - depends on the host's packages
+    AESGCM = None
+    _AESGCM_AVAILABLE = False
+
+FRAME_KEY_INFO = b'greenhouse-cam-frame-key'
+GCM_NONCE_BYTES = 12
+GCM_TAG_BYTES = 16
+
+# Refuse plaintext frames entirely. Off by default so a camera that hasn't been
+# reflashed with encrypting firmware keeps working; same opt-in pattern as
+# require_https and no_unsigned_cam.
+REQUIRE_ENCRYPTED_CAM = os.path.exists('/etc/greenhouse/require_encrypted_cam')
+
+
+def _frame_key() -> bytes:
+    """32-byte AES key derived from the shared camera token."""
+    return hmac.new(CAM_TOKEN.encode(), FRAME_KEY_INFO, hashlib.sha256).digest()
+
+
+def _decrypt_frame(blob: bytes):
+    """nonce||ciphertext||tag -> plaintext JPEG, or None if it doesn't verify.
+
+    GCM authenticates as it decrypts, so a tampered or wrongly-keyed payload
+    fails here rather than reaching the motion detector as garbage.
+    """
+    if not _AESGCM_AVAILABLE or not CAM_TOKEN:
+        return None
+    if len(blob) < GCM_NONCE_BYTES + GCM_TAG_BYTES:
+        return None
+    nonce, sealed = blob[:GCM_NONCE_BYTES], blob[GCM_NONCE_BYTES:]
+    try:
+        return AESGCM(_frame_key()).decrypt(nonce, sealed, None)
+    except Exception:
+        return None
+
+
+def _signature_ok(timestamp: str, signature: str, body: bytes) -> bool:
+    """Verify a signed request. Fails closed on anything malformed."""
+    if not CAM_TOKEN or not timestamp or not signature:
+        return False
+    try:
+        skew = abs(time.time() - float(timestamp))
+    except (TypeError, ValueError):
+        return False
+    if skew > SIGNATURE_WINDOW_SECONDS:
+        return False
+    if not hmac.compare_digest(signature, _expected_signature(timestamp, body)):
+        return False
+    return not _replayed(signature)
+
+
+def _request_token() -> str:
+    """Token from either the X-Cam-Token header or a ?token= query param.
+
+    The camera firmware sends the header (keeps the secret out of any
+    intermediate request log that records URLs); the query param is accepted
+    too so the same endpoint stays debuggable with plain curl on the bench.
+    """
+    return request.headers.get('X-Cam-Token') or request.args.get('token', '')
+
+
+# ── Rate limiting on the frame intake ────────────────────────────────────────
+# The real camera POSTs once per SNAPSHOT_INTERVAL_MS (3s). Anything far above
+# that is either a malfunction or an attacker, so cap it well above the legit
+# rate but well below "unbounded". This bounds two things the token check
+# alone doesn't: offline brute-forcing of the token, and a flood of rejected
+# requests keeping this single-threaded Flask app busy.
+_MAX_FRAMES_PER_WINDOW = 30
+_RATE_WINDOW_SECONDS = 10.0
+_rate_buckets: dict = {}       # ip -> [count, window_start_monotonic]
+_MAX_RATE_BUCKETS = 256
+
+
+def _rate_limited(ip: str) -> bool:
+    """True when this caller has exceeded the intake rate for its window.
+
+    Checked BEFORE the token comparison so that unauthenticated flooding is
+    bounded too — the whole point is to not do per-request crypto work on
+    behalf of an attacker.
+    """
+    now = time.monotonic()
+    bucket = _rate_buckets.get(ip)
+    if bucket is None or now - bucket[1] >= _RATE_WINDOW_SECONDS:
+        if len(_rate_buckets) >= _MAX_RATE_BUCKETS:
+            for stale in [k for k, v in _rate_buckets.items()
+                          if now - v[1] >= _RATE_WINDOW_SECONDS]:
+                _rate_buckets.pop(stale, None)
+            while len(_rate_buckets) >= _MAX_RATE_BUCKETS:
+                _rate_buckets.pop(min(_rate_buckets, key=lambda k: _rate_buckets[k][1]), None)
+        _rate_buckets[ip] = [1, now]
+        return False
+    bucket[0] += 1
+    return bucket[0] > _MAX_FRAMES_PER_WINDOW
 
 MQTT_HOST = '127.0.0.1'
 MQTT_PORT = 1883
@@ -251,7 +435,69 @@ def on_message(client, userdata, msg):
 @app.route('/cam/frame', methods=['POST'])
 def cam_frame():
     global _prev_gray
+    # Authenticate BEFORE anything else — this endpoint used to be completely
+    # open to the LAN, which was the most serious hole in the system:
+    #   1. _update_heartbeat() below takes the caller's IP as "the camera", so
+    #      any host that POSTed here became the camera as far as the Pi was
+    #      concerned;
+    #   2. every subsequent /capture and /event/<id> fetch then went to that
+    #      attacker-controlled address WITH ?token=CAM_TOKEN attached —
+    #      handing over the very token that gates DELETE /event/<id> on the
+    #      real camera (i.e. the ability to destroy stored motion evidence);
+    #   3. the attacker's own images got relayed to the app as live/event
+    #      frames, and each forged frame could trigger a motion event, a push
+    #      notification, and a DB row.
+    # One unauthenticated POST was therefore enough to hijack the camera feed,
+    # steal the token, and spam alerts. Same shared secret the Pi already uses
+    # in the other direction, so this closes the loop with no new key material.
+    if _rate_limited(request.remote_addr or 'unknown'):
+        return 'rate limited', 429
+    if request.content_length is not None and request.content_length > MAX_FRAME_BYTES:
+        return 'too large', 413
     raw = request.get_data()
+    if len(raw) > MAX_FRAME_BYTES:
+        return 'too large', 413
+
+    # Preferred: a signed request, so CAM_TOKEN itself never crosses the wire
+    # (this link has no TLS — see the _signature_ok docs). Falls back to the
+    # bearer token for a camera not yet reflashed with signing firmware; that
+    # path is equally *authorized* but leaks the token to a passive sniffer,
+    # so ALLOW_UNSIGNED_CAM_AUTH exists to switch it off once every camera on
+    # site is updated, exactly like the portal's require_https flag.
+    signature = request.headers.get('X-Cam-Signature', '')
+    timestamp = request.headers.get('X-Cam-Timestamp', '')
+    if signature or timestamp:
+        if not _signature_ok(timestamp, signature, raw):
+            log_security_event('cam_auth_failure', 'bad/replayed signature',
+                               source=request.remote_addr or 'unknown')
+            return 'unauthorized', 401
+    elif ALLOW_UNSIGNED_CAM_AUTH:
+        if not _token_ok(_request_token()):
+            log_security_event('cam_auth_failure', 'bad token',
+                               source=request.remote_addr or 'unknown')
+            return 'unauthorized', 401
+    else:
+        log_security_event('cam_auth_failure', 'unsigned frame refused',
+                           source=request.remote_addr or 'unknown')
+        return 'unauthorized', 401
+
+    # Decrypt if the camera encrypted the payload. Done AFTER signature
+    # verification so an unauthenticated caller can't make this process do
+    # crypto work, and before anything looks at the bytes as an image.
+    if request.headers.get('X-Cam-Encrypted', '').lower() == 'aes-256-gcm':
+        if not _AESGCM_AVAILABLE:
+            print('[cam_bridge] ERROR: encrypted frame but no AES support '
+                  '(pip install cryptography)', flush=True)
+            return 'encryption unsupported', 503
+        decrypted = _decrypt_frame(raw)
+        if decrypted is None:
+            log_security_event('cam_auth_failure', 'frame failed GCM auth',
+                               source=request.remote_addr or 'unknown')
+            return 'unauthorized', 401   # failed GCM auth = tampered or wrong key
+        raw = decrypted
+    elif REQUIRE_ENCRYPTED_CAM:
+        return 'encryption required', 401
+
     if not raw:
         return 'discard', 200
     _update_heartbeat(request.remote_addr)

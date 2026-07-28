@@ -21,4 +21,18 @@ rm -f "$CERTS/server.csr"
 chown -R mosquitto:mosquitto "$CERTS"
 chmod 640 "$CERTS"/*.key
 chmod 644 "$CERTS"/*.crt
+
+# Portal-readable copy of the SAME key pair. greenhouse-portal runs as `pi`
+# and can't read the mosquitto-owned key, but it needs one to serve HTTPS on
+# 8443. Reusing the same cert (rather than minting a second one) means the
+# fingerprint the app already pins for MQTT covers the HTTPS portal too --
+# one identity per unit, one thing to verify.
+mkdir -p /etc/greenhouse
+cp "$CERTS/server.crt" /etc/greenhouse/portal.crt
+cp "$CERTS/server.key" /etc/greenhouse/portal.key
+chown root:pi /etc/greenhouse/portal.crt /etc/greenhouse/portal.key
+chmod 644 /etc/greenhouse/portal.crt
+chmod 640 /etc/greenhouse/portal.key
+
 echo "[gen_certs] generated unique CA + server cert in $CERTS"
+echo "[gen_certs] portal HTTPS keypair written to /etc/greenhouse/portal.{crt,key}"

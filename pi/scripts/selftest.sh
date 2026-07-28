@@ -104,7 +104,111 @@ except Exception as e:
     sys.exit(1)
 PYEOF
 [ $? -eq 0 ] && ok "recorder db healthy" || no "recorder db unhealthy"
-curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/api/history/series | grep -q '200' && ok "history endpoint responding" || no "history endpoint not responding"
+# /api/history* is bearer-token gated. Check BOTH directions: an
+# unauthenticated request must be refused, and an authenticated one must work.
+# A 200 on the unauthenticated call means the gate has regressed and the
+# unit is serving its whole sensor history to anything on the network.
+API_TOKEN=$(python3 -c "import json;print(json.load(open('/etc/greenhouse/device.json')).get('api_token',''))" 2>/dev/null)
+UNAUTH_CODE=$(curl -s -m 5 -o /dev/null -w "%{http_code}" http://127.0.0.1:80/api/history/series)
+[ "$UNAUTH_CODE" = "401" ] && ok "history endpoint rejects unauthenticated requests" \
+  || no "history endpoint NOT protected (expected 401, got $UNAUTH_CODE)"
+if [ -n "$API_TOKEN" ]; then
+  curl -s -m 5 -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $API_TOKEN" \
+    http://127.0.0.1:80/api/history/series | grep -q '200' \
+    && ok "history endpoint responding (authenticated)" \
+    || no "history endpoint not responding to an authenticated request"
+else
+  no "device.json has no api_token (run install.sh to backfill it)"
+fi
+
+echo "== security posture =="
+# The camera intake endpoint must refuse an unauthenticated POST -- an open
+# one lets any LAN host impersonate the camera and harvest CAM_TOKEN.
+CAM_CODE=$(curl -s -m 5 -o /dev/null -w "%{http_code}" -X POST \
+  --data-binary 'x' -H 'Content-Type: image/jpeg' http://127.0.0.1:8090/cam/frame)
+[ "$CAM_CODE" = "401" ] && ok "cam frame intake rejects unauthenticated POSTs" \
+  || no "cam frame intake NOT protected (expected 401, got $CAM_CODE)"
+# Mosquitto's plaintext listener must never be reachable off-box.
+if ss -ltn 2>/dev/null | grep -q '127.0.0.1:1883'; then
+  ok "mosquitto plaintext listener bound to loopback only"
+elif ss -ltn 2>/dev/null | grep -q ':1883'; then
+  no "mosquitto plaintext listener is NOT loopback-only"
+else
+  no "mosquitto plaintext listener not found"
+fi
+[ -f /etc/mosquitto/acl ] && grep -q 'nodes/+/battery' /etc/mosquitto/acl \
+  && ok "mosquitto ACL covers telemetry topics" \
+  || no "mosquitto ACL missing/stale (bridge telemetry would be denied)"
+PERM=$(stat -c '%a' /etc/greenhouse/device.json 2>/dev/null)
+[ "$PERM" = "640" ] && ok "device.json permissions are 640" \
+  || no "device.json permissions are $PERM (expected 640)"
+# The portal's HTTPS listener: encrypted transport for pairing + history.
+if [ -f /etc/greenhouse/portal.crt ] && [ -f /etc/greenhouse/portal.key ]; then
+  ok "portal TLS keypair present"
+  curl -sk -m 5 -o /dev/null -w "%{http_code}" \
+    -H "Authorization: Bearer $API_TOKEN" \
+    https://127.0.0.1:8443/api/history/series | grep -q '200' \
+    && ok "portal HTTPS (8443) responding" \
+    || no "portal HTTPS (8443) not responding"
+else
+  no "portal TLS keypair missing (run gen_certs.sh / install.sh)"
+fi
+if [ -f /etc/greenhouse/require_https ]; then
+  ok "HTTPS enforcement ENABLED (plaintext secrets endpoints refused)"
+else
+  echo "       [note] HTTPS enforcement is off. Once every paired phone is on a"
+  echo "              build that speaks HTTPS, enable it with:"
+  echo "                sudo touch /etc/greenhouse/require_https && sudo systemctl restart greenhouse-portal"
+fi
+# The camera token must not be the repo's public placeholder.
+if [ "$(tr -d '[:space:]' < /etc/greenhouse/cam_token.txt 2>/dev/null)" = "your-cam-shared-token" ]; then
+  no "cam_token is the PUBLIC placeholder from the repo -- re-run install.sh"
+elif [ -s /etc/greenhouse/cam_token.txt ]; then
+  ok "cam_token is unit-specific"
+else
+  no "cam_token missing"
+fi
+# No credential still in use may be one that leaked into git history, or a
+# public placeholder from the repo. This is what makes rotation verifiable
+# rather than something you have to remember doing.
+if python3 "$(dirname "$0")/check_leaked_secrets.py" >/dev/null 2>&1; then
+  ok "no known-compromised credentials in use"
+else
+  no "COMPROMISED CREDENTIALS IN USE -- run: sudo bash $(dirname "$0")/rotate_secrets.sh"
+  python3 "$(dirname "$0")/check_leaked_secrets.py" 2>&1 | sed 's/^/       /' || true
+fi
+# Security audit trail: present, writable, and summarised so an ongoing attack
+# is visible at a glance rather than only in a push notification the owner may
+# have missed.
+if [ -f /var/log/greenhouse-security.log ]; then
+  ok "security audit log present"
+  python3 - <<'PYEOF'
+import os, sys
+sys.path.insert(0, '/home/pi/greenhouse/shared')
+try:
+    import security_log
+    events = security_log.read_recent(limit=500)
+    if not events:
+        print('       no security events recorded')
+    else:
+        counts = security_log.summarize(events)
+        print(f'       recent security events ({len(events)}):')
+        for kind, n in sorted(counts.items(), key=lambda kv: -kv[1]):
+            flag = '  <-- investigate' if kind in security_log.ALERTABLE else ''
+            print(f'         {n:>5}  {kind}{flag}')
+except Exception as e:
+    print(f'       (could not summarise: {e})')
+PYEOF
+else
+  no "security audit log missing (run install.sh)"
+fi
+# SSH: key-only auth is the hardened state.
+if grep -rqs '^PasswordAuthentication no' /etc/ssh/sshd_config.d/ /etc/ssh/sshd_config; then
+  ok "SSH password authentication disabled"
+else
+  no "SSH password authentication still enabled (add a key, re-run install.sh)"
+fi
 
 echo "== mDNS =="
 systemctl is-active avahi-daemon >/dev/null 2>&1 && ok "avahi-daemon running" || no "avahi-daemon not running"
@@ -118,7 +222,7 @@ echo "== AP profile sanity =="
 command -v nmcli >/dev/null && ok "nmcli present" || no "nmcli missing"
 
 echo ""
-echo "== device credentials =="
+echo "== device credentials (SECRETS -- this output pairs the app; don't paste it publicly) =="
 python3 - <<'PYEOF'
 import json, sys
 try:
@@ -127,8 +231,31 @@ try:
     print(f"       username  : {d['username']}")
     print(f"       password  : {d['password']}")
     print(f"       port      : {d['port']}")
+    # Needed for pairing: the PIN for the normal discovery flow, the tokens
+    # for the manual-entry path (pairing screen -> Advanced) when mDNS
+    # discovery can't find the unit.
+    print(f"       pair_pin  : {d.get('pair_pin', '(missing)')}")
+    print(f"       api_token : {d.get('api_token', '(missing -- run install.sh)')}")
+    # Short out-of-band identity check. Must match what the app shows under
+    # Settings after pairing; a mismatch means the app is talking to something
+    # that is not this Pi (i.e. a man-in-the-middle substituted its own
+    # certificate during pairing). Same derivation as
+    # app/lib/utils/cert_pinning.dart's safetyCode().
+    import hashlib
+    fp = d.get('tls_fingerprint', '')
+    parts = [p.strip().upper() for p in fp.split(',') if p.strip()]
+    if parts:
+        h = hashlib.sha256(','.join(parts).encode()).hexdigest()[:8].upper()
+        print(f"       SAFETY CODE : {h[:4]}-{h[4:]}   <-- compare with the app")
+    else:
+        print("       SAFETY CODE : (no certs yet)")
 except Exception as e:
     print(f"       error: {e}", file=sys.stderr)
+try:
+    with open('/etc/greenhouse/cam_token.txt') as f:
+        print(f"       cam_token : {f.read().strip() or '(empty)'}")
+except Exception:
+    print("       cam_token : (not provisioned)")
 PYEOF
 
 echo ""

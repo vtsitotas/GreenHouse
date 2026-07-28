@@ -24,6 +24,26 @@ rm -f /etc/greenhouse/device.json
 # Per-unit TLS — regenerated uniquely by first_boot.sh on the customer's first boot.
 rm -f /etc/mosquitto/certs/ca.key /etc/mosquitto/certs/ca.crt /etc/mosquitto/certs/ca.srl \
       /etc/mosquitto/certs/server.key /etc/mosquitto/certs/server.crt /etc/mosquitto/certs/server.csr
+# Camera token is per-unit too (each greenhouse has its own camera). Leaving
+# the master's token in the image would ship one shared camera credential
+# across the whole fleet; first_boot.sh generates a fresh one per clone.
+rm -f /etc/greenhouse/cam_token.txt
+
+# The admin SSH key is a FLEET-WIDE credential: one private key on the
+# developer's machine unlocks every unit that carries it. Keeping it in a
+# shipped image means one stolen laptop compromises every greenhouse ever
+# flashed, with no way to revoke short of physically revisiting each unit.
+# Removed by default; set KEEP_ADMIN_KEY=1 to retain it deliberately (e.g. for
+# a fleet you operate yourself and want remote support access to).
+if [ "${KEEP_ADMIN_KEY:-0}" = "1" ]; then
+  echo "[prep] KEEP_ADMIN_KEY=1 — leaving the shared admin SSH key in the image."
+  echo "       Every clone will accept the same private key. Rotate it if leaked."
+else
+  echo "[prep] removing shared admin SSH key (set KEEP_ADMIN_KEY=1 to keep it)..."
+  rm -f /home/pi/.ssh/authorized_keys
+  echo "       Clones ship with no authorized key. Add a per-unit key over the"
+  echo "       console, or re-run install.sh on a unit you physically control."
+fi
 
 echo "[prep] wiping sensor history database..."
 rm -f /var/lib/greenhouse/greenhouse.db /var/lib/greenhouse/greenhouse.db-wal /var/lib/greenhouse/greenhouse.db-shm

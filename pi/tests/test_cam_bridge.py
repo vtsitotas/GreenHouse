@@ -21,6 +21,11 @@ def _jpeg(color: int) -> bytes:
     return buf.getvalue()
 
 
+# POST /cam/frame is token-gated (see cam_bridge._token_ok) — every test that
+# exercises the happy path has to authenticate like the real camera does.
+_TEST_TOKEN = 'test-cam-token'
+
+
 def _fresh_client(tmp_path, monkeypatch):
     monkeypatch.setattr(cam_bridge, '_db_conn',
                          cam_store.init_db(str(tmp_path / 'cam.db')))
@@ -30,7 +35,17 @@ def _fresh_client(tmp_path, monkeypatch):
     monkeypatch.setattr(cam_bridge, '_last_event', None)
     monkeypatch.setattr(cam_bridge, 'send_push', lambda *a, **k: None)
     monkeypatch.setattr(cam_bridge, '_mqtt_client', None)
+    monkeypatch.setattr(cam_bridge, 'CAM_TOKEN', _TEST_TOKEN)
+    cam_bridge._rate_buckets.clear()   # rate limiter is process-global state
     return cam_bridge.app.test_client()
+
+
+def _post_frame(client, body, **kwargs):
+    """POST a frame with the camera's auth header, as the firmware does."""
+    headers = kwargs.pop('headers', {})
+    headers.setdefault('X-Cam-Token', _TEST_TOKEN)
+    return client.post('/cam/frame', data=body, content_type='image/jpeg',
+                       headers=headers, **kwargs)
 
 
 def test_cam_url_appends_token_query_param(monkeypatch):
@@ -54,35 +69,35 @@ def test_load_cam_token_strips_whitespace(tmp_path, monkeypatch):
 
 def test_cam_frame_discards_first_frame_no_prior_baseline(tmp_path, monkeypatch):
     client = _fresh_client(tmp_path, monkeypatch)
-    resp = client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg')
+    resp = _post_frame(client, _jpeg(100))
     assert resp.status_code == 200
     assert resp.data == b'discard'
 
 
 def test_cam_frame_saves_on_large_change(tmp_path, monkeypatch):
     client = _fresh_client(tmp_path, monkeypatch)
-    client.post('/cam/frame', data=_jpeg(10), content_type='image/jpeg')
-    resp = client.post('/cam/frame', data=_jpeg(250), content_type='image/jpeg')
+    _post_frame(client, _jpeg(10))
+    resp = _post_frame(client, _jpeg(250))
     assert resp.data.startswith(b'save:')
 
 
 def test_cam_frame_discards_on_small_change(tmp_path, monkeypatch):
     client = _fresh_client(tmp_path, monkeypatch)
-    client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg')
-    resp = client.post('/cam/frame', data=_jpeg(101), content_type='image/jpeg')
+    _post_frame(client, _jpeg(100))
+    resp = _post_frame(client, _jpeg(101))
     assert resp.data == b'discard'
 
 
 def test_cam_frame_updates_heartbeat_and_camera_ip(tmp_path, monkeypatch):
     client = _fresh_client(tmp_path, monkeypatch)
-    client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg',
-                 environ_overrides={'REMOTE_ADDR': '192.168.1.50'})
+    _post_frame(client, _jpeg(100),
+                environ_overrides={'REMOTE_ADDR': '192.168.1.50'})
     assert cam_bridge._get_camera_ip() == '192.168.1.50'
 
 
 def test_cam_frame_empty_body_discards_without_crashing(tmp_path, monkeypatch):
     client = _fresh_client(tmp_path, monkeypatch)
-    resp = client.post('/cam/frame', data=b'', content_type='image/jpeg')
+    resp = _post_frame(client, b'')
     assert resp.data == b'discard'
 
 
@@ -91,8 +106,8 @@ def test_motion_fires_push_when_setting_enabled(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(cam_bridge, 'send_push', lambda title, body: calls.append((title, body)))
     monkeypatch.setattr(cam_bridge, '_load_motion_alert_setting', lambda: True)
-    client.post('/cam/frame', data=_jpeg(10), content_type='image/jpeg')
-    client.post('/cam/frame', data=_jpeg(250), content_type='image/jpeg')
+    _post_frame(client, _jpeg(10))
+    _post_frame(client, _jpeg(250))
     assert len(calls) == 1
     assert calls[0][0] == 'Motion detected'
 
@@ -102,8 +117,8 @@ def test_motion_skips_push_when_setting_disabled(tmp_path, monkeypatch):
     calls = []
     monkeypatch.setattr(cam_bridge, 'send_push', lambda title, body: calls.append((title, body)))
     monkeypatch.setattr(cam_bridge, '_load_motion_alert_setting', lambda: False)
-    client.post('/cam/frame', data=_jpeg(10), content_type='image/jpeg')
-    client.post('/cam/frame', data=_jpeg(250), content_type='image/jpeg')
+    _post_frame(client, _jpeg(10))
+    _post_frame(client, _jpeg(250))
     assert calls == []
 
 
@@ -344,3 +359,303 @@ def test_maintenance_loop_survives_prune_exception(tmp_path, monkeypatch):
     stop_event.set()
     t.join(timeout=2)
     assert len(status_calls) >= 1  # status still publishes despite the pruning exception
+
+
+# ── POST /cam/frame authentication (the camera-hijack hole) ──────────────────
+# Before this gate existed, any LAN host could POST here and (a) become "the
+# camera" as far as the Pi was concerned, (b) receive CAM_TOKEN on the Pi's
+# next /capture or /event fetch, and (c) spam motion events/push alerts.
+
+def test_cam_frame_rejects_request_with_no_token(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    resp = client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg')
+    assert resp.status_code == 401
+
+
+def test_cam_frame_rejects_wrong_token(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    resp = client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg',
+                       headers={'X-Cam-Token': 'wrong'})
+    assert resp.status_code == 401
+
+
+def test_cam_frame_accepts_token_via_query_param(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    resp = client.post(f'/cam/frame?token={_TEST_TOKEN}', data=_jpeg(100),
+                       content_type='image/jpeg')
+    assert resp.status_code == 200
+
+
+def test_unauthenticated_frame_cannot_hijack_camera_ip(tmp_path, monkeypatch):
+    """The core of the vulnerability: a rejected POST must not move _camera_ip,
+    or the Pi would send CAM_TOKEN to the attacker on its next fetch."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg',
+                environ_overrides={'REMOTE_ADDR': '10.0.0.66'})
+    assert cam_bridge._get_camera_ip() is None
+
+
+def test_unauthenticated_frame_cannot_create_motion_event(tmp_path, monkeypatch):
+    """A rejected POST must not reach motion detection — otherwise an attacker
+    could flood push notifications and grow the events DB at will."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    calls = []
+    monkeypatch.setattr(cam_bridge, 'send_push', lambda t, b: calls.append((t, b)))
+    monkeypatch.setattr(cam_bridge, '_load_motion_alert_setting', lambda: True)
+    _post_frame(client, _jpeg(10))                      # legit baseline
+    client.post('/cam/frame', data=_jpeg(250),          # attacker's big change
+                content_type='image/jpeg')
+    assert calls == []
+
+
+def test_token_check_fails_closed_when_no_token_provisioned(tmp_path, monkeypatch):
+    """An empty/missing cam_token.txt must not mean 'allow everyone'."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, 'CAM_TOKEN', '')
+    resp = client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg',
+                       headers={'X-Cam-Token': ''})
+    assert resp.status_code == 401
+    assert cam_bridge._token_ok('') is False
+    assert cam_bridge._token_ok('anything') is False
+
+
+def test_cam_frame_rejects_oversized_body(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    oversized = b'\xff' * (cam_bridge.MAX_FRAME_BYTES + 1)
+    resp = _post_frame(client, oversized)
+    assert resp.status_code == 413
+
+
+# ── Frame-intake rate limiting ───────────────────────────────────────────────
+# The real camera POSTs every ~3s. Anything far above that is a malfunction or
+# an attacker; the cap bounds both token brute-forcing and request flooding.
+
+def test_frame_intake_is_rate_limited(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    codes = [_post_frame(client, _jpeg(100)).status_code
+             for _ in range(cam_bridge._MAX_FRAMES_PER_WINDOW + 5)]
+    assert 429 in codes
+    assert codes[0] == 200          # legitimate cadence is unaffected
+
+
+def test_rate_limit_applies_before_token_check(tmp_path, monkeypatch):
+    """Unauthenticated flooding must be cheap to reject — the limiter runs
+    before any per-request crypto work is done for the attacker."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    codes = []
+    for _ in range(cam_bridge._MAX_FRAMES_PER_WINDOW + 5):
+        codes.append(client.post('/cam/frame', data=_jpeg(100),
+                                 content_type='image/jpeg').status_code)
+    assert codes[0] == 401          # still rejected on auth...
+    assert codes[-1] == 429         # ...and eventually throttled too
+
+
+def test_rate_limit_is_per_client(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    for _ in range(cam_bridge._MAX_FRAMES_PER_WINDOW + 5):
+        _post_frame(client, _jpeg(100),
+                    environ_overrides={'REMOTE_ADDR': '10.0.0.66'})
+    # A flooding host must not throttle the real camera on another address.
+    resp = _post_frame(client, _jpeg(100),
+                       environ_overrides={'REMOTE_ADDR': '192.168.1.50'})
+    assert resp.status_code == 200
+
+
+def test_rate_limit_window_resets(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    for _ in range(cam_bridge._MAX_FRAMES_PER_WINDOW + 5):
+        _post_frame(client, _jpeg(100))
+    assert _post_frame(client, _jpeg(100)).status_code == 429
+    for bucket in cam_bridge._rate_buckets.values():   # fast-forward the window
+        bucket[1] -= cam_bridge._RATE_WINDOW_SECONDS + 1
+    assert _post_frame(client, _jpeg(100)).status_code == 200
+
+
+def test_rate_bucket_table_is_bounded(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    for i in range(400):
+        _post_frame(client, _jpeg(100),
+                    environ_overrides={'REMOTE_ADDR': f'10.7.{i // 250}.{i % 250}'})
+    assert len(cam_bridge._rate_buckets) <= cam_bridge._MAX_RATE_BUCKETS
+
+
+# ── Signed frame POSTs (keeps CAM_TOKEN off a plaintext link) ────────────────
+# The camera link has no TLS, so a bearer token was readable by any passive
+# sniffer — and that token also authorizes DELETE /event/<id> on the camera.
+# Signing proves knowledge of it without transmitting it.
+
+def _sign(body, token=_TEST_TOKEN, ts=None):
+    import hashlib, hmac as _hmac, time as _time
+    ts = ts or str(int(_time.time()))
+    msg = f"{ts}.{hashlib.sha256(body).hexdigest()}"
+    return ts, _hmac.new(token.encode(), msg.encode(), hashlib.sha256).hexdigest()
+
+
+def _post_signed(client, body, **kw):
+    ts, sig = _sign(body, **kw)
+    return client.post('/cam/frame', data=body, content_type='image/jpeg',
+                       headers={'X-Cam-Timestamp': ts, 'X-Cam-Signature': sig})
+
+
+def test_signed_frame_is_accepted(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    assert _post_signed(client, _jpeg(100)).status_code == 200
+
+
+def test_signature_is_not_replayable(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    body = _jpeg(100)
+    ts, sig = _sign(body)
+    hdrs = {'X-Cam-Timestamp': ts, 'X-Cam-Signature': sig}
+    first = client.post('/cam/frame', data=body, content_type='image/jpeg', headers=hdrs)
+    replay = client.post('/cam/frame', data=body, content_type='image/jpeg', headers=hdrs)
+    assert first.status_code == 200
+    assert replay.status_code == 401
+
+
+def test_signature_is_bound_to_the_body(tmp_path, monkeypatch):
+    """A captured signature must not authorize a different payload."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    ts, sig = _sign(_jpeg(100))
+    resp = client.post('/cam/frame', data=_jpeg(250), content_type='image/jpeg',
+                       headers={'X-Cam-Timestamp': ts, 'X-Cam-Signature': sig})
+    assert resp.status_code == 401
+
+
+def test_signature_from_wrong_token_rejected(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    assert _post_signed(client, _jpeg(100), token='not-the-token').status_code == 401
+
+
+def test_stale_timestamp_rejected(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    old = str(int(time.time()) - cam_bridge.SIGNATURE_WINDOW_SECONDS - 60)
+    assert _post_signed(client, _jpeg(100), ts=old).status_code == 401
+
+
+def test_malformed_timestamp_rejected(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    resp = client.post('/cam/frame', data=_jpeg(100), content_type='image/jpeg',
+                       headers={'X-Cam-Timestamp': 'not-a-number',
+                                'X-Cam-Signature': 'deadbeef'})
+    assert resp.status_code == 401
+
+
+def test_unsigned_bearer_rejected_when_hardening_enabled(tmp_path, monkeypatch):
+    """Once every camera is reflashed with signing firmware, the operator can
+    refuse the token-in-the-clear path entirely."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, 'ALLOW_UNSIGNED_CAM_AUTH', False)
+    assert _post_frame(client, _jpeg(100)).status_code == 401
+    cam_bridge._seen_signatures.clear()
+    assert _post_signed(client, _jpeg(100)).status_code == 200
+
+
+def test_unsigned_bearer_still_works_by_default(tmp_path, monkeypatch):
+    """Default must not brick a camera that hasn't been reflashed yet."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, 'ALLOW_UNSIGNED_CAM_AUTH', True)
+    assert _post_frame(client, _jpeg(100)).status_code == 200
+
+
+def test_seen_signature_table_is_bounded(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    monkeypatch.setattr(cam_bridge, '_MAX_FRAMES_PER_WINDOW', 10_000)
+    for i in range(cam_bridge._MAX_SEEN_SIGNATURES + 50):
+        _post_signed(client, _jpeg(i % 200))
+    assert len(cam_bridge._seen_signatures) <= cam_bridge._MAX_SEEN_SIGNATURES
+
+
+# ── Frame encryption (AES-256-GCM) ──────────────────────────────────────────
+# Signing keeps the token off the wire; encryption keeps the greenhouse images
+# off it too, without needing TLS on the ESP32.
+
+def _encrypt(body, token=_TEST_TOKEN):
+    import hashlib as _h, hmac as _hm, os as _os
+    from cryptography.hazmat.primitives.ciphers.aead import AESGCM
+    key = _hm.new(token.encode(), cam_bridge.FRAME_KEY_INFO, _h.sha256).digest()
+    nonce = _os.urandom(12)
+    return nonce + AESGCM(key).encrypt(nonce, body, None)
+
+
+def _post_encrypted(client, body, token=_TEST_TOKEN, sign_token=_TEST_TOKEN):
+    blob = _encrypt(body, token)
+    ts, sig = _sign(blob, token=sign_token)
+    return client.post('/cam/frame', data=blob, content_type='image/jpeg',
+                       headers={'X-Cam-Timestamp': ts, 'X-Cam-Signature': sig,
+                                'X-Cam-Encrypted': 'aes-256-gcm'})
+
+
+def test_encrypted_frame_is_decrypted_and_processed(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    assert _post_encrypted(client, _jpeg(10)).status_code == 200
+    resp = _post_encrypted(client, _jpeg(250))     # big change -> motion
+    assert resp.data.startswith(b'save:')
+
+
+def test_encrypted_frame_with_wrong_key_is_rejected(tmp_path, monkeypatch):
+    """GCM authenticates on decrypt, so a wrongly-keyed payload never reaches
+    the motion detector as garbage."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    resp = _post_encrypted(client, _jpeg(100), token='wrong-key',
+                           sign_token=_TEST_TOKEN)
+    assert resp.status_code == 401
+
+
+def test_tampered_ciphertext_is_rejected(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    blob = bytearray(_encrypt(_jpeg(100)))
+    blob[20] ^= 0xFF                                # flip a ciphertext bit
+    ts, sig = _sign(bytes(blob))
+    resp = client.post('/cam/frame', data=bytes(blob), content_type='image/jpeg',
+                       headers={'X-Cam-Timestamp': ts, 'X-Cam-Signature': sig,
+                                'X-Cam-Encrypted': 'aes-256-gcm'})
+    assert resp.status_code == 401
+
+
+def test_truncated_encrypted_payload_is_rejected(tmp_path, monkeypatch):
+    _fresh_client(tmp_path, monkeypatch)
+    assert cam_bridge._decrypt_frame(b'short') is None
+
+
+def test_ciphertext_does_not_contain_the_plaintext(tmp_path, monkeypatch):
+    """The actual point: a sniffer must not be able to read the image."""
+    monkeypatch.setattr(cam_bridge, 'CAM_TOKEN', _TEST_TOKEN)
+    plain = _jpeg(100)
+    blob = _encrypt(plain)
+    assert plain not in blob
+    assert blob[:2] != b'\xff\xd8'                  # no JPEG magic on the wire
+    assert cam_bridge._decrypt_frame(blob) == plain  # round-trips for the Pi
+
+
+def test_plaintext_frames_refused_when_encryption_required(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, 'REQUIRE_ENCRYPTED_CAM', True)
+    cam_bridge._seen_signatures.clear()
+    assert _post_signed(client, _jpeg(100)).status_code == 401   # plaintext
+    cam_bridge._seen_signatures.clear()
+    assert _post_encrypted(client, _jpeg(100)).status_code == 200
+
+
+def test_plaintext_still_accepted_by_default(tmp_path, monkeypatch):
+    """Default must not brick a camera running pre-encryption firmware."""
+    client = _fresh_client(tmp_path, monkeypatch)
+    monkeypatch.setattr(cam_bridge, 'REQUIRE_ENCRYPTED_CAM', False)
+    cam_bridge._seen_signatures.clear()
+    assert _post_signed(client, _jpeg(100)).status_code == 200
+
+
+def test_encrypted_frame_fails_closed_without_aes_support(tmp_path, monkeypatch):
+    client = _fresh_client(tmp_path, monkeypatch)
+    cam_bridge._seen_signatures.clear()
+    monkeypatch.setattr(cam_bridge, '_AESGCM_AVAILABLE', False)
+    assert _post_encrypted(client, _jpeg(100)).status_code == 503

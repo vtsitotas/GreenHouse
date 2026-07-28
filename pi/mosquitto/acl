@@ -3,15 +3,27 @@
 # loopback listener (1883) stays anonymous/unrestricted for local Pi tooling
 # and isn't affected by this file.
 #
-# bridge_esp32 only ever publishes sensor readings and node-status -- it
-# never subscribes to anything (see bridge_esp32.ino). Scoping it to
-# publish-only on exactly those topics means a compromised/spoofed bridge
-# can't send actuator commands, rewrite rules, or read anything back.
+# The bridge only ever publishes sensor readings and per-node telemetry -- it
+# never subscribes to anything (see bridge_esp32_wifi_fallback.ino, the only
+# bridge variant that is an MQTT client at all; the UART bridge reaches
+# Mosquitto indirectly through serial_bridge.py on the loopback listener and
+# never authenticates here). Scoping it to publish-only on exactly those
+# topics means a compromised/spoofed bridge can't send actuator commands,
+# rewrite rules, or read anything back.
+#
+# /battery and /mesh are NOT optional extras: the deep-sleep telemetry work
+# (2026-07-26) made the bridge publish both on every reading, and the app's
+# Mesh Map screen consumes them. They were missing from this list, so
+# Mosquitto silently denied every one of those publishes -- keep this list in
+# sync with the firmware's publish sites or telemetry disappears with no error
+# anywhere except the broker log.
 user bridge
 topic write greenhouse/+/air/temperature
 topic write greenhouse/+/air/humidity
 topic write greenhouse/+/soil/moisture
 topic write greenhouse/nodes/+/status
+topic write greenhouse/nodes/+/battery
+topic write greenhouse/nodes/+/mesh
 
 # The app is the trusted end-user client: dashboard, actuator control,
 # weather rules, notification settings, camera, history -- needs the full
