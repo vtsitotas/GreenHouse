@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/connection/mqtt_connection.dart';
+import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/models/notification_settings.dart';
 import 'package:greenhouse_app/models/weather_alert.dart';
@@ -29,6 +30,12 @@ final connectOnStartProvider = FutureProvider<void>((ref) async {
 
 final connectionStatusProvider = StreamProvider<ConnectionStatus>((ref) =>
     ref.watch(repositoryProvider).connectionStatus);
+
+/// The stored pairing config (null when unpaired). Read-only accessor for
+/// screens that need a secret from it — e.g. the camera screen needs
+/// `camToken` to open the camera's now-authenticated `/stream`.
+final savedConfigProvider = FutureProvider<ConnectionConfig?>(
+    (ref) => ref.read(pairingServiceProvider).loadConfig());
 
 /// Emits each WeatherAlert as it arrives via MQTT.
 final weatherAlertsProvider = StreamProvider<WeatherAlert>((ref) {

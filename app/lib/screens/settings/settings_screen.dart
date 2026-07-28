@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
+import 'package:greenhouse_app/utils/cert_pinning.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -19,6 +20,38 @@ class SettingsScreen extends ConsumerWidget {
             data: (s) => Text(s.name),
             loading: () => const Text('Connecting…'),
             error: (_, __) => const Text('Unknown'),
+          ),
+        ),
+        const Divider(),
+        // Out-of-band identity check. Pairing pins the certificate whenever the
+        // fingerprint is known in advance (QR), but a first-time pair over mDNS
+        // has nothing to verify against — a man-in-the-middle could have
+        // substituted its own certificate. Comparing this code once against the
+        // one `selftest.sh` prints on the Pi detects exactly that, the same way
+        // an SSH host-key fingerprint does.
+        ref.watch(savedConfigProvider).when(
+          data: (config) {
+            final code = safetyCode(config?.tlsFingerprint ?? '');
+            return ListTile(
+              leading: const Icon(Icons.verified_user_outlined),
+              title: const Text('Safety code'),
+              subtitle: Text(
+                code.isEmpty
+                    ? 'Not paired'
+                    : '$code\nMust match the Pi: sudo bash scripts/selftest.sh',
+              ),
+              isThreeLine: code.isNotEmpty,
+            );
+          },
+          loading: () => const ListTile(
+            leading: Icon(Icons.verified_user_outlined),
+            title: Text('Safety code'),
+            subtitle: Text('Loading…'),
+          ),
+          error: (_, __) => const ListTile(
+            leading: Icon(Icons.verified_user_outlined),
+            title: Text('Safety code'),
+            subtitle: Text('Unavailable'),
           ),
         ),
         const Divider(),

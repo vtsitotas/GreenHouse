@@ -29,6 +29,32 @@ ProtectHome=read-only
 # NOPASSWD sudo calls fail to initialize under ProtectSystem=strict.
 ReadWritePaths=/etc/greenhouse /run/sudo
 
+# Additional sandboxing, deliberately a SUBSET of what the sibling services
+# get. This process must keep working with setuid sudo, so three directives
+# the others use are omitted on purpose:
+#   - NoNewPrivileges (see the note above)
+#   - CapabilityBoundingSet= : sudo's setuid transition needs capabilities
+#     (CAP_SETUID/CAP_SETGID and friends); emptying the bounding set breaks it
+#   - SystemCallFilter : sudo's privilege-transition syscalls sit close enough
+#     to the edge of @system-service that filtering here risks bricking WiFi
+#     setup on a shipped unit for no meaningful gain
+# What remains below is everything that does NOT interact with the sudo path.
+# RestrictSUIDSGID is safe despite the above: it blocks *creating* setuid
+# files, not *executing* an existing setuid binary like sudo.
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+UMask=0077
+
 TimeoutStopSec=15
 KillSignal=SIGTERM
 

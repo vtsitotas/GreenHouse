@@ -1,5 +1,137 @@
 # Greenhouse IoT — Session Handoff
 
+## TL;DR of this session (2026-07-28 — security hardening pass)
+
+Full security review of every attack surface, then fixes. **One critical
+vulnerability found and closed**, plus four smaller real issues. 30 new tests
+(179 pytest / 187 Flutter, all green; `flutter analyze` clean).
+
+**Critical — `POST /cam/frame` was completely unauthenticated.** `cam_bridge.py`
+listens on `0.0.0.0:8090` and accepted a snapshot from anyone on the LAN. The
+chain: `_update_heartbeat()` sets `_camera_ip` from the *sender's* address, so
+one POST made an attacker "the camera"; every subsequent Pi fetch
+(`/capture`, `/event/<id>`) then went to that attacker **carrying
+`?token=CAM_TOKEN`** — handing over the token that authorizes
+`DELETE /event/<id>`, i.e. the ability to wipe stored motion evidence off the
+real camera's SD card. It also let the attacker feed arbitrary images to the
+app as live/event frames and trigger unlimited motion alerts / push
+notifications / DB rows. Fixed with a token gate (`X-Cam-Token` header, or
+`?token=` for bench debugging), `hmac.compare_digest`, fail-closed when
+unprovisioned, plus a body-size cap. 7 tests, **verified to fail** with the
+gate removed.
+
+**Also fixed:**
+- `/api/history*` served the unit's entire sensor history to anything on the
+  LAN/hotspot. Now bearer-token gated via a new per-unit `api_token`.
+  `install.sh` backfills it onto already-provisioned units — without that,
+  `first_boot.sh`'s `.provisioned` sentinel would have left existing Pis
+  permanently 401ing.
+- Camera `/stream` was the last open endpoint (`IMPROVEMENTS.md §Α5`'s
+  remainder). Built the full cross-stack chain: portal payload →
+  `ConnectionConfig.camToken` → `streamUrl()` → firmware `checkCamToken()`.
+- PIN comparison used `!=`, which short-circuits and leaks the correct prefix
+  through response timing. Now `hmac.compare_digest`.
+- Mosquitto ACL allowed the `bridge` user 4 topics but the firmware publishes
+  6 — `/battery` and `/mesh` were being **silently denied** since the
+  2026-07-26 telemetry work. Security-config bug and a functional one.
+
+**Hardening:** full systemd sandbox set across all services (two documented
+exceptions: serial-bridge keeps `/dev` access, portal keeps setuid-sudo
+compatibility); portal gained CSP with a per-request nonce, security headers,
+a 64KB body cap, and no longer echoes exception text to clients; `selftest.sh`
+gained security regression checks that assert the gates return 401.
+
+**Second wave (same session) — the gaps the first pass had only documented:**
+- **TLS on the LAN links.** The portal now serves **HTTPS on 8443** using the
+  same per-unit cert as the broker, and the app pins the same fingerprint it
+  already pins for MQTT (new shared `app/lib/utils/cert_pinning.dart`; the
+  MQTT path was refactored onto it so the two can't drift). Port 80 stays
+  plaintext *only* for the captive portal, which can't work over TLS. Verified
+  end-to-end against a real TLS server: authenticated 200, unauthenticated 401,
+  enforcement flag 403s plaintext while leaving the captive portal reachable.
+  An opt-in `/etc/greenhouse/require_https` closes the downgrade path once
+  every paired phone is updated (not default — it would lock out old builds).
+- **Global pairing lockout was itself a DoS.** 5 wrong PINs from *anyone*
+  latched a global flag until service restart, so any device on the network
+  could permanently block the owner from pairing. Now per-IP with automatic
+  expiry, a bounded state table, a much higher global backstop, and
+  `X-Forwarded-For` deliberately not trusted.
+- **`CAM_TOKEN` default was a value published in this repo.** Now generated
+  randomly per unit in `first_boot.sh` (so clones differ), auto-replaced on
+  units still holding the placeholder, and `selftest.sh` fails if it sees it.
+- **Shared fleet admin SSH key** is no longer baked into shipped clones
+  (`prep_image.sh` strips it; `KEEP_ADMIN_KEY=1` retains it deliberately), and
+  SSH password auth is disabled — guarded, so a unit with no authorized key
+  keeps password login rather than locking the owner out, with `sshd -t`
+  validation and rollback.
+- Rate limiting on the camera frame intake, checked before the token compare.
+
+**Third wave — closing what the second wave had called structural:**
+- **First-contact MITM is now closed for the QR path.** Pairing pins the
+  certificate whenever a fingerprint is known out of band (QR scan or manual
+  entry), rejecting a mismatched cert *before* the PIN is sent, with an
+  explicit security warning in the UI. It never silently downgrades to
+  plaintext once a fingerprint is known. Only the mDNS-without-QR path still
+  trusts on first use — and a 6-digit PIN provably cannot fix that (any
+  proof-of-knowledge is offline brute-forceable from one captured exchange),
+  so the pairing screen now recommends QR as the secure path.
+- **`CAM_TOKEN` no longer crosses the wire.** Frame POSTs are HMAC-signed —
+  `HMAC-SHA256(token, timestamp + sha256(body))` — so a passive sniffer sees
+  only a signature bound to one body and one moment. Replays are rejected. I
+  transcribed the firmware's signing independently and verified the Pi accepts
+  it, and that tampered bodies, wrong tokens, stale timestamps, malformed
+  timestamps, and replays are all refused. `no_unsigned_cam` drops the legacy
+  bearer path once every camera is reflashed.
+- **Credential rotation is now one command.** `pi/scripts/rotate_secrets.sh`
+  rotates every Pi-owned secret (both MQTT passwords, API token, PIN, cam
+  token, and the TLS keypair) and prints exactly what must be re-paired and
+  re-flashed. New `SECURITY.md` carries the full checklist including the
+  external steps (router, HiveMQ) and the git-history scrub procedure.
+- Confirmed the leak is real and specific rather than assumed: commit
+  `c0383b3` carries a live WiFi password and MQTT password. `SECURITY.md`
+  names them so the rotation can be verified as complete.
+
+**Fourth wave — the last three code-fixable items:**
+- **Camera frames are now encrypted**, closing the final plaintext data path.
+  AES-256-GCM, key = `HMAC(CAM_TOKEN, "greenhouse-cam-frame-key")`, wire format
+  `nonce||ciphertext||tag`. No new dependency: `cryptography` already arrives
+  with `firebase-admin`, and the import is guarded so a unit without it rejects
+  encrypted frames rather than crashing. I transcribed the firmware's
+  `encryptFrame()` byte-for-byte and confirmed the Pi decrypts it, that the key
+  derivations match, and that the plaintext JPEG never appears in the wire
+  bytes. `require_encrypted_cam` refuses plaintext once cameras are reflashed.
+- **Safety code** (`ABCD-EF12`, derived from the pinned fingerprint) is printed
+  by `selftest.sh` and shown in the app under Settings. This is what makes an
+  active MITM on the mDNS pairing path *detectable* — its substituted
+  certificate yields a different code. Both derivations are cross-checked by a
+  test that pins the exact expected value, so they can't drift apart.
+- **`check_leaked_secrets.py`** fails the healthcheck while any credential
+  published in git history (verified: `c0383b3`) or any public repo placeholder
+  is still live — so "did I actually rotate?" is answered by the system, not by
+  memory. 8 tests.
+
+**Explicitly still open** — see `SECURITY.md §3`:
+1. **Rotating the router WiFi and HiveMQ Cloud passwords** — everything the Pi
+   owns is now one command (`rotate_secrets.sh`); these two live in systems
+   this repo cannot reach.
+2. **Active MITM on a first mDNS pairing is detectable, not prevented** —
+   compare the safety code, or pair via QR (which *is* prevented). Genuinely
+   unfixable with a 6-digit PIN without a PAKE.
+3. **Shared ESP-NOW keys** — per-node keys need provisioning the project
+   doesn't have, and per-pair derivation from a shared PMK buys nothing.
+   Deliberately not attempted blind: changing mesh crypto with no compiler or
+   hardware risks silently breaking fleet mesh join, the exact failure mode
+   this repo's docs call hardest to diagnose remotely.
+4. **Single-tenant HiveMQ and unencrypted SD card** — the first needs
+   per-customer cloud infrastructure; the second has no good answer on headless
+   Pi Zero W hardware with no TPM.
+
+Everything in `firmware/` still carries the standing caveat that nothing here
+has been compiled or flashed from this sandbox — the camera's new signing code
+in particular needs a bench run.
+
+---
+
 **Last updated:** 2026-07-27, later (local bench-testing + real-bug session)
 **Status:** ✅ Two genuine, previously-undiagnosed bugs that made login
 impossible are fixed and pushed (`c626db8`, `79e37ff`). Real-hardware
@@ -8,6 +140,56 @@ bring-up continues: UART bridge still doesn't produce any UART traffic
 untested. See "Next step" and the local-session TL;DR right below (read it
 before the UART-wired-bridge TL;DR further down — that one is from earlier
 the same day and is superseded on a few points, noted inline).
+
+---
+
+## Next step
+
+**Immediate — from the later 2026-07-27 session:**
+
+1. **Bridge UART: confirm reflash status.** Wiring + power are confirmed
+   correct (see that session's TL;DR), but `/dev/serial0` shows zero bytes.
+   Check whether `bridge_esp32.ino` (current UART version) has actually been
+   flashed onto the board yet — if it's still running the old WiFi/MQTT
+   firmware, that fully explains zero UART output. If reflashing doesn't fix
+   it, `firmware/bridge_esp32_wifi_fallback/` is ready to flash instead (WiFi
+   + MQTT direct to the Pi, no GPIO wiring/raspi-config step needed) — a real
+   `bridge` MQTT account already exists on the Pi for it.
+2. **ESP32-CAM: flash and bench-test.** Firmware now compiles (missing
+   `secrets.h` and a missing `UriBraces` include were both real blockers,
+   now fixed) — this hasn't been flashed/tested yet. Watch the serial
+   monitor at 115200 baud for camera/SD init, WiFi connect (`billredmi`),
+   and the snapshot-POST cadence reaching `cam_bridge.py`.
+3. **Mesh relay + deep-sleep Phase 1** — per
+   `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md` Task 6 and the
+   original relay plan's Task 5. Untouched this session.
+4. Once all of the above are confirmed working end-to-end, this repo will
+   finally have its firmware fully field-validated, not just code-reviewed.
+
+**Also worth doing:** the hardware bring-up edits stashed at the top of this
+session's TL;DR (`git stash list`) have real learned values (device MACs,
+GPIO pin fixes, soil calibration) that were never reapplied against the
+newer UART-based firmware — worth a deliberate pass rather than leaving
+them stashed indefinitely.
+
+**After that**, other candidates (see `TODO.md` for the full picture):
+
+1. **Phase 2 mesh deep sleep** (synchronized wake windows so relay-capable
+   nodes can sleep too) — deliberately deferred until Phase 1's bench run
+   produces real per-board RTC-drift measurements; see the deep-sleep
+   spec's §Phase 2.
+2. **Direct-to-Pi pairing + PIN auth** (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`)
+   — approved in conversation, no implementation plan written yet.
+3. Work through `IMPROVEMENTS.md`'s remaining open findings — Β3 (LAN
+   streaming blocks motion detection) is directly relevant to the cam bench
+   work above; Α1's rotation step (WiFi/HiveMQ credentials) is still a live
+   real exposure whenever convenient, and is now smaller in scope than
+   before — the bridge no longer has WiFi/MQTT credentials to rotate at
+   all after this session's change (only the cam's WiFi credentials and
+   the Pi's own HiveMQ credentials remain).
+
+Ask the user which before picking one — none was prioritized explicitly
+beyond the immediate cam debugging already underway.
 
 ---
 
@@ -436,56 +618,6 @@ All 8 implementation tasks done, each independently reviewed (Task 8 and the fin
 
 ---
 
-## Next step
-
-**Immediate — from the later 2026-07-27 session:**
-
-1. **Bridge UART: confirm reflash status.** Wiring + power are confirmed
-   correct (see that session's TL;DR), but `/dev/serial0` shows zero bytes.
-   Check whether `bridge_esp32.ino` (current UART version) has actually been
-   flashed onto the board yet — if it's still running the old WiFi/MQTT
-   firmware, that fully explains zero UART output. If reflashing doesn't fix
-   it, `firmware/bridge_esp32_wifi_fallback/` is ready to flash instead (WiFi
-   + MQTT direct to the Pi, no GPIO wiring/raspi-config step needed) — a real
-   `bridge` MQTT account already exists on the Pi for it.
-2. **ESP32-CAM: flash and bench-test.** Firmware now compiles (missing
-   `secrets.h` and a missing `UriBraces` include were both real blockers,
-   now fixed) — this hasn't been flashed/tested yet. Watch the serial
-   monitor at 115200 baud for camera/SD init, WiFi connect (`billredmi`),
-   and the snapshot-POST cadence reaching `cam_bridge.py`.
-3. **Mesh relay + deep-sleep Phase 1** — per
-   `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md` Task 6 and the
-   original relay plan's Task 5. Untouched this session.
-4. Once all of the above are confirmed working end-to-end, this repo will
-   finally have its firmware fully field-validated, not just code-reviewed.
-
-**Also worth doing:** the hardware bring-up edits stashed at the top of this
-session's TL;DR (`git stash list`) have real learned values (device MACs,
-GPIO pin fixes, soil calibration) that were never reapplied against the
-newer UART-based firmware — worth a deliberate pass rather than leaving
-them stashed indefinitely.
-
-**After that**, other candidates (see `TODO.md` for the full picture):
-
-1. **Phase 2 mesh deep sleep** (synchronized wake windows so relay-capable
-   nodes can sleep too) — deliberately deferred until Phase 1's bench run
-   produces real per-board RTC-drift measurements; see the deep-sleep
-   spec's §Phase 2.
-2. **Direct-to-Pi pairing + PIN auth** (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`)
-   — approved in conversation, no implementation plan written yet.
-3. Work through `IMPROVEMENTS.md`'s remaining open findings — Β3 (LAN
-   streaming blocks motion detection) is directly relevant to the cam bench
-   work above; Α1's rotation step (WiFi/HiveMQ credentials) is still a live
-   real exposure whenever convenient, and is now smaller in scope than
-   before — the bridge no longer has WiFi/MQTT credentials to rotate at
-   all after this session's change (only the cam's WiFi credentials and
-   the Pi's own HiveMQ credentials remain).
-
-Ask the user which before picking one — none was prioritized explicitly
-beyond the immediate cam debugging already underway.
-
----
-
 ## Previous session (2026-07-10, repo cleanup)
 
 Pure documentation/housekeeping pass — no code changes, nothing redeployed. Removed stale and superseded files that had accumulated across sessions:
@@ -563,9 +695,10 @@ ssh pi@greenhouse.local "sudo systemctl restart greenhouse-portal"
 .\deploy.ps1                          # defaults to greenhouse.local
 .\deploy.ps1 -PiHost 192.168.1.54     # or target a specific IP
 
-# No real sensors attached? The simulator isn't a persistent service --
-# restart it if zone1/2/3 history looks stale:
-ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -c 'python3 /home/pi/greenhouse/tools/simulator.py --interval 10'"
+# No real sensors attached? greenhouse-simulator.service is installed
+# (disabled by default) — enable it on demo/no-real-sensor units instead of
+# the old ad-hoc systemd-run one-liner (IMPROVEMENTS.md Δ4):
+ssh pi@greenhouse.local "sudo systemctl enable --now greenhouse-simulator"
 
 # Build + install the app (phone via USB)
 export PATH="$PATH:/c/Users/billy/flutter/bin"   # Git Bash
@@ -574,11 +707,6 @@ flutter pub get
 flutter build apk --release
 flutter install -d <device-id>   # `flutter devices` to list; approve the
                                   # install prompt ON THE PHONE when it appears
-```
-
-**No real sensors attached right now?** Run the simulator on the Pi to generate fake zone1/2/3 sensor data so the recorder/history chart has something to show:
-```bash
-ssh pi@greenhouse.local "sudo systemd-run --collect --unit=greenhouse-sim bash -c 'python3 /home/pi/greenhouse/tools/simulator.py --interval 10'"
 ```
 
 ---
@@ -652,7 +780,7 @@ Remote access is **HiveMQ Cloud**, not Tailscale (dropped that plan entirely). N
 
 ---
 
-## Full backlog
+## Scope status
 
 The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-25-greenhouse-app-connectivity-design.md` §2). Status against that scope, plus everything found since:
 
@@ -668,68 +796,18 @@ The project was originally scoped as 6 slices (`docs/superpowers/specs/2026-06-2
 
 **Also fixed this session:** history charts now work remotely too. They previously called the Pi's HTTP `/api/history` directly, which only exists on the LAN (HiveMQ bridges MQTT, not HTTP) — so charts failed with "could not load" as soon as remote MQTT access started actually working and got tested. Added an MQTT request/response path (`greenhouse/history/request` → `greenhouse/history/response/<id>`, answered by `greenhouse-recorder`); the app now picks HTTP or MQTT based on whether it's connected local or remote. Verified end-to-end against the real HiveMQ cluster (409 real points returned).
 
-**Bridging / firmware:**
-- [x] ~~Bridge firmware publishes without `retain=true`~~ — fixed as part of the
-      2026-07-09 dynamic mesh relay session (`bridge_esp32.ino`'s
-      `mqttPublish()` now always passes `retain=true`). This checkbox was
-      never updated at the time; corrected 2026-07-20 after verifying against
-      the real firmware.
-- [x] ~~Multi-hop sensor mesh / relay bridging for far-away nodes~~ — built
-      2026-07-09 (dynamic mesh relay, see `docs/MESH_RELAY_EXPLAINED.md`).
-      Duplicate of the note already correctly reflected in Slice 2 above;
-      this line just hadn't been updated to match.
-- [ ] Real-hardware field test of the ESP-NOW → bridge → MQTT path —
-      everything so far has only been validated against `tools/simulator.py`.
-      Still true as of 2026-07-20.
-- [ ] **New, no design yet:** if the UART-wired bridge
-      (`docs/superpowers/specs/2026-07-20-uart-bridge-design.md`) gets built,
-      the ESP-NOW mesh's channel-follows-the-router-SSID trick needs to
-      switch to a fixed channel (covered in that spec's Goal 4 — not a
-      separate item, just flagging the dependency here too).
-
-**ML / analytics — nothing implemented yet:**
-- [ ] "ML watering prediction" ("water likely needed in 2 days") — original nice-to-have, never scoped.
-- [ ] Nightly export of recorder data to an external store (Postgres/Supabase) for monthly stats and weather-forecast-accuracy comparisons (predicted vs. actual, using the already-stored `greenhouse/weather/forecast` data). Deliberately deferred in the sensor-database spec — push, don't depend on pull, keep the Pi decoupled from the external service's uptime.
-
-**Security — mostly done, a few explicit exceptions:**
-- ✅ Per-unit TLS certs, per-unit random OS password, captive-portal auto-popup, dead factory-provisioning code removed — all verified on real hardware.
-- [ ] `/pair` and `/api/history*` are unauthenticated. **Design now exists**
-      (`docs/superpowers/specs/2026-07-17-direct-pi-pairing-design.md`,
-      updated 2026-07-20 with a PIN + 5-attempt-lockout mechanism) but is
-      **not implemented yet** — no implementation plan written either.
-- [x] ~~Unused MQTT WebSocket listener (port 9001)~~ — removed 2026-07-20
-      from `pi/mosquitto/mosquitto.conf`, plus a second orphaned reference
-      in `pi/avahi/greenhouse-mqtt.service` that was never even installed.
-- [ ] Real committed secrets in tracked firmware/install files (bridge and
-      camera WiFi passwords, MQTT password, HiveMQ Cloud credentials) —
-      found 2026-07-20 (`IMPROVEMENTS.md §Α1`), not yet rotated or moved out
-      of git history.
-
-**App feature gaps:**
-- [x] ~~Pick-a-specific-past-date view for history~~ — done 2026-07-09. A "Custom…" chip on the history screen opens a date-range picker (bounded to 90 days back, matching minute-resolution retention); both `/api/history` (HTTP) and the MQTT history request now accept absolute `since`/`until`. See this session's TL;DR above.
-- [ ] **Screen-by-screen UX enhancement pass** over the rest of the app (dashboard, control, devices, pairing, settings, weather-forecast chart) — same brainstorm→spec→plan cycle as the history chart, one screen at a time.
-- [x] ~~`pressure` weather metric silently dropped by the recorder~~ — fixed 2026-07-09 (added to `_WEATHER_METRICS`). Note: `weather.py` (the real Open-Meteo service) still doesn't publish real pressure data, only `simulator.py` does — recording it is now correct, but there's no real pressure source yet.
-- [x] ~~`weather.json` write-permission bug~~ — fixed 2026-07-09 (`chown pi:pi` in `install.sh`).
-- [x] ~~Alerts don't arrive when the app is closed~~ — fixed 2026-07-10 via FCM push notifications. See this session's TL;DR above.
-- [x] ~~Hardcoded frost/daily-summary-only alerts, no per-sensor dry/humid duration rules~~ — fixed 2026-07-10 via the customizable rule builder (any zone/metric/operator/threshold/duration/action). See this session's TL;DR above.
-- [x] ~~Rule edits from the app didn't actually reach the Pi~~ — fixed 2026-07-10 (pre-existing bug found while writing the alert-rules plan; `publishRules()` now uses the retain+poll pattern proven for location sync).
-- [x] ~~ESP32-CAM live view + motion alerts~~ — code fully implemented
-      (`firmware/cam_esp32/cam_esp32.ino`, `pi/scripts/cam_bridge.py`,
-      `pi/shared/motion.py`/`cam_store.py`, app-side `camera_screen.dart` +
-      tests). **Real-hardware bench-testing started 2026-07-26** (see this
-      session's TL;DR §3 above) — flashes successfully now; runtime
-      bring-up (WiFi connect, snapshot pipeline, MQTT online status) not
-      yet confirmed, so **do not mark this fully hardware-validated until
-      that's in** — update this entry again once confirmed. WebRTC remote
-      streaming (Phase 2) remains genuinely not planned/started.
-- [ ] Other nice-to-haves from the original vision, all unstarted: CSV export, a smartwatch/widget glance.
-
-**Housekeeping:**
-- [ ] `debugPrint()` calls in `mqtt_connection.dart` / `connection_provider.dart` — remove before any demo.
-- [ ] `WEATHER_INTERVAL` is still set to its 30s debug value on `greenhouse-weather.service` — reset to a production-appropriate interval before field deployment.
-- [ ] Golden image + **clone path still unproven on a 2nd physical unit**.
-- [ ] iOS completely untested (Android only; thesis device is a Redmi Note 13 Pro+).
-- [ ] Minor: no direct test exercises the forecast-timeout/failure fallback path in `historyWithPredictionProvider` (verified correct by code review, just not test-proven).
+**Detailed backlog: see `TODO.md` and `IMPROVEMENTS.md` instead of this
+section.** This used to be a checklist duplicating both files and had
+drifted out of sync with them (e.g. still claiming `/pair` was fully
+unauthenticated after PIN-gated `/pair/confirm` had already shipped, and
+still describing the ESP-NOW channel-follows-router-SSID dependency as an
+open future risk after the UART-bridge work had already replaced it with a
+fixed channel) — two backlogs disagreeing with each other is worse than
+one. `TODO.md` covers designed-but-unbuilt and built-but-hardware-
+unvalidated work; `IMPROVEMENTS.md` covers things that work but could be
+better (security/correctness/performance), each with real `file:line`
+references, kept current each session and cross-checked against the actual
+tree rather than trusted checkbox state.
 
 ---
 

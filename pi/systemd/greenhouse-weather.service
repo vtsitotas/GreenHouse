@@ -20,11 +20,33 @@ KillSignal=SIGTERM
 # Environment
 Environment=WEATHER_INTERVAL=1800
 
-# Basic sandboxing (no network restriction; needs urllib)
+# ── Sandboxing (outbound network stays open — needs urllib for Open-Meteo) ───
+# PrivateTmp is safe here even though weather.py uses /tmp: its only /tmp file
+# is the RELOAD_FLAG, which this same process both writes and reads. Nothing
+# outside the service touches it, so a private /tmp changes nothing.
+# See greenhouse-cam-bridge.service for why AF_NETLINK stays allowed.
 NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
 ProtectSystem=strict
 ProtectHome=read-only
-ReadWritePaths=/tmp /etc/greenhouse /var/lib/greenhouse
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+ReadWritePaths=/etc/greenhouse /var/lib/greenhouse
 
 [Install]
 WantedBy=multi-user.target

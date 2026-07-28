@@ -91,6 +91,46 @@ grep -qF "$ADMIN_KEY" /home/pi/.ssh/authorized_keys || echo "$ADMIN_KEY" >> /hom
 chown pi:pi /home/pi/.ssh/authorized_keys
 chmod 600 /home/pi/.ssh/authorized_keys
 
+echo "==> Hardening SSH..."
+# Password auth is the standard remote-brute-force surface, and this unit ships
+# with a per-unit random OS password that nobody types anyway (key auth is the
+# documented path -- see INSTRUCTIONS.md). Disabling it is GUARDED: if there is
+# no usable authorized key, leave password auth alone rather than locking the
+# owner out of their own Pi. Root login over SSH is disabled unconditionally --
+# nothing in this project ever logs in as root.
+mkdir -p /etc/ssh/sshd_config.d
+if [ -s /home/pi/.ssh/authorized_keys ]; then
+  cat > /etc/ssh/sshd_config.d/60-greenhouse.conf <<'EOF'
+# Managed by greenhouse install.sh. Key auth only -- an authorized key was
+# present when this was written. Delete this file and restart ssh to undo.
+PasswordAuthentication no
+KbdInteractiveAuthentication no
+PermitRootLogin no
+MaxAuthTries 3
+EOF
+  echo "    Key auth confirmed present -> password auth disabled."
+else
+  cat > /etc/ssh/sshd_config.d/60-greenhouse.conf <<'EOF'
+# Managed by greenhouse install.sh. Password auth deliberately LEFT ENABLED:
+# no authorized key was present when this ran, so disabling it would have
+# locked this unit out. Add a key to /home/pi/.ssh/authorized_keys and re-run
+# install.sh to harden.
+PermitRootLogin no
+MaxAuthTries 3
+EOF
+  echo "    WARNING: no SSH key found in /home/pi/.ssh/authorized_keys."
+  echo "             Password auth left ENABLED to avoid locking you out."
+  echo "             Add a key and re-run install.sh to disable it."
+fi
+# Validate before restarting: a bad sshd config that fails to start would end
+# remote access to this unit entirely.
+if sshd -t 2>/dev/null; then
+  systemctl restart ssh 2>/dev/null || systemctl restart sshd 2>/dev/null || true
+else
+  echo "    WARNING: sshd config validation failed -- reverting SSH hardening."
+  rm -f /etc/ssh/sshd_config.d/60-greenhouse.conf
+fi
+
 echo "==> Generating TLS certificates (if missing)..."
 bash "$REPO/scripts/gen_certs.sh"
 
@@ -114,18 +154,57 @@ if [ ! -f /etc/greenhouse/hivemq.json ]; then
 fi
 
 echo "==> Writing ESP32-CAM shared token for cam_bridge..."
-# Same idea as hivemq.json above -- must match CAM_TOKEN in the camera's
-# flashed secrets.h exactly (see IMPROVEMENTS.md finding A5).
+# Generated per-unit rather than copied from the tracked example file. The
+# example's value is a KNOWN CONSTANT that ships in the repo -- if a unit kept
+# it, the camera token would authenticate nothing (anyone reading the repo
+# knows it), while still *looking* provisioned. A random default fails safe:
+# the camera simply won't authenticate until the value is deliberately synced
+# into the flashed secrets.h, which is a visible, diagnosable failure rather
+# than silent fleet-wide credential reuse.
 if [ ! -f /etc/greenhouse/cam_token.txt ]; then
-  cp "$REPO/cam_token.txt.example" /etc/greenhouse/cam_token.txt
-  echo "    Placeholder written. Edit /etc/greenhouse/cam_token.txt to match"
-  echo "    CAM_TOKEN in the flashed camera firmware."
+  openssl rand -base64 33 | tr -d '/+=\n' | head -c 32 > /etc/greenhouse/cam_token.txt
+  echo "" >> /etc/greenhouse/cam_token.txt
+  echo "    Generated a unique token for this unit. Copy it into CAM_TOKEN in"
+  echo "    firmware/libraries/GreenhouseSecrets/secrets.h and reflash the"
+  echo "    camera -- the two must match exactly:"
+  echo "      $(cat /etc/greenhouse/cam_token.txt)"
+elif [ "$(tr -d '[:space:]' < /etc/greenhouse/cam_token.txt)" = "your-cam-shared-token" ]; then
+  # An earlier install.sh copied the example verbatim. That value is public,
+  # so treat it as unprovisioned and replace it.
+  openssl rand -base64 33 | tr -d '/+=\n' | head -c 32 > /etc/greenhouse/cam_token.txt
+  echo "" >> /etc/greenhouse/cam_token.txt
+  echo "    WARNING: this unit was using the repo's placeholder cam token,"
+  echo "    which is public. Replaced with a unique one -- update CAM_TOKEN in"
+  echo "    the camera's secrets.h and reflash:"
+  echo "      $(cat /etc/greenhouse/cam_token.txt)"
 fi
+# cam_bridge.py runs as `pi` and must read it; nothing else should.
+chown root:pi /etc/greenhouse/cam_token.txt
+chmod 640 /etc/greenhouse/cam_token.txt
 
 touch /etc/mosquitto/passwd
 chown mosquitto:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd
 chown -R mosquitto:mosquitto /var/lib/mosquitto
+
+echo "==> Preparing security audit log..."
+# Services run as `pi` and append security events here (failed auth, lockouts).
+# Created up front with the right ownership so the first event isn't lost to a
+# permission error at exactly the moment something is attacking the unit.
+touch /var/log/greenhouse-security.log
+chown pi:pi /var/log/greenhouse-security.log
+chmod 640 /var/log/greenhouse-security.log
+# Keep it from growing without bound on a unit under sustained probing.
+cat > /etc/logrotate.d/greenhouse-security <<'EOF'
+/var/log/greenhouse-security.log {
+    weekly
+    rotate 8
+    compress
+    missingok
+    notifempty
+    create 640 pi pi
+}
+EOF
 
 echo "==> Installing avahi service advertisement..."
 mkdir -p /etc/avahi/services
@@ -232,6 +311,43 @@ EOF
 
 echo "==> Generating this unit's MQTT credentials..."
 bash "$REPO/scripts/first_boot.sh"
+
+# Backfill secrets added to device.json after a unit was already provisioned.
+# first_boot.sh exits early on any unit with /etc/greenhouse/.provisioned, so
+# without this an existing unit would never gain the newer fields -- and
+# because the endpoints that use them fail CLOSED (by design), the symptom
+# would be a working-looking unit whose history API returns 401 forever.
+if [ -f /etc/greenhouse/device.json ]; then
+  python3 - <<'PYEOF'
+import json, secrets, string, sys
+PATH_ = '/etc/greenhouse/device.json'
+try:
+    with open(PATH_) as f:
+        cfg = json.load(f)
+except Exception as exc:
+    print(f'    WARN: could not read device.json ({exc}) -- skipping backfill')
+    sys.exit(0)
+
+added = []
+# 32-char URL-safe token, same shape/entropy as the one first_boot.sh writes.
+if not cfg.get('api_token'):
+    alphabet = string.ascii_letters + string.digits
+    cfg['api_token'] = ''.join(secrets.choice(alphabet) for _ in range(32))
+    added.append('api_token')
+
+if added:
+    with open(PATH_, 'w') as f:
+        json.dump(cfg, f, indent=2)
+    print(f'    Backfilled into device.json: {", ".join(added)}')
+    print('    NOTE: re-pair the app (or paste the new token under the pairing')
+    print('          screen\'s Advanced section) so history keeps working.')
+else:
+    print('    device.json already has every expected secret.')
+PYEOF
+  # json.dump above rewrites the file, so re-assert ownership/permissions.
+  chown root:pi /etc/greenhouse/device.json
+  chmod 640 /etc/greenhouse/device.json
+fi
 # Mosquitto 2.x wants the passwd file owned by root; mosquitto group reads it.
 chown root:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd

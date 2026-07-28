@@ -76,6 +76,10 @@ final historyPointsProvider =
     hours: query.hours,
     since: query.since,
     until: query.until,
+    apiToken: config.apiToken,
+    // Same per-unit fingerprint the MQTT link pins — lets the history fetch
+    // go over TLS instead of plaintext HTTP.
+    tlsFingerprint: config.tlsFingerprint,
   );
 });
 
