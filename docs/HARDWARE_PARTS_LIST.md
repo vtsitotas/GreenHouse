@@ -42,7 +42,9 @@ numbers.
 | 2 | **ESP32 WROOM-32 DevKit** | €4–6 | Rewrite (small) | Has **three** hardware UARTs, so a genuine `Serial2` is available for the Pi link instead of remapping `Serial1` — arguably a cleaner fit for the bridge role specifically, at the cost of reflashing with adjusted pin `#define`s. Also gives more headroom if the bridge ever needs to do more (e.g. local buffering, a tiny web UI). |
 | 3 | **ESP32-S3 DevKit** | €6–10 | Rewrite | Overkill for what the bridge does today, but future-proof if you want the bridge itself to run something heavier (e.g. a local fallback web dashboard when the Pi is down). |
 
-### 1c. Camera module
+### 1c. Camera module — **parked, not part of the current build**
+
+*The camera was pulled from the prototype (see `parked/camera/README.md`). Kept here for reference if it's ever revived — don't buy this for a current unit.*
 
 | Rank | Part | Cost | 🔧 Firmware impact | Why |
 |---|---|---|---|---|

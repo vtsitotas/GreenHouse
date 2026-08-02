@@ -11,7 +11,6 @@ import 'package:greenhouse_app/models/sensor_reading.dart';
 import 'package:greenhouse_app/models/weather_alert.dart';
 import 'package:greenhouse_app/models/weather_events.dart';
 import 'package:greenhouse_app/models/weather_rule.dart';
-import 'package:greenhouse_app/models/cam_status.dart';
 
 class GreenhouseRepository {
   final GreenhouseConnection connection;
@@ -28,23 +27,6 @@ class GreenhouseRepository {
   final _rulesCtrl     = StreamController<List<WeatherRule>>.broadcast();
   final _historyRespCtrl = StreamController<HistoryResponseRaw>.broadcast();
   final _notificationSettingsCtrl = StreamController<NotificationSettings>.broadcast();
-  final _camStatusCtrl = StreamController<CamStatus>.broadcast();
-  final _camEventChunkCtrl = StreamController<CamEventChunkRaw>.broadcast();
-  final _camLiveFrameCtrl = StreamController<Uint8List>.broadcast();
-
-  // Buffers chunks per in-flight live frame_id until `total` chunks have
-  // arrived, then emits the reassembled bytes and drops the buffer. If a
-  // chunk is lost (network hiccup, especially over the remote/HiveMQ relay
-  // path) a frame_id would otherwise never complete and never be removed,
-  // leaking one entry per dropped frame for the rest of the live session.
-  // Bounded below by `_maxInFlightLiveFrames`: since frame_id increases
-  // monotonically within a live session and Dart's Map preserves insertion
-  // order, evicting `_liveFrameBuffers.keys.first` when a genuinely new
-  // frame_id would exceed the bound always evicts the oldest (and by then
-  // hopelessly stale, since newer frames have already superseded it)
-  // incomplete entry.
-  final Map<int, List<String?>> _liveFrameBuffers = {};
-  static const int _maxInFlightLiveFrames = 2;
 
   List<WeatherRule> _rules = [];
   Map<String, dynamic>? _lastForecast;
@@ -169,16 +151,6 @@ class GreenhouseRepository {
       } catch (e) {
         if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse notification-settings payload: $e');
       }
-    } else if (event is CamStatusRaw) {
-      try {
-        _camStatusCtrl.add(CamStatus.fromJson(jsonDecode(event.payload) as Map<String, dynamic>));
-      } catch (e) {
-        if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse camera status payload: $e');
-      }
-    } else if (event is CamEventChunkRaw) {
-      _camEventChunkCtrl.add(event);
-    } else if (event is CamLiveFrameChunkRaw) {
-      _handleLiveFrameChunk(event);
     } else if (event is HistoryResponseRaw) {
       _historyRespCtrl.add(event);
     }
@@ -219,8 +191,8 @@ class GreenhouseRepository {
   }
 
   /// Registers this device's current FCM token with the Pi, retained per
-  /// device so weather.py (and later camera motion alerts) can look up
-  /// every currently-registered device on demand.
+  /// device so weather.py can look up every currently-registered device on
+  /// demand.
   Future<void> registerFcmToken(String deviceId, String token) async {
     await connection.publishRaw(
         'greenhouse/app/fcm_token/$deviceId', token, retain: true);
@@ -284,88 +256,6 @@ class GreenhouseRepository {
       return null;
     });
   }
-
-  void _handleLiveFrameChunk(CamLiveFrameChunkRaw event) {
-    try {
-      final data = jsonDecode(event.payload) as Map<String, dynamic>;
-      final frameId = data['frame_id'] as int;
-      final chunk = data['chunk'] as int;
-      final total = data['total'] as int;
-      if (!_liveFrameBuffers.containsKey(frameId) &&
-          _liveFrameBuffers.length >= _maxInFlightLiveFrames) {
-        // Would exceed the in-flight bound: evict the oldest incomplete
-        // frame rather than let it sit in memory forever.
-        _liveFrameBuffers.remove(_liveFrameBuffers.keys.first);
-      }
-      final buffer = _liveFrameBuffers.putIfAbsent(frameId, () => List<String?>.filled(total, null));
-      buffer[chunk] = data['data'] as String;
-      if (buffer.every((c) => c != null)) {
-        final bytes = buffer.map((c) => base64Decode(c!)).expand((b) => b).toList();
-        _camLiveFrameCtrl.add(Uint8List.fromList(bytes));
-        _liveFrameBuffers.remove(frameId);
-      }
-    } catch (e) {
-      if (kDebugMode) debugPrint('[GreenhouseRepository] failed to parse live frame chunk: $e');
-    }
-  }
-
-  /// Fires whenever the Pi publishes an updated camera status (retained, so
-  /// the app gets current state immediately on connect).
-  Stream<CamStatus> get camStatus => _camStatusCtrl.stream;
-
-  /// Fires with reassembled JPEG bytes for each relayed live-view frame,
-  /// only while a live session is active (see startLive/stopLive).
-  Stream<Uint8List> get liveFrames => _camLiveFrameCtrl.stream;
-
-  /// Requests a motion-event photo over MQTT (mirrors fetchHistoryViaMqtt's
-  /// request/response-by-id shape) and reassembles the chunked response.
-  /// Returns null on timeout or if the Pi reports the camera unreachable.
-  Future<Uint8List?> fetchEventPhoto(String eventId) async {
-    final id = 'e${DateTime.now().microsecondsSinceEpoch}';
-    final chunks = <String?>[];
-    var total = -1;
-
-    final completer = Completer<Uint8List?>();
-    late final StreamSubscription<CamEventChunkRaw> sub;
-    sub = _camEventChunkCtrl.stream.listen((event) {
-      if (event.reqId != id) return;
-      Map<String, dynamic> data;
-      try {
-        data = jsonDecode(event.payload) as Map<String, dynamic>;
-      } catch (_) {
-        return;
-      }
-      if (data.containsKey('error')) {
-        sub.cancel();
-        if (!completer.isCompleted) completer.complete(null);
-        return;
-      }
-      if (total == -1) {
-        total = data['total'] as int;
-        chunks.addAll(List<String?>.filled(total, null));
-      }
-      chunks[data['chunk'] as int] = data['data'] as String;
-      if (chunks.every((c) => c != null)) {
-        sub.cancel();
-        final bytes = chunks.map((c) => base64Decode(c!)).expand((b) => b).toList();
-        if (!completer.isCompleted) completer.complete(Uint8List.fromList(bytes));
-      }
-    });
-
-    await connection.publishRaw('greenhouse/cam/event/request', jsonEncode({'id': id, 'event_id': eventId}));
-
-    return completer.future.timeout(const Duration(seconds: 15), onTimeout: () {
-      sub.cancel();
-      return null;
-    });
-  }
-
-  /// Starts (or refreshes, if already active) the on-demand remote live
-  /// relay. Call again periodically (~every 30s) while the live screen stays
-  /// open — cam_bridge.py auto-stops the relay after 2 minutes without one.
-  Future<void> startLive() => connection.publishRaw('greenhouse/cam/live/start', '1');
-
-  Future<void> stopLive() => connection.publishRaw('greenhouse/cam/live/stop', '1');
 
   Future<void> disconnect() async {
     await _sub?.cancel();

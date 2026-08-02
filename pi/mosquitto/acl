@@ -14,7 +14,7 @@ topic write greenhouse/+/soil/moisture
 topic write greenhouse/nodes/+/status
 
 # The app is the trusted end-user client: dashboard, actuator control,
-# weather rules, notification settings, camera, history -- needs the full
-# namespace both ways.
+# weather rules, notification settings, history -- needs the full namespace
+# both ways.
 user app
 topic readwrite greenhouse/#

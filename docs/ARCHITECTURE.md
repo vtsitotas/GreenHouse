@@ -104,13 +104,14 @@ flowchart LR
     Broker["Mosquitto :1883<br/>127.0.0.1 μόνο, χωρίς auth"]:::sw
     Weather["greenhouse-weather<br/>Open-Meteo, κανόνες αυτοματισμού"]:::sw
     RecEntry["greenhouse-recorder<br/>(buffer εισόδου — §1.4)"]:::sw
-    CamBridge["greenhouse-cam-bridge<br/>motion detection, live relay"]:::sw
 
     SerialBridge -->|"publish: greenhouse/+/air/+ κλπ,<br/>nodes/+/status|battery|mesh"| Broker
     Broker <-->|"MQTT plaintext, loopback<br/>(αδύνατο να φτάσει έξω)"| Weather
     Broker -->|"subscribe: greenhouse/+/air/+ κλπ"| RecEntry
-    Broker <-->|"subscribe: cam/event/*, cam/live/*"| CamBridge
 ```
+
+> Το `greenhouse-cam-bridge` **δεν** εγκαθίσταται πλέον: η κάμερα είναι
+> παροπλισμένη (parked) στο `parked/camera/` — δες `parked/camera/README.md`.
 
 **Γιατί χωρίς TLS/auth εδώ:** ο listener 1883 δένεται **αποκλειστικά** στο
 `127.0.0.1` — αδύνατο να τον φτάσει οτιδήποτε εκτός του ίδιου μηχανήματος,
