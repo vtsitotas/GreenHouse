@@ -6,7 +6,7 @@ import 'package:greenhouse_app/repository/greenhouse_repository.dart';
 const _deviceIdKey = 'greenhouse_device_id';
 
 /// Registers this install's FCM token with the Pi (retained, per-device
-/// topic) so weather.py — and later, camera motion alerts — can push to it
+/// topic) so weather.py can push to it
 /// even when the app is fully closed.
 class FcmTokenService {
   final GreenhouseRepository _repository;
