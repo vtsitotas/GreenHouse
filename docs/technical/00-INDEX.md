@@ -33,7 +33,7 @@
 | 09 | [`09-setup-portal.md`](09-setup-portal.md) | Captive portal, first-boot provisioning, ζεύξη (pairing) |
 | 10 | [`10-security.md`](10-security.md) | Πλήρης χάρτης κρυπτογράφησης/αυθεντικοποίησης σε κάθε επίπεδο |
 | 11 | [`11-weather-automation.md`](11-weather-automation.md) | Open-Meteo integration, μηχανή κανόνων αυτοματισμού |
-| 12 | [`12-camera-motion.md`](12-camera-motion.md) | ESP32-CAM, ανίχνευση κίνησης, chunked MQTT για εικόνες |
+| 12 | [`12-camera-motion.md`](../../parked/camera/docs/12-camera-motion.md) | **PARKED** — ESP32-CAM, ανίχνευση κίνησης, chunked MQTT για εικόνες. Η κάμερα βγήκε από το πρωτότυπο· ο κώδικας και το κείμενο ζουν στο `parked/camera/`. |
 | 13 | [`13-mobile-app.md`](13-mobile-app.md) | Αρχιτεκτονική Flutter app (Riverpod, connection/repository layers) |
 | 14 | [`14-network-reference.md`](14-network-reference.md) | Συγκεντρωτικός πίνακας: κάθε θύρα/πρωτόκολλο/OSI layer σε όλο το σύστημα |
 

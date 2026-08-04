@@ -180,12 +180,6 @@ class MqttConnection implements GreenhouseConnection {
       _events.add(NotificationSettingsRaw(payload));
     } else if (isHistoryResponseTopic(topic)) {
       _events.add(HistoryResponseRaw(topic.substring(_historyResponsePrefix.length), payload));
-    } else if (isCamStatusTopic(topic)) {
-      _events.add(CamStatusRaw(payload));
-    } else if (isCamEventResponseTopic(topic)) {
-      _events.add(CamEventChunkRaw(extractCamEventReqId(topic), payload));
-    } else if (isCamLiveFrameTopic(topic)) {
-      _events.add(CamLiveFrameChunkRaw(payload));
     } else if (isSensorTopic(topic)) {
       try { _events.add(SensorReading.fromMqtt(topic, payload)); } catch (_) {}
     } else if (isNodeStatusTopic(topic)) {
@@ -261,8 +255,11 @@ class MqttConnection implements GreenhouseConnection {
   static bool isSensorTopic(String topic) {
     final p = topic.split('/');
     if (p.length < 3 || p[0] != 'greenhouse') return false;
-    // Exclude nodes, actuators, weather (non-numeric), and rules topics
-    if (p[1] == 'nodes' || p[1] == 'actuators' || p[1] == 'rules') return false;
+    // Exclude nodes, actuators, weather (non-numeric), and rules topics.
+    // `cam` too: the camera is parked (parked/camera/), but the app still
+    // subscribes to `greenhouse/#`, so a re-enabled cam bridge would
+    // otherwise have its JSON payloads mistaken for sensor readings.
+    if (p[1] == 'nodes' || p[1] == 'actuators' || p[1] == 'rules' || p[1] == 'cam') return false;
     if (p[1] == 'weather' && (p.length < 3 || p[2] == 'alert' || p[2] == 'forecast')) return false;
     return true;
   }
@@ -281,12 +278,4 @@ class MqttConnection implements GreenhouseConnection {
 
   static String extractNodeId(String t) => t.split('/')[2];
   static String extractActuatorId(String t) => t.split('/')[2];
-
-  static bool isCamStatusTopic(String t) => t == 'greenhouse/cam/status';
-
-  static const _camEventResponsePrefix = 'greenhouse/cam/event/response/';
-  static bool isCamEventResponseTopic(String t) => t.startsWith(_camEventResponsePrefix);
-  static String extractCamEventReqId(String t) => t.substring(_camEventResponsePrefix.length);
-
-  static bool isCamLiveFrameTopic(String t) => t == 'greenhouse/cam/live/frame';
 }
