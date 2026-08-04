@@ -35,7 +35,7 @@
 | 80 | `greenhouse-portal` (Flask) | Κινητό, μόνο LAN/AP |
 | 1883 | Mosquitto, loopback plaintext | `weather.py`, `recorder.py`, `cam_bridge.py`, `simulator.py`, `serial_bridge.py` — όλα τοπικά |
 | 8883 | Mosquitto, TLS | Εφαρμογή (LAN) — **όχι** πια η γέφυρα, δες σημείωση παρακάτω |
-| 8090 | `greenhouse-cam-bridge` (Flask) | ESP32-CAM (POST snapshots) |
+| ~~8090~~ | ~~`greenhouse-cam-bridge` (Flask)~~ | **PARKED** — δεν εγκαθίσταται πλέον (`parked/camera/`) |
 | 22 | SSH (OpenSSH, εκτός εμβέλειας project code) | Διαχείριση/deploy |
 
 ### ESP32 συσκευές
@@ -43,7 +43,7 @@
 |---|---|---|
 | Bridge | Καμία (καθαρά client, ούτε καν TCP/IP client) | Κανένα δίκτυο — μόνο UART GPIO προς `serial_bridge.py` στο Pi |
 | Edge nodes (C3/WROOM) | Καμία (ESP-NOW μόνο, χωρίς IP stack χρήσης) | — |
-| ESP32-CAM | 80 (WebServer: `/capture`, `/stream`, `/event/<id>`) | `greenhouse.local:8090` (POST snapshots) |
+| ~~ESP32-CAM~~ | ~~80 (WebServer: `/capture`, `/stream`, `/event/<id>`)~~ | **PARKED** — εκτός πρωτοτύπου (`parked/camera/`) |
 
 ### Cloud
 | Υπηρεσία | Θύρα | Ρόλος |

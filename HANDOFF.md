@@ -1,13 +1,48 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-07-27, later (local bench-testing + real-bug session)
-**Status:** ✅ Two genuine, previously-undiagnosed bugs that made login
-impossible are fixed and pushed (`c626db8`, `79e37ff`). Real-hardware
-bring-up continues: UART bridge still doesn't produce any UART traffic
-(cause unresolved), camera firmware now compiles and is ready to flash but
-untested. See "Next step" and the local-session TL;DR right below (read it
-before the UART-wired-bridge TL;DR further down — that one is from earlier
-the same day and is superseded on a few points, noted inline).
+**Last updated:** 2026-08-02 (camera parked + cleanup)
+**Status:** The camera is **parked** — see the TL;DR right below. Before that,
+as of 2026-07-27: two previously-undiagnosed bugs that made login impossible
+are fixed and pushed (`c626db8`, `79e37ff`); the UART bridge still doesn't
+produce any UART traffic (cause unresolved). See "Next step" and the
+2026-07-27 local-session TL;DR further down (read it before the
+UART-wired-bridge TL;DR after it — that one is from earlier the same day and
+is superseded on a few points, noted inline).
+
+---
+
+## TL;DR of this session (2026-08-02 — camera parked, dead weight removed)
+
+The camera never worked well enough on real hardware to keep carrying, so it
+was **parked, not deleted**: every camera file was `git mv`'d under
+`parked/camera/` (history intact, `git log --follow` works), and everything
+that referenced it was unwired.
+
+- **App:** no Camera tab or `/camera` route; `cam/*` MQTT topic routing,
+  the repository's cam streams / `fetchEventPhoto` / live-frame reassembly,
+  `CamStatusRaw`/`CamEventChunkRaw`/`CamLiveFrameChunkRaw`, the
+  `motion_alert` notification switch and the `'motion'` alert title are all
+  gone from `app/lib`. Dependency `flutter_mjpeg` dropped.
+- **Pi:** `install.sh` no longer installs `python3-pil`, provisions
+  `cam_token.txt`, or copies/enables/restarts `greenhouse-cam-bridge` — and
+  it now actively disables+removes that unit on units that already have it,
+  so a redeploy leaves nothing running. `weather.py` no longer carries
+  `motion_alert`.
+- **CI:** `Pillow` dropped from the pip install line (only the parked
+  motion tests needed it).
+- **Docs:** technical docs, `DEVICES.md`, `ARCHITECTURE.md`, `TODO.md` and
+  `IMPROVEMENTS.md` now mark the camera as parked rather than live. The
+  design specs/plans under `docs/superpowers/` were left alone — they're
+  history.
+
+Net: −359 lines from the live tree, two dependencies gone, one fewer
+always-on service on the Pi. Restore instructions (including the exact
+shared-file edits to undo) are in `parked/camera/README.md`.
+
+**Pi tests:** 115 passed. The 2 `test_push.py` failures seen locally are the
+known `firebase-admin`-not-installed-in-sandbox case, not a regression — CI
+installs it. Flutter isn't available in that sandbox, so `flutter analyze`
+/ `flutter test` were verified by CI, not locally.
 
 ---
 

@@ -141,7 +141,9 @@ greenhouse/history/request             app → recorder.py
 greenhouse/history/response/<req-id>   recorder.py → app
 ```
 
-### Κάμερα
+### Κάμερα — **PARKED** (δεν δημοσιεύει τίποτα σήμερα)
+Η κάμερα βγήκε από το πρωτότυπο· ο `cam_bridge.py` δεν εγκαθίσταται πια
+(`parked/camera/`). Τα topics μένουν καταγεγραμμένα για αναφορά/επαναφορά.
 ```
 greenhouse/cam/status                  cam_bridge.py, retained, JSON
 greenhouse/cam/event/request           app → cam_bridge.py

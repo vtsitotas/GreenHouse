@@ -11,7 +11,7 @@ Espressif, όλα με ενσωματωμένο ραδιόφωνο 2.4GHz — δ
 | Γέφυρα (bridge, rank 0) | ESP32-C3 | `firmware/bridge_esp32/bridge_esp32.ino:153` ("wait for USB CDC to connect on C3") |
 | Κόμβος Ζώνης 1 | ESP32-C3 | `firmware/libraries/GreenhouseMesh/mesh_config.h:65` σχόλιο |
 | Κόμβος Ζώνης 2 | ESP32 WROOM-32 | `firmware/libraries/GreenhouseMesh/mesh_config.h:66` σχόλιο, `firmware/edge_node_esp32/edge_node_esp32.ino` |
-| Κάμερα | ESP32 (AI-Thinker ESP32-CAM module) | `firmware/cam_esp32/cam_esp32.ino` — pin map ταιριάζει με το γνωστό AI-Thinker layout |
+| Κάμερα (**PARKED**) | ESP32 (AI-Thinker ESP32-CAM module) | `parked/camera/firmware/cam_esp32/cam_esp32.ino` — εκτός πρωτοτύπου, δες `parked/camera/README.md` |
 
 Το ESP32-C3 είναι single-core RISC-V @ 160MHz, ενώ το κλασικό ESP32
 WROOM-32 είναι dual-core Xtensa LX6 @ 240MHz. Και τα δύο μοιράζονται το ίδιο
