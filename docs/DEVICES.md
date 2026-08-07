@@ -28,7 +28,7 @@ These MACs are the source of truth in:
 | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino` | Zone1 (75:EC) and Zone2 (A1:B0) |
 | `firmware/edge_node_esp32/edge_node_esp32.ino` | Retired WROOM-32 — not in use |
 | `firmware/fake_edge_node_esp32_c3/fake_edge_node_esp32_c3.ino` | Fake sensor node (random-walk data) — flash to bench-test the pipeline without real sensors, then reflash the real edge node firmware |
-| `firmware/cam_esp32/cam_esp32.ino` | ESP32-CAM. As of 2026-07-27, compiles (was blocked on a missing `secrets.h` and a missing `UriBraces` include, both fixed) but not yet flashed/bench-tested. |
+| ~~`firmware/cam_esp32/cam_esp32.ino`~~ | **PARKED** — moved to `parked/camera/firmware/cam_esp32/`. The camera is out of the prototype; nothing flashes it and the Pi no longer runs a cam bridge. See `parked/camera/README.md`. |
 
 ---
 
@@ -73,17 +73,17 @@ Get-ChildItem "$env:LOCALAPPDATA\arduino\sketches" -Recurse -Directory -Filter "
 ```
 
 **Same junction now exists for `GreenhouseSecrets`** (added 2026-07-27 — the
-camera and the WiFi-fallback bridge both `#include <secrets.h>` and hit
-"No such file or directory" without it):
+WiFi-fallback bridge `#include`s `<secrets.h>` and hits "No such file or
+directory" without it; the parked camera sketch did too):
 ```
 C:\Users\themi\Documents\Arduino\libraries\GreenhouseSecrets
     → C:\Users\themi\Documents\GreenHouse\firmware\libraries\GreenhouseSecrets
 ```
 `secrets.h` itself is gitignored and per-device — copy
 `secrets.h.example` to `secrets.h` in that folder and fill in real values
-(current bench WiFi is the phone hotspot `billredmi`; `CAM_TOKEN` must match
-`/etc/greenhouse/cam_token.txt` on the Pi exactly — already set to a real
-generated value as of 2026-07-27, not the install-time placeholder).
+(current bench WiFi is the phone hotspot `billredmi`). `CAM_TOKEN` is only
+used by the parked camera sketch — the Pi no longer provisions
+`/etc/greenhouse/cam_token.txt`.
 
 ---
 
@@ -96,7 +96,9 @@ generated value as of 2026-07-27, not the install-time placeholder).
   actually been reflashed with the current UART-based `bridge_esp32.ino`;
   that's the leading suspect. `firmware/bridge_esp32_wifi_fallback/` exists
   as a working fallback if the UART path stays stuck.
-- **Camera:** never connected to `cam_bridge.py` all session
+- **Camera:** never connected to `cam_bridge.py` all session — this, plus
+  the same being true across every earlier session, is why the camera was
+  parked on 2026-08-02 (`parked/camera/`).
   (`greenhouse/cam/status` stuck at `online: false`) — root cause was
   `secrets.h` not existing at all, so the firmware couldn't compile. Fixed
   (see junction above), plus two real bugs in `cam_esp32.ino`: missing

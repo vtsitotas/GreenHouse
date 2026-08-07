@@ -560,7 +560,7 @@ class _AlertSettingsCard extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final settingsAsync = ref.watch(notificationSettingsProvider);
     final settings = settingsAsync.value ??
-        const NotificationSettings(frostForecast: true, dailySummary: true, motionAlert: true);
+        const NotificationSettings(frostForecast: true, dailySummary: true);
 
     void publish(NotificationSettings updated) =>
         ref.read(repositoryProvider).publishNotificationSettings(updated);
@@ -580,12 +580,6 @@ class _AlertSettingsCard extends ConsumerWidget {
             title: const Text('Daily weather summary'),
             value: settings.dailySummary,
             onChanged: (v) => publish(settings.copyWith(dailySummary: v)),
-          ),
-          SwitchListTile(
-            key: const Key('alert-settings-motion-switch'),
-            title: const Text('Camera motion alerts'),
-            value: settings.motionAlert,
-            onChanged: (v) => publish(settings.copyWith(motionAlert: v)),
           ),
         ],
       ),

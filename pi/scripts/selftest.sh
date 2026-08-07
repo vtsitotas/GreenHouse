@@ -124,11 +124,18 @@ fi
 
 echo "== security posture =="
 # The camera intake endpoint must refuse an unauthenticated POST -- an open
-# one lets any LAN host impersonate the camera and harvest CAM_TOKEN.
-CAM_CODE=$(curl -s -m 5 -o /dev/null -w "%{http_code}" -X POST \
-  --data-binary 'x' -H 'Content-Type: image/jpeg' http://127.0.0.1:8090/cam/frame)
-[ "$CAM_CODE" = "401" ] && ok "cam frame intake rejects unauthenticated POSTs" \
-  || no "cam frame intake NOT protected (expected 401, got $CAM_CODE)"
+# one lets any LAN host impersonate the camera and harvest CAM_TOKEN. The
+# camera is parked (parked/camera/), so nothing should be listening at all;
+# only assert the gate if something actually is, otherwise a parked unit
+# reports a security failure for a service it deliberately doesn't run.
+if ss -ltn 2>/dev/null | grep -q ':8090'; then
+  CAM_CODE=$(curl -s -m 5 -o /dev/null -w "%{http_code}" -X POST \
+    --data-binary 'x' -H 'Content-Type: image/jpeg' http://127.0.0.1:8090/cam/frame)
+  [ "$CAM_CODE" = "401" ] && ok "cam frame intake rejects unauthenticated POSTs" \
+    || no "cam frame intake NOT protected (expected 401, got $CAM_CODE)"
+else
+  ok "cam frame intake not listening (camera parked)"
+fi
 # Mosquitto's plaintext listener must never be reachable off-box.
 if ss -ltn 2>/dev/null | grep -q '127.0.0.1:1883'; then
   ok "mosquitto plaintext listener bound to loopback only"
@@ -161,13 +168,16 @@ else
   echo "              build that speaks HTTPS, enable it with:"
   echo "                sudo touch /etc/greenhouse/require_https && sudo systemctl restart greenhouse-portal"
 fi
-# The camera token must not be the repo's public placeholder.
+# The camera token must not be the repo's public placeholder. Absent is fine
+# now that the camera is parked and install.sh no longer provisions it -- but
+# a leftover placeholder is still a public value sitting on disk, so that case
+# stays a failure whether or not the camera is running.
 if [ "$(tr -d '[:space:]' < /etc/greenhouse/cam_token.txt 2>/dev/null)" = "your-cam-shared-token" ]; then
-  no "cam_token is the PUBLIC placeholder from the repo -- re-run install.sh"
+  no "cam_token is the PUBLIC placeholder from the repo -- delete it (camera parked) or run rotate_secrets.sh"
 elif [ -s /etc/greenhouse/cam_token.txt ]; then
   ok "cam_token is unit-specific"
 else
-  no "cam_token missing"
+  ok "cam_token not provisioned (camera parked)"
 fi
 # No credential still in use may be one that leaked into git history, or a
 # public placeholder from the repo. This is what makes rotation verifiable
