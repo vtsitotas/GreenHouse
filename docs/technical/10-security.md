@@ -3,6 +3,16 @@
 Συγκεντρωτική εικόνα κάθε "λεπτού σημείου" ασφάλειας σε όλο το σύστημα,
 με τι **πραγματικά** κάνει ο κώδικας σε κάθε ζεύξη — όχι τι θα ήταν ιδανικό.
 
+> **⏸️ Κάμερα — παροπλισμένη (2026-08-02).** Το πέρασμα σκλήρυνσης που
+> περιγράφει αυτό το έγγραφο (`CAM_TOKEN` gating, HMAC request-signing, AES-256-GCM
+> frame encryption) ολοκληρώθηκε **πριν** παροπλιστεί η κάμερα — δούλεψε
+> πραγματικά, απλά δεν πρόλαβε να τρέξει σε φυσική κάμερα. Κάθε αναφορά
+> `cam_esp32`/`cam_bridge.py`/`CAM_TOKEN` παρακάτω περιγράφει κώδικα που τώρα
+> ζει (αμετάβλητος) κάτω από `parked/camera/` και δεν εγκαθίσταται/τρέχει
+> σήμερα. Διατηρείται ως τεχνική τεκμηρίωση μιας πλήρους σχεδίασης ασφαλείας
+> και ως ο οδηγός επαναφοράς αν η κάμερα ξαναχτιστεί — δες
+> `parked/camera/README.md`.
+
 ## 1. Χάρτης ζεύξεων
 
 ```
@@ -13,9 +23,9 @@
 [Mosquitto]  --MQTT/TLS 1.2, tls_set (validated)--> [HiveMQ Cloud :8883]
 [Εφαρμογή]   --MQTT/TLS + pinning----------------> [HiveMQ Cloud :8883]
 [Εφαρμογή]   --HTTP + PIN / Bearer token---------> [portal.py :80]        (μόνο LAN)
-[Εφαρμογή]   --HTTP + CAM_TOKEN (?token=)--------> [cam_esp32 /stream]    (μόνο LAN)
-[Κάμερα]     --HTTP + CAM_TOKEN (X-Cam-Token)----> [cam_bridge.py :8090]  (μόνο LAN)
-[cam_bridge] --HTTP + CAM_TOKEN (?token=)--------> [cam_esp32 /capture, /event]
+[Εφαρμογή]   --HTTP + CAM_TOKEN (?token=)--------> [cam_esp32 /stream]    (μόνο LAN, PARKED)
+[Κάμερα]     --HTTP + CAM_TOKEN (X-Cam-Token)----> [cam_bridge.py :8090]  (μόνο LAN, PARKED)
+[cam_bridge] --HTTP + CAM_TOKEN (?token=)--------> [cam_esp32 /capture, /event]  (PARKED)
 ```
 
 **Κανένα HTTP endpoint σε αυτό το σύστημα δεν είναι πλέον χωρίς
