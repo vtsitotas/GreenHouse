@@ -13,8 +13,8 @@
 | 4 | Mosquitto → HiveMQ Cloud | TCP/8883 | Ethernet/WiFi → Internet | TCP | MQTT πάνω από TLS 1.2 | Πλήρης TLS επικύρωση (δημόσιο CA store) | `08`, `10 §5` |
 | 5 | Εφαρμογή → HiveMQ Cloud (remote) | TCP/8883 | Κινητό δίκτυο/WiFi → Internet | TCP | MQTT πάνω από TLS | `onBadCertificate=true` (ίδιο με #3) | `13 §5` |
 | 6 | Εφαρμογή → Portal (LAN μόνο) | TCP/80 | WiFi (τοπικό) | TCP | HTTP/1.1 (Flask) | **Καμία** (plaintext HTTP) | `09` |
-| 7 | Κάμερα → cam_bridge.py | TCP/8090 | WiFi (τοπικό) | TCP | HTTP/1.1 (Flask) | **Καμία** | `12 §2, §7` |
-| 8 | cam_bridge.py → Κάμερα (poll/delete) | TCP/80 (στην κάμερα) | WiFi (τοπικό) | TCP | HTTP/1.1 | **Καμία** | `12 §7` |
+| 7 | ~~Κάμερα → cam_bridge.py~~ | TCP/8090 | WiFi (τοπικό) | TCP | HTTP/1.1 (Flask) | `CAM_TOKEN` HMAC-signed request (added, then parked before ever running against real HW) | **PARKED** — `12 §2, §7`, `parked/camera/README.md` |
+| 8 | ~~cam_bridge.py → Κάμερα (poll/delete)~~ | TCP/80 (στην κάμερα) | WiFi (τοπικό) | TCP | HTTP/1.1 | `?token=CAM_TOKEN` | **PARKED** — `12 §7`, `parked/camera/README.md` |
 | 9 | Internal loopback (weather/recorder/simulator/`serial_bridge.py` → Mosquitto) | TCP/1883 | loopback interface | TCP | MQTT plaintext, anonymous | Καμία (network-isolated, `127.0.0.1` bind) | `05 §2`, `04` |
 | 10 | Πρώτη εγκατάσταση: Κινητό → Pi AP | — | 802.11 (ανοιχτό δίκτυο, χωρίς WPA) | TCP | HTTP (captive portal) | **Καμία** | `09 §2-4` |
 | 11 | weather.py → Open-Meteo | TCP/443 | Ethernet/WiFi → Internet | TCP | HTTPS (`urllib.request`) | TLS (δημόσιο API, standard library validation) | `11 §1` |
