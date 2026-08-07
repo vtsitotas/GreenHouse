@@ -1,6 +1,11 @@
 # Edge Node Power & Hardware Optimization Plan
 
 > **Purpose:** Document future upgrades for making the ESP32-C3 Edge Nodes completely self-sustaining via solar and battery power. This expands on the wireless bridging tests to cover long-term field deployment.
+>
+> **See also:** [`SENSOR_NODE_POWER_AND_SOLAR.md`](SENSOR_NODE_POWER_AND_SOLAR.md)
+> — the follow-up written against the shipped code. It re-derives the numbers
+> below from the firmware's actual constants and adds the solar sizing math,
+> the per-component rationale, and the battery-telemetry path to the app.
 
 ---
 

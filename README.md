@@ -67,6 +67,9 @@ not just notes):
 - [`TODO.md`](TODO.md) — designed-but-unbuilt and built-but-hardware-unvalidated work
 - [`IMPROVEMENTS.md`](IMPROVEMENTS.md) — things that work but could be better (Greek)
 - [`SECURITY.md`](SECURITY.md) — security posture, known limits, and the credential-rotation checklist
+- [`docs/SENSOR_NODE_POWER_AND_SOLAR.md`](docs/SENSOR_NODE_POWER_AND_SOLAR.md) —
+  the battery node's hardware, deep-sleep power budget worked through from the
+  firmware's own constants, solar sizing, and how battery % reaches the app
 
 ## Tech stack
 
