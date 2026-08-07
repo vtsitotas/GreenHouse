@@ -22,7 +22,6 @@ apt-get install -y -qq \
   mosquitto mosquitto-clients \
   python3-flask \
   python3-paho-mqtt \
-  python3-pil \
   python3-pip \
   python3-serial \
   openssl \
@@ -153,35 +152,6 @@ if [ ! -f /etc/greenhouse/hivemq.json ]; then
   echo "    real HiveMQ Cloud credentials for remote/app access to work."
 fi
 
-echo "==> Writing ESP32-CAM shared token for cam_bridge..."
-# Generated per-unit rather than copied from the tracked example file. The
-# example's value is a KNOWN CONSTANT that ships in the repo -- if a unit kept
-# it, the camera token would authenticate nothing (anyone reading the repo
-# knows it), while still *looking* provisioned. A random default fails safe:
-# the camera simply won't authenticate until the value is deliberately synced
-# into the flashed secrets.h, which is a visible, diagnosable failure rather
-# than silent fleet-wide credential reuse.
-if [ ! -f /etc/greenhouse/cam_token.txt ]; then
-  openssl rand -base64 33 | tr -d '/+=\n' | head -c 32 > /etc/greenhouse/cam_token.txt
-  echo "" >> /etc/greenhouse/cam_token.txt
-  echo "    Generated a unique token for this unit. Copy it into CAM_TOKEN in"
-  echo "    firmware/libraries/GreenhouseSecrets/secrets.h and reflash the"
-  echo "    camera -- the two must match exactly:"
-  echo "      $(cat /etc/greenhouse/cam_token.txt)"
-elif [ "$(tr -d '[:space:]' < /etc/greenhouse/cam_token.txt)" = "your-cam-shared-token" ]; then
-  # An earlier install.sh copied the example verbatim. That value is public,
-  # so treat it as unprovisioned and replace it.
-  openssl rand -base64 33 | tr -d '/+=\n' | head -c 32 > /etc/greenhouse/cam_token.txt
-  echo "" >> /etc/greenhouse/cam_token.txt
-  echo "    WARNING: this unit was using the repo's placeholder cam token,"
-  echo "    which is public. Replaced with a unique one -- update CAM_TOKEN in"
-  echo "    the camera's secrets.h and reflash:"
-  echo "      $(cat /etc/greenhouse/cam_token.txt)"
-fi
-# cam_bridge.py runs as `pi` and must read it; nothing else should.
-chown root:pi /etc/greenhouse/cam_token.txt
-chmod 640 /etc/greenhouse/cam_token.txt
-
 touch /etc/mosquitto/passwd
 chown mosquitto:mosquitto /etc/mosquitto/passwd
 chmod 640 /etc/mosquitto/passwd
@@ -218,7 +188,6 @@ cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-hivemq-bridge.service  /etc/systemd/system/
-cp "$REPO"/systemd/greenhouse-cam-bridge.service     /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-serial-bridge.service  /etc/systemd/system/
 # demo-only, disabled by default -- enable manually with
 # `sudo systemctl enable --now greenhouse-simulator` only on units with no
@@ -239,7 +208,17 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge greenhouse-cam-bridge greenhouse-serial-bridge >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge >/dev/null 2>&1
+
+# The camera is parked (parked/camera/) -- tear down the cam-bridge unit on
+# units that were installed back when it shipped, so a redeploy doesn't leave
+# a service running against code this repo no longer installs.
+if [ -f /etc/systemd/system/greenhouse-cam-bridge.service ]; then
+  echo "==> Removing parked greenhouse-cam-bridge service..."
+  systemctl disable --now greenhouse-cam-bridge >/dev/null 2>&1 || true
+  rm -f /etc/systemd/system/greenhouse-cam-bridge.service
+  systemctl daemon-reload
+fi
 
 # The stock hostapd unit is unused (NetworkManager runs the AP). Keep it out
 # of the way so it never races for the radio.
@@ -358,12 +337,10 @@ systemctl restart greenhouse-portal
 systemctl restart greenhouse-weather
 systemctl restart greenhouse-recorder
 systemctl restart greenhouse-hivemq-bridge
-systemctl restart greenhouse-cam-bridge
 # greenhouse-serial-bridge is deliberately NOT restarted here -- it's enabled
 # for next boot only. Until the one-time raspi-config step below has run and
 # the Pi has rebooted, /dev/serial0 is still the login console, so starting
-# it now would just restart-loop against a port it can't use yet. (Unlike
-# serial-bridge, cam-bridge has no such dependency, so it's restarted above.)
+# it now would just restart-loop against a port it can't use yet.
 
 echo ""
 echo "════════════════════════════════════════════════════════════════════════"

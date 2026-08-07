@@ -32,7 +32,6 @@ MODE="${1:---dry-run}"
 #   80   portal HTTP — captive portal + /pair existence check (must stay plain)
 #   8443 portal HTTPS — pairing + history API
 #   8883 mosquitto TLS — app/bridge MQTT
-#   8090 cam_bridge — camera snapshot intake (signed + encrypted)
 #   5353 mDNS/UDP — "Find my greenhouse" discovery
 #   67   DHCP/UDP + 53 DNS — only meaningful in AP mode, where the Pi serves
 #        the setup hotspot; harmless otherwise since nothing listens.
@@ -42,7 +41,10 @@ MODE="${1:---dry-run}"
 # 8443. Opening a port "just in case" is exactly what default-deny exists to
 # prevent, and pi/tests/test_firewall_rules.py fails if this list drifts away
 # from the services actually configured in this repo.
-TCP_PORTS="22 80 8443 8883 8090"
+# 8090 (cam_bridge intake) was removed when the camera was parked — nothing
+# listens on it now. Restoring the camera means adding it back here; see
+# parked/camera/README.md.
+TCP_PORTS="22 80 8443 8883"
 UDP_PORTS="5353 67 53"
 
 _rules() {
@@ -116,7 +118,7 @@ case "$MODE" in
       exit 1
     fi
 
-    echo "==> Applied. Inbound default-deny; SSH/portal/MQTT/cam/mDNS allowed."
+    echo "==> Applied. Inbound default-deny; SSH/portal/MQTT/mDNS allowed."
     echo ""
     echo "    These rules are NOT persistent across reboot by design — if this"
     echo "    locks you out of anything, power-cycling the Pi clears them."

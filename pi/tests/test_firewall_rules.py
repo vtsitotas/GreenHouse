@@ -13,7 +13,6 @@ _PI = os.path.join(_HERE, '..')
 
 FIREWALL_SH = os.path.join(_PI, 'scripts', 'firewall.sh')
 MOSQUITTO_CONF = os.path.join(_PI, 'mosquitto', 'mosquitto.conf')
-CAM_BRIDGE = os.path.join(_PI, 'scripts', 'cam_bridge.py')
 PORTAL = os.path.join(_PI, 'portal', 'portal.py')
 
 
@@ -57,10 +56,13 @@ def test_mosquitto_plaintext_listener_is_never_opened():
     assert 1883 not in _allowed_tcp()
 
 
-def test_cam_bridge_port_is_allowed():
-    m = re.search(r'CAM_HTTP_PORT = (\d+)', _read(CAM_BRIDGE))
-    assert m
-    assert int(m.group(1)) in _allowed_tcp()
+def test_cam_bridge_port_is_closed_while_the_camera_is_parked():
+    """The camera lives under parked/camera/ and its bridge is not installed,
+    so 8090 must not be open — that is precisely the 'opened just in case'
+    case this file exists to catch. Reopen it when restoring the camera."""
+    assert not os.path.exists(os.path.join(_PI, 'scripts', 'cam_bridge.py')), \
+        'cam_bridge.py is back in the live tree — reopen 8090 and restore this test'
+    assert 8090 not in _allowed_tcp()
 
 
 def test_portal_https_port_is_allowed():
@@ -85,7 +87,6 @@ def test_no_unused_ports_are_opened():
         80,    # portal HTTP / captive portal
         8443,  # portal HTTPS
         8883,  # mosquitto TLS
-        8090,  # cam_bridge intake
     }
     assert _allowed_tcp() == justified, (
         f'unexpected TCP ports opened: {_allowed_tcp() - justified}; '

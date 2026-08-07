@@ -1,6 +1,66 @@
 # Greenhouse IoT — Session Handoff
 
+**Last updated:** 2026-08-02 (camera parked + cleanup), merged on 2026-08-07
+with the 2026-07-28 security-hardening branch.
+**Status:** The camera is **parked** — see the 2026-08-02 TL;DR below. The
+security-hardening pass (2026-07-28, TL;DR after it) landed before that and
+is merged in: its Pi/app/systemd hardening is live, while its camera-specific
+work (frame signing + encryption, `/stream` token auth) now sits under
+`parked/camera/` and ships with a restore rather than running. Before both,
+as of 2026-07-27: two previously-undiagnosed bugs that made login impossible
+are fixed and pushed (`c626db8`, `79e37ff`); the UART bridge still doesn't
+produce any UART traffic (cause unresolved). See "Next step" and the
+2026-07-27 local-session TL;DR further down (read it before the
+UART-wired-bridge TL;DR after it — that one is from earlier the same day and
+is superseded on a few points, noted inline).
+
+---
+
+## TL;DR of this session (2026-08-02 — camera parked, dead weight removed)
+
+The camera never worked well enough on real hardware to keep carrying, so it
+was **parked, not deleted**: every camera file was `git mv`'d under
+`parked/camera/` (history intact, `git log --follow` works), and everything
+that referenced it was unwired.
+
+- **App:** no Camera tab or `/camera` route; `cam/*` MQTT topic routing,
+  the repository's cam streams / `fetchEventPhoto` / live-frame reassembly,
+  `CamStatusRaw`/`CamEventChunkRaw`/`CamLiveFrameChunkRaw`, the
+  `motion_alert` notification switch and the `'motion'` alert title are all
+  gone from `app/lib`. Dependency `flutter_mjpeg` dropped.
+- **Pi:** `install.sh` no longer installs `python3-pil`, provisions
+  `cam_token.txt`, or copies/enables/restarts `greenhouse-cam-bridge` — and
+  it now actively disables+removes that unit on units that already have it,
+  so a redeploy leaves nothing running. `weather.py` no longer carries
+  `motion_alert`.
+- **CI:** `Pillow` dropped from the pip install line (only the parked
+  motion tests needed it).
+- **Docs:** technical docs, `DEVICES.md`, `ARCHITECTURE.md`, `TODO.md` and
+  `IMPROVEMENTS.md` now mark the camera as parked rather than live. The
+  design specs/plans under `docs/superpowers/` were left alone — they're
+  history.
+
+Net: −359 lines from the live tree, two dependencies gone, one fewer
+always-on service on the Pi. Restore instructions (including the exact
+shared-file edits to undo) are in `parked/camera/README.md`.
+
+**Pi tests:** 115 passed. The 2 `test_push.py` failures seen locally are the
+known `firebase-admin`-not-installed-in-sandbox case, not a regression — CI
+installs it. Flutter isn't available in that sandbox, so `flutter analyze`
+/ `flutter test` were verified by CI, not locally.
+
+---
+
 ## TL;DR of this session (2026-07-28 — security hardening pass)
+
+**Merge note (2026-08-07):** this pass predates the camera parking above.
+Everything below that touches the camera — the `POST /cam/frame` gate, frame
+signing, frame encryption, `/stream` token auth, the `CAM_TOKEN` provisioning
+— was real work and its files moved intact under `parked/camera/`, but none
+of it runs today: the cam bridge is not installed and `install.sh` removes it.
+Treat those items as fixes banked against a future restore. The non-camera
+hardening (portal HTTPS + auth, per-IP lockout, systemd sandboxing, ACL fix,
+SSH hardening, secret rotation, leak detection) is live.
 
 Full security review of every attack surface, then fixes. **One critical
 vulnerability found and closed**, plus four smaller real issues. 30 new tests
@@ -129,17 +189,6 @@ gained security regression checks that assert the gates return 401.
 Everything in `firmware/` still carries the standing caveat that nothing here
 has been compiled or flashed from this sandbox — the camera's new signing code
 in particular needs a bench run.
-
----
-
-**Last updated:** 2026-07-27, later (local bench-testing + real-bug session)
-**Status:** ✅ Two genuine, previously-undiagnosed bugs that made login
-impossible are fixed and pushed (`c626db8`, `79e37ff`). Real-hardware
-bring-up continues: UART bridge still doesn't produce any UART traffic
-(cause unresolved), camera firmware now compiles and is ready to flash but
-untested. See "Next step" and the local-session TL;DR right below (read it
-before the UART-wired-bridge TL;DR further down — that one is from earlier
-the same day and is superseded on a few points, noted inline).
 
 ---
 

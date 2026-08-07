@@ -175,10 +175,19 @@ sketches, bridge sketch) — **has never been compiled** (no `arduino-cli` in
 the dev sandbox) or run on physical ESP32 hardware. See
 `docs/MESH_RELAY_EXPLAINED.md` and the plan's Task 5 bench-test checklist.
 
-### ESP32-CAM live view + motion alerts
+### ESP32-CAM live view + motion alerts — ⏸️ PARKED (2026-08-02)
+**Parked:** the camera never reached a useful state on real hardware, so the
+whole vertical slice was moved to `parked/camera/` and unwired from the app,
+`pi/install.sh` and CI. Nothing below is live work any more — it's kept as the
+record of where bring-up stopped, in case the camera is ever revived. The
+four camera entries in this file (this one, WebRTC Phase 2, `/stream` token
+auth, and the streaming/motion-detection conflict further down) are all
+parked together. Restore steps: `parked/camera/README.md`. Paths below are
+pre-park; each file now sits under `parked/camera/` at the same relative path.
+
 **Spec/plan:** `docs/superpowers/specs/2026-07-10-esp32-cam-integration-design.md`,
 `docs/superpowers/plans/2026-07-11-esp32-cam-integration.md`
-**Status:** Code present and complete: `firmware/cam_esp32/cam_esp32.ino`,
+**Status at park time:** Code present and complete: `firmware/cam_esp32/cam_esp32.ino`,
 `pi/scripts/cam_bridge.py`, `pi/shared/motion.py`, `pi/shared/cam_store.py`,
 plus app-side `camera_screen.dart`/`camera_provider.dart`/`cam_status.dart`,
 and tests (`pi/tests/test_cam_bridge.py`, `test_motion.py`, `test_cam_store.py`).
@@ -209,21 +218,31 @@ flashed `secrets.h` exactly — now set to a real value, see above). Next
 bench step: flash, then read the serial monitor
 output at 115200 baud and continue from there.
 
-### Phase 2 — WebRTC remote camera streaming
+### Phase 2 — WebRTC remote camera streaming — ⏸️ PARKED
 Documented in the ESP32-CAM design spec's Phase 2 section, **deliberately
 not planned or started**. Would need `aiortc` on the Pi + a new public TURN
 relay server; flagged risk: Pi Zero W may lack CPU headroom to encode a live
 WebRTC track (no hardware video encoder) — needs a bench test before
 committing to this track.
 
-### ESP32-CAM `/stream` token auth (app-side half of IMPROVEMENTS.md A5) — ✅ DONE 2026-07-28
-Every endpoint on the camera is now `CAM_TOKEN`-gated, `/stream` included.
-The cross-stack chain that was missing got built end to end: `portal.py`'s
-`_pairing_payload()` returns `cam_token` → `ConnectionConfig.camToken` →
-`camera_screen.dart`'s `streamUrl()` appends `?token=` →
-`cam_esp32.ino`'s `handleStream()` calls `checkCamToken()`. The token rides
-the already-PIN-gated `/pair/confirm` response, so no new user-facing step;
-the manual-entry path takes it from the pairing screen's Advanced section.
+### ESP32-CAM `/stream` token auth (app-side half of IMPROVEMENTS.md A5) — ✅ BUILT 2026-07-28, now ⏸️ PARKED with the camera
+The work was finished before the camera was parked: every endpoint on the
+camera is `CAM_TOKEN`-gated, `/stream` included. The cross-stack chain got
+built end to end — `portal.py`'s `_pairing_payload()` returns `cam_token` →
+`ConnectionConfig.camToken` → `camera_screen.dart`'s `streamUrl()` appends
+`?token=` → `cam_esp32.ino`'s `handleStream()` calls `checkCamToken()`. The
+token rides the already-PIN-gated `/pair/confirm` response, so no new
+user-facing step; the manual-entry path takes it from the pairing screen's
+Advanced section.
+
+As of 2026-08-02 the camera halves of that chain live under
+`parked/camera/` (`app/lib/screens/camera/camera_screen.dart`,
+`firmware/cam_esp32/cam_esp32.ino`) and are not built or flashed. The Pi
+and app plumbing that survived the parking — `_pairing_payload()`'s
+`cam_token` field and `ConnectionConfig.camToken` — is inert but harmless,
+and means a restore per `parked/camera/README.md` gets an already-gated
+`/stream` rather than the open one this entry originally tracked. Nothing
+here was ever bench-tested on real camera hardware.
 
 **Bench-test note:** the Pi and app halves are covered by tests, but the
 firmware half (`handleStream()`'s new gate) shares the general caveat that
@@ -250,7 +269,7 @@ Original proposal (not implemented, superseded): scan all 13 channels
 listening for the bridge's own beacon (`MESH_MAGIC`, rank 0) instead of the
 router's SSID — decouples the mesh from router config entirely.
 
-### LAN camera streaming blocks motion detection (IMPROVEMENTS.md B3)
+### LAN camera streaming blocks motion detection (IMPROVEMENTS.md B3) — ⏸️ PARKED
 `cam_esp32.ino`'s `WebServer` is single-threaded; `handleStream()`'s
 `while (client.connected())` loop means `loop()` (and therefore
 `sendSnapshotToPi()`) never runs while someone is watching the live MJPEG
