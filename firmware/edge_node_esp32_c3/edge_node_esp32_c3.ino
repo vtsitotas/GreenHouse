@@ -8,7 +8,10 @@
 #include <mesh_node.h>
 
 // ── Pin definitions ───────────────────────────────────────────────────────────
-#define SOIL_DATA_PIN  2   // ADC1_CH2
+#define SOIL_DATA_PIN  1   // ADC1_CH1 — NOT GPIO2: that's an ESP32-C3 strapping
+                            // pin and some boards carry a hardware pull-up on
+                            // it, which pins the ADC near VCC regardless of
+                            // sensor output (found via sensor_pin_test.ino).
 #define DHT_DATA_PIN   6   // GPIO6 — moved away from JTAG pins
 #define SOIL_PWR_PIN   4
 #define DHT_PWR_PIN    5
