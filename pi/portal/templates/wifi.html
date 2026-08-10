@@ -31,6 +31,13 @@
     .error { background: #fff3f3; border: 1px solid #ffcdd2;
              color: #c62828; padding: 10px 14px; border-radius: 8px;
              font-size: 14px; margin-bottom: 16px; }
+    .visible-list { margin-top: 10px; font-size: 12px; color: #8d4a4a; line-height: 1.9; }
+    .ssid-chip { display: inline-block; background: #fff; border: 1px solid #ffcdd2;
+                 border-radius: 6px; padding: 2px 7px; margin: 0 4px 2px 0;
+                 font-family: ui-monospace, monospace; color: #c62828; }
+    .force-wrap { display: flex; align-items: flex-start; gap: 8px; font-size: 13px;
+                  color: #444; font-weight: 400; margin-bottom: 16px; line-height: 1.4; }
+    .force-wrap input { width: auto; margin: 2px 0 0 0; flex: none; }
     .tip { margin-top: 20px; background: #f1f8e9; border-radius: 10px;
            padding: 12px 14px; font-size: 12px; color: #558b2f; line-height: 1.6; }
     .overlay { display: none; position: fixed; inset: 0; background: rgba(240,244,240,.97);
@@ -52,10 +59,24 @@
     <h1>Set up your Greenhouse</h1>
     <p>Connect to your home WiFi so the greenhouse can send you data from anywhere.</p>
     {% if error %}
-      <div class="error">{{ error }}</div>
+      <div class="error">
+        {{ error }}
+        {% if visible %}
+          <div class="visible-list">
+            Networks the greenhouse can see:
+            {% for net in visible %}<span class="ssid-chip">{{ net }}</span>{% endfor %}
+          </div>
+        {% endif %}
+      </div>
     {% endif %}
     <form id="form" method="post" action="/connect">
       <input type="hidden" id="ssid" name="ssid" value="{{ request.form.get('ssid', '') }}">
+      {% if allow_force %}
+        <label class="force-wrap">
+          <input type="checkbox" name="force" value="1">
+          Connect anyway &mdash; <strong>{{ typed_ssid }}</strong> is a hidden network
+        </label>
+      {% endif %}
 
       <label for="ssid-select">WiFi Network</label>
       <div class="select-wrap">
@@ -92,6 +113,21 @@
     const form = document.getElementById('form');
 
     let networks = [];
+
+    // Set when the server bounced an SSID it could not see. The scan below
+    // rebuilds the picker and would otherwise wipe what the user typed and
+    // re-disable the button, making the "connect anyway" checkbox unusable.
+    const forcedSsid = {{ (typed_ssid or '')|tojson }};
+
+    function restoreForced() {
+      if (!forcedSsid) return;
+      sel.value = '__other__';
+      manualWrap.hidden = false;
+      passWrap.hidden = false;
+      manualInput.value = forcedSsid;
+      ssidHidden.value = forcedSsid;
+      btn.disabled = false;
+    }
 
     function applySelection() {
       const val = sel.value;
@@ -152,12 +188,14 @@
           sel.appendChild(other);
         }
         btn.disabled = true;
+        restoreForced();
       })
       .catch(() => {
         sel.innerHTML = '<option value="__other__" selected>Type manually…</option>';
         manualWrap.hidden = false;
         passWrap.hidden = false;
         btn.disabled = false;
+        restoreForced();
       });
   </script>
 </body>

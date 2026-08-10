@@ -265,10 +265,30 @@ ssh-keygen -R greenhouse.local
 your router's device list and pass it directly: `.\deploy.ps1 -PiHost 192.168.1.xx`.
 
 **Self-test shows `N-1 passed, 1 failed` (portal not responding)**
-→ Harmless timing — the portal was still starting. Re-run the self-test:
+→ Harmless timing — the portal was still starting. On a Pi Zero W the portal
+takes ~6 s to bind port 80 after a restart, so a check fired immediately after
+`systemctl restart` gets a connection refusal. Re-run the self-test:
 ```powershell
 ssh pi@greenhouse.local "sudo bash /home/pi/greenhouse/scripts/selftest.sh"
 ```
+
+**You entered your WiFi details, but the `Greenhouse-XXXX` hotspot came back**
+→ The Pi tried your network, failed, and deliberately reverted to setup mode so
+you're never locked out (`wifi_watchdog.sh`). It writes **`wifi_fail.log` to the
+SD card's boot partition** before reverting — pull the card into any PC and read
+it. The two lines that matter are next to each other: the SSID that got saved,
+byte-exact, and the list of SSIDs the greenhouse could actually see.
+
+The setup form now checks the network is visible before it commits, so a typo'd
+name is rejected inline (*"No network named X. Did you mean Y?"*) rather than
+costing you a reboot cycle. For a genuinely hidden network, tick **Connect
+anyway** to override — that also marks the profile hidden so NetworkManager
+actively probes for it.
+
+Common real causes when the SSID *is* correct:
+- Wrong password (`nmcli` reports it in `wifi_fail.log`).
+- 5 GHz-only network. **A Pi Zero W is 2.4 GHz only** and cannot see 5 GHz at
+  all. On a phone hotspot, force the AP band to 2.4 GHz.
 
 **Pairing page says "pairing window expired"**
 → It's only open 5 minutes after boot. Reopen it:

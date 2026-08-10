@@ -14,6 +14,7 @@ STA mode (.wifi_configured present):
                             Flutter app, only if the PIN matches. 5 wrong
                             PINs lock the endpoint until the service restarts.
 """
+import difflib
 import hmac
 import json
 import os
@@ -21,6 +22,7 @@ import secrets
 import sqlite3
 import subprocess
 import sys
+import threading
 import time
 
 from flask import Flask, abort, g, jsonify, redirect, render_template, request
@@ -221,10 +223,62 @@ def _validate(ssid: str, password: str):
     return None
 
 
+def _visible_ssids() -> list:
+    """SSIDs wlan0 can currently see, most recent scan.
+
+    An empty list means the scan itself failed or returned nothing -- which is
+    NOT the same as "the network is absent", so callers must never treat it as
+    proof of a bad SSID.
+    """
+    try:
+        subprocess.run(
+            ["sudo", "nmcli", "device", "wifi", "rescan", "ifname", "wlan0"],
+            timeout=5, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+    except Exception:
+        pass  # rescan is best-effort; the cached list below is still usable
+    try:
+        out = subprocess.run(
+            ["sudo", "nmcli", "-t", "-f", "SSID", "device", "wifi", "list",
+             "ifname", "wlan0"],
+            capture_output=True, text=True, timeout=10).stdout
+    except Exception:
+        return []
+    seen = []
+    for line in out.splitlines():
+        ssid = line.replace("\\:", ":").strip()
+        if ssid and ssid not in seen and not ssid.startswith("Greenhouse-"):
+            seen.append(ssid)
+    return seen
+
+
+# A typed SSID is matched by NetworkManager byte-for-byte against the SSID
+# information element on the air -- there is no fuzzy match and no feedback.
+# Before this check, a one-character typo was accepted silently, written into
+# the profile, and only surfaced as a mystery reboot back into AP mode minutes
+# later, indistinguishable from a wrong password or a dead radio. Catching it
+# here turns that whole loop into one inline error. (Cost a full bench day to
+# diagnose on 2026-08-10: "billyredmi" typed for a hotspot named "billredmi".)
+def _ssid_reachable(ssid: str):
+    """None when the SSID is visible (or unprovable). Otherwise (message, list)
+    where list is what the unit CAN see, best match first."""
+    visible = _visible_ssids()
+    if not visible or ssid in visible:
+        return None
+    ci = [s for s in visible if s.lower() == ssid.lower()]
+    if ci:
+        return (f'No network named "{ssid}". Did you mean "{ci[0]}"? '
+                f"WiFi names are case-sensitive.", visible)
+    close = difflib.get_close_matches(ssid, visible, n=3, cutoff=0.6)
+    if close:
+        return (f'No network named "{ssid}". Did you mean "{close[0]}"?',
+                visible)
+    return (f'The greenhouse cannot see a network named "{ssid}".', visible)
+
+
 # The portal runs as `pi`, not root (see IMPROVEMENTS.md finding A2) — nmcli
 # and reboot need real privilege, granted narrowly via
 # /etc/sudoers.d/greenhouse-portal (see pi/portal/greenhouse-portal.sudoers).
-def _save_wifi(ssid: str, password: str) -> None:
+def _save_wifi(ssid: str, password: str, hidden: bool = False) -> None:
     subprocess.run(["sudo", "nmcli", "connection", "delete", _CLIENT_CONN],
                    stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     subprocess.run(
@@ -233,10 +287,24 @@ def _save_wifi(ssid: str, password: str) -> None:
          "connection.autoconnect-priority", "10",
          "ssid", ssid],
         check=True)
+    if hidden:
+        # A non-broadcasting AP is only found if NM actively probes for it;
+        # without this the profile sits there never matching anything. Set only
+        # when the operator explicitly overrode the visibility check, since it
+        # costs an extra probe request on every scan.
+        subprocess.run(
+            ["sudo", "nmcli", "connection", "modify", _CLIENT_CONN,
+             "802-11-wireless.hidden", "yes"],
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     if password:
         subprocess.run(
             ["sudo", "nmcli", "connection", "modify", _CLIENT_CONN,
-             "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password],
+             "wifi-sec.key-mgmt", "wpa-psk", "wifi-sec.psk", password,
+             # psk-flags 0 = system-owned. NM's default already is 0, but an
+             # agent-owned secret makes boot-time `nmcli connection up` fail
+             # with "Secrets were required, but not provided" on a headless
+             # unit with no agent running -- assert it rather than inherit it.
+             "wifi-sec.psk-flags", "0"],
             check=True)
     # Disable autoconnect on every other WiFi profile so only greenhouse-home
     # reconnects after reboot (avoids Pi Imager dev-WiFi racing it on boot).
@@ -257,7 +325,15 @@ def _save_wifi(ssid: str, password: str) -> None:
 
 
 def _reboot_soon() -> None:
-    subprocess.Popen(["bash", "-c", "sleep 3 && sudo reboot"])
+    # A bash-spawned "sleep 3 && sudo reboot" chain was silently dying before
+    # ever reaching sudo (bench-tested 2026-08-09 -- no trace of it in the
+    # sudo journal at all). Doing the delay in-process with a daemon thread
+    # and calling sudo directly (argv list, no shell) matches the pattern
+    # that already works for _save_wifi()'s nmcli calls.
+    def _delayed_reboot():
+        time.sleep(3)
+        subprocess.run(["sudo", "reboot"])
+    threading.Thread(target=_delayed_reboot, daemon=True).start()
 
 
 @app.route("/", defaults={"path": ""})
@@ -316,10 +392,19 @@ def connect():
         abort(403)
     ssid = request.form.get("ssid", "").strip()
     password = request.form.get("password", "").strip()
+    force = request.form.get("force") == "1"
     error = _validate(ssid, password)
     if error:
         return render_template("wifi.html", error=error), 400
-    _save_wifi(ssid, password)
+    if not force:
+        unreachable = _ssid_reachable(ssid)
+        if unreachable:
+            message, visible = unreachable
+            # allow_force lets the operator commit anyway for a hidden SSID.
+            return render_template("wifi.html", error=message,
+                                   visible=visible, allow_force=True,
+                                   typed_ssid=ssid), 400
+    _save_wifi(ssid, password, hidden=force)
     _reboot_soon()
     return render_template("rebooting.html", ssid=ssid)
 
@@ -331,10 +416,19 @@ def api_connect():
     data = request.get_json(silent=True) or request.form
     ssid = (data.get("ssid") or "").strip()
     password = (data.get("password") or "").strip()
+    force = str(data.get("force", "")).lower() in ("1", "true", "yes")
     error = _validate(ssid, password)
     if error:
         return jsonify({"error": error}), 400
-    _save_wifi(ssid, password)
+    if not force:
+        unreachable = _ssid_reachable(ssid)
+        if unreachable:
+            message, visible = unreachable
+            # ssid_not_found lets the app offer "connect anyway" (hidden SSID)
+            # by re-POSTing the same body with force=true.
+            return jsonify({"error": message, "code": "ssid_not_found",
+                            "visible": visible}), 400
+    _save_wifi(ssid, password, hidden=force)
     _reboot_soon()
     return jsonify({"status": "connecting", "ssid": ssid})
 
@@ -556,7 +650,6 @@ def _serve_https() -> None:
 
 if __name__ == "__main__":
     if _https_available():
-        import threading
         threading.Thread(target=_serve_https, daemon=True).start()
         print(f"[portal] HTTPS listener on :{HTTPS_PORT} "
               f"(enforced={_require_https_enforced()})", flush=True)
