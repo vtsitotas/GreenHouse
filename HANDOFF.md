@@ -1,18 +1,86 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-02 (camera parked + cleanup), merged on 2026-08-07
-with the 2026-07-28 security-hardening branch.
-**Status:** The camera is **parked** — see the 2026-08-02 TL;DR below. The
-security-hardening pass (2026-07-28, TL;DR after it) landed before that and
-is merged in: its Pi/app/systemd hardening is live, while its camera-specific
-work (frame signing + encryption, `/stream` token auth) now sits under
-`parked/camera/` and ships with a restore rather than running. Before both,
-as of 2026-07-27: two previously-undiagnosed bugs that made login impossible
-are fixed and pushed (`c626db8`, `79e37ff`); the UART bridge still doesn't
-produce any UART traffic (cause unresolved). See "Next step" and the
-2026-07-27 local-session TL;DR further down (read it before the
-UART-wired-bridge TL;DR after it — that one is from earlier the same day and
-is superseded on a few points, noted inline).
+**Last updated:** 2026-08-10 (WiFi provisioning + UART bridge bring-up,
+full bench deploy). Camera remains **parked** since 2026-08-02 (see that
+TL;DR below); the 2026-07-28 security-hardening pass is merged and live.
+**Status:** UART bridge to the Pi is now **working** — the 2026-07-27 "no
+traffic on `/dev/serial0`" note below is resolved (was a diagnostic artifact,
+not the link). WiFi first-time setup (captive portal) had four stacked bugs
+and is now fixed end to end. The bench Pi is fully deployed off current
+`main`, `selftest.sh` reports 45/45. Still open: no edge node has actually
+delivered a sensor *reading* yet (bridge heartbeats fine, mesh path unproven);
+see the 2026-08-10 TL;DR for the full list.
+
+---
+
+## TL;DR of this session (2026-08-10 — WiFi provisioning + UART bridge fixed, full bench deploy)
+
+Bench session on a real Pi Zero W + ESP32-C3 bridge + phone hotspot. Commits
+`3ce691c`..`4f190ab` on `main`. Full details/rationale are in those commit
+messages and `TODO.md` — this is the map of what changed and why it matters.
+
+**C3 soil sensor was reading dead air.** `SOIL_DATA_PIN` was GPIO2, an
+ESP32-C3 strapping pin some boards carry a hardware pull-up on — `analogRead()`
+sat at 4095 permanently, indistinguishable from a cold solder joint. Moved to
+GPIO1; readings now track moisture correctly. **Every already-wired C3 node
+needs the AOUT wire moved + a reflash.** Added `firmware/sensor_pin_test/`, a
+standalone bench sketch for checking joints without the mesh stack in the way.
+
+**WiFi first-time setup was unusable — four stacked bugs, each masking the
+next:** `/etc/greenhouse` was root-owned while the portal runs as `pi` (500 on
+submit); `_reboot_soon()`'s `bash -c "sleep 3 && sudo reboot"` silently never
+reached `sudo`; the typed SSID was written and committed with zero check it
+was even visible (NetworkManager matches byte-for-byte — `billyredmi` typed
+for a hotspot actually named `REDACTED_WIFI_SSID` cost most of a session before this
+was fixed); and the watchdog reverted to AP mode recording nothing about why.
+Now: `/connect` rejects an unreachable SSID and suggests the closest visible
+name; the watchdog writes `wifi_fail.log` to the boot partition before
+reverting, pairing the configured SSID byte-exact against what's actually
+visible.
+
+**UART bridge to the Pi: resolved, not actually broken.** The 2026-07-27
+"zero bytes on `/dev/serial0`" turned out to be a diagnostic artifact — `head
+-c N` buffers and gets killed by `timeout` before flushing, reading as a dead
+link. An instrumented pyserial read shows the bridge heartbeating reliably
+(11 lines/20s @ 115200). `dtoverlay=disable-bt` is **not** needed here despite
+being the usual fix for this symptom — `enable_uart=1` already pins core_freq
+on this Zero W.
+
+**Not yet proven: any edge node delivering a reading.** The UART carries
+`heartbeat` lines only; zero `reading` lines seen; no mesh rows reached the
+recorder. `zone1`/`zone2` values visible in MQTT during this session were
+*retained* messages from an earlier session, not live data — easy to mistake
+for a working feed since retained topics read back instantly on subscribe.
+
+**`serial_bridge.py` stale-status bug:** liveness tracking only started once a
+heartbeat had been seen, so restarting the service while the ESP32 was
+unpowered left every retained `online` standing forever. Now sweeps once at
+startup and retracts stale claims if no heartbeat arrives within the timeout
+window. Found two paho-mqtt ordering bugs writing the fix (callbacks must be
+registered before `connect()`; `SUBSCRIBE` must be issued from `on_connect`,
+not inline) — both made the sweep silently never run in the service even
+though identical code worked driven by hand.
+
+**Full `deploy.ps1` run against the bench unit**, which surfaced one more real
+bug: `gen_certs.sh`'s mosquitto-cert idempotency guard sat in front of the
+portal HTTPS keypair copy, so any unit whose mosquitto cert predated that copy
+step could never get a portal keypair from any later install. Split into two
+independent checks. `selftest.sh`: **45 passed, 0 failed** (was 29/37 before
+this session). `selftest.sh` also gained a UART-bridge section — it never
+checked `greenhouse-serial-bridge` before, only the unrelated
+`greenhouse-hivemq-bridge`, so a dead sensor link could pass clean.
+
+**App rebuilt and reinstalled from a second dev machine wiped local pairing
+data** (full uninstall+reinstall, not an in-place update) — see the ⚠️ note
+under Quick Start below for why and what to expect. Re-paired manually since
+mDNS discovery doesn't work on a phone-hotspot topology (Android's
+`MulticastLock` covers the client radio, not the SoftAP interface a hotspot's
+own clients arrive on).
+
+**Deliberately NOT done this session:** rotating the `app` MQTT password,
+still `123` on this unit — `install.sh` only backfills *missing* `device.json`
+fields, never regenerates existing ones, and rotating would break the
+just-re-paired app. Use `rotate_secrets.sh` when that's wanted.
 
 ---
 
@@ -194,21 +262,28 @@ in particular needs a bench run.
 
 ## Next step
 
+> **Superseded by 2026-08-10 (see that TL;DR above):** item 1 below is
+> resolved — the bridge was never broken, "zero bytes" was a diagnostic
+> artifact of `head -c N` getting killed by `timeout` before flushing. Item 2
+> is moot — the camera was parked on 2026-08-02, after this list was written.
+> Current next step is proving an edge node delivers a real `reading` over the
+> now-working UART link, per that TL;DR's "not yet proven" note.
+
 **Immediate — from the later 2026-07-27 session:**
 
-1. **Bridge UART: confirm reflash status.** Wiring + power are confirmed
+1. ~~**Bridge UART: confirm reflash status.** Wiring + power are confirmed
    correct (see that session's TL;DR), but `/dev/serial0` shows zero bytes.
    Check whether `bridge_esp32.ino` (current UART version) has actually been
    flashed onto the board yet — if it's still running the old WiFi/MQTT
    firmware, that fully explains zero UART output. If reflashing doesn't fix
    it, `firmware/bridge_esp32_wifi_fallback/` is ready to flash instead (WiFi
    + MQTT direct to the Pi, no GPIO wiring/raspi-config step needed) — a real
-   `bridge` MQTT account already exists on the Pi for it.
-2. **ESP32-CAM: flash and bench-test.** Firmware now compiles (missing
+   `bridge` MQTT account already exists on the Pi for it.~~
+2. ~~**ESP32-CAM: flash and bench-test.** Firmware now compiles (missing
    `secrets.h` and a missing `UriBraces` include were both real blockers,
    now fixed) — this hasn't been flashed/tested yet. Watch the serial
    monitor at 115200 baud for camera/SD init, WiFi connect (`REDACTED_WIFI_SSID`),
-   and the snapshot-POST cadence reaching `cam_bridge.py`.
+   and the snapshot-POST cadence reaching `cam_bridge.py`.~~
 3. **Mesh relay + deep-sleep Phase 1** — per
    `docs/superpowers/plans/2026-07-26-mesh-deep-sleep.md` Task 6 and the
    original relay plan's Task 5. Untouched this session.
@@ -349,8 +424,10 @@ ssh pi@greenhouse.local
 
 # Verify the Pi
 ssh pi@greenhouse.local "sudo bash /home/pi/greenhouse/scripts/selftest.sh"
-# Expect 26/26 (as of 2026-07-09). If "portal not responding" shows up, it's
-# usually just mid-restart (~20s to rebind port 80) — rerun a few seconds later.
+# Expect 45/45 (as of 2026-08-10, real bench unit). If "portal not responding"
+# or "history endpoint NOT protected (got 000)" shows up, it's a startup race
+# — the portal takes ~6-8s to rebind port 80 on a Zero W after any restart.
+# Rerun a few seconds later before treating either as a real failure.
 
 # Reopen the pairing window (it auto-expires after 600s uptime)
 ssh pi@greenhouse.local "sudo systemctl restart greenhouse-portal"
@@ -372,6 +449,21 @@ flutter build apk --release
 flutter install -d <device-id>   # `flutter devices` to list; approve the
                                   # install prompt ON THE PHONE when it appears
 ```
+
+> ⚠️ **`flutter install` may silently WIPE the phone's local app data**
+> (pairing state, secure storage, cached prefs) even though the release build
+> type signs with the same `debug` signing config as debug builds
+> (`android/app/build.gradle:39`). This happens whenever the installed APK's
+> *actual* debug keystore doesn't match this machine's `~/.android/debug.keystore`
+> — e.g. the previous install came from a different dev machine. Android then
+> refuses an in-place update (`INSTALL_FAILED_UPDATE_INCOMPATIBLE`) and Flutter
+> silently falls back to uninstall-then-install. Tell: `flutter install` prints
+> "Uninstalling old version..." instead of updating in place, and
+> `adb shell dumpsys package <pkg> | grep firstInstallTime` matches
+> `lastUpdateTime` exactly (bench-confirmed 2026-08-10). No known way to avoid
+> this short of sharing one debug keystore across every dev machine — just
+> expect a full re-pair after installing from a machine that hasn't built this
+> app before.
 
 ---
 

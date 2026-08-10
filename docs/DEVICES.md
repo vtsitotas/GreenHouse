@@ -1,6 +1,7 @@
 # Device Registry & Firmware Notes
 
-**Last updated:** 2026-07-27
+**Last updated:** 2026-08-10 (UART bridge confirmed working; soil pin moved
+GPIO2 → GPIO1 — see the 2026-08-10 bench session below)
 
 ---
 
@@ -23,8 +24,8 @@ These MACs are the source of truth in:
 
 | Sketch | Used by |
 |---|---|
-| `firmware/bridge_esp32/bridge_esp32.ino` | Bridge (6B:50) — **UART-wired to the Pi**, no WiFi/MQTT. As of 2026-07-27, wiring+power confirmed correct but zero bytes seen on the Pi's `/dev/serial0` — reflash status unconfirmed, see below. |
-| `firmware/bridge_esp32_wifi_fallback/bridge_esp32_wifi_fallback.ino` | **Temporary fallback** — the pre-UART bridge firmware (WiFi + MQTT direct to the Pi), restored 2026-07-27 while the UART path is unresolved. No GPIO wiring needed, just power. Uses the same `secrets.h` as below. |
+| `firmware/bridge_esp32/bridge_esp32.ino` | Bridge (6B:50) — **UART-wired to the Pi**, no WiFi/MQTT. **Confirmed working 2026-08-10** — the earlier "zero bytes on `/dev/serial0`" was a diagnostic artifact (`head -c N` buffered and got killed by `timeout` before flushing), not a dead link. Instrumented pyserial read shows reliable heartbeats. |
+| `firmware/bridge_esp32_wifi_fallback/bridge_esp32_wifi_fallback.ino` | **No longer needed** — kept only as a fallback if the UART link ever regresses. Was the pre-UART bridge firmware (WiFi + MQTT direct to the Pi), restored 2026-07-27 while the UART path looked unresolved; that turned out to be a false alarm (see above). No GPIO wiring needed, just power, if it's ever used. Uses the same `secrets.h` as below. |
 | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino` | Zone1 (75:EC) and Zone2 (A1:B0) |
 | `firmware/edge_node_esp32/edge_node_esp32.ino` | Retired WROOM-32 — not in use |
 | `firmware/fake_edge_node_esp32_c3/fake_edge_node_esp32_c3.ino` | Fake sensor node (random-walk data) — flash to bench-test the pipeline without real sensors, then reflash the real edge node firmware |
@@ -108,6 +109,31 @@ used by the parked camera sketch — the Pi no longer provisions
 - **Bridge MQTT account:** created a real `bridge` user in Mosquitto's
   passwd file (didn't exist before — this Pi's `/etc/greenhouse/device.json`
   predated that field) for the WiFi-fallback bridge to authenticate with.
+
+---
+
+## Bench session, 2026-08-10
+
+- **Bridge UART: the "zero bytes" from 2026-07-27 was never a real fault.**
+  Re-tested with an instrumented pyserial read (not `head -c N`, which
+  buffers and gets killed by `timeout` before flushing — that's what read as
+  silence before): 11 heartbeat lines in 20s at 115200 on `/dev/serial0` →
+  `/dev/ttyS0`. `dtoverlay=disable-bt` is **not** needed on this Zero W —
+  `enable_uart=1` already pins core_freq, which is the usual reason that
+  overlay gets recommended.
+- **Soil ADC pin moved GPIO2 → GPIO1** in `edge_node_esp32_c3.ino`. GPIO2 is
+  a C3 strapping pin; the board pull-up on it pinned `analogRead()` at 4095
+  permanently, presenting identically to a cold solder joint. Any C3 node
+  wired against the old pin needs the AOUT wire moved **and** a reflash.
+  `firmware/sensor_pin_test/` is a new standalone bench sketch (no
+  WiFi/ESP-NOW/mesh) for checking DHT22 + soil joints without the mesh stack
+  in the way.
+- **Not yet re-confirmed against the real deployed mesh:** the bridge and
+  Pi-side pipeline are proven; no edge node was observed actually delivering
+  a `reading` line over the UART during this session (heartbeats only). The
+  DHT22 pull-up item in "Pending" below was not directly retested against
+  zone1/zone2's actual hardware this session — don't assume it's resolved
+  just because `sensor_pin_test` validated a DHT22 on the bench rig.
 
 ---
 

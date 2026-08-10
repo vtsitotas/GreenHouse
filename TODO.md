@@ -153,19 +153,18 @@ of scanning a router's SSID — edge nodes no longer need `secrets.h` at
 all. New `greenhouse-serial-bridge.service` + `install.sh` wiring +
 `INSTRUCTIONS.md` Part 6 (wiring diagram, one-time `raspi-config` step).
 
-**Still open (Task 5 — user's bench, in progress, blocked):** wiring and
-power were confirmed correct against `INSTRUCTIONS.md` Part 6 (2026-07-27,
-later session) — GPIO4→pin10/RXD, GPIO5←pin8/TXD, GND, 5V, board's LED
-lit — but `/dev/serial0` shows **zero bytes** across repeated samples.
-Leading suspect (unconfirmed): the board may not actually have been
-reflashed with the current `bridge_esp32.ino` (UART version) since the
-rewrite — next step is to verify that before looking elsewhere. A
-temporary fallback exists if this doesn't resolve quickly:
-`firmware/bridge_esp32_wifi_fallback/` (the last pre-UART bridge firmware,
-restored from git history, updated to current credentials, with a real
-`bridge` MQTT account already provisioned on the Pi) restores sensor data
-flow over WiFi/MQTT while the UART link is debugged. See `HANDOFF.md`'s
-"Next step" for the full current checklist.
+- [x] ~~Task 5 — bridge UART link~~ — **resolved 2026-08-10, was never actually
+      broken.** The 2026-07-27 "zero bytes on `/dev/serial0`" was a
+      diagnostic artifact: `head -c N /dev/serial0` buffers and gets killed
+      by `timeout` before flushing, which reads as a dead link. An
+      instrumented pyserial read shows the bridge heartbeating reliably (11
+      lines in 20s at 115200). Wiring, power, and firmware were all correct
+      the whole time. `firmware/bridge_esp32_wifi_fallback/` is no longer
+      needed but kept as a fallback. See `docs/DEVICES.md`'s 2026-08-10 bench
+      session and `HANDOFF.md`'s matching TL;DR for the full writeup.
+      **Still genuinely open:** no edge node has been observed delivering an
+      actual `reading` line over this now-confirmed-working link — see the
+      real-hardware field test item above.
 
 ### Dynamic mesh relay (multi-hop ESP-NOW)
 **Spec/plan:** `docs/superpowers/specs/2026-07-09-dynamic-mesh-relay-design.md`,
