@@ -56,6 +56,13 @@ echo "==> Creating directories..."
 # boot-time service can be diagnosed after the fact, e.g. on a shipped unit).
 mkdir -p /etc/greenhouse /etc/mosquitto/certs /var/lib/mosquitto /var/log/journal /var/lib/greenhouse
 chown pi:pi /var/lib/greenhouse
+# greenhouse-portal.service runs as User=pi (not root) and creates
+# /etc/greenhouse/.wifi_configured itself once WiFi setup succeeds -- a
+# root-owned directory makes that open() fail with EACCES, silently 500ing
+# the captive-portal /connect form (bench-tested 2026-08-09). Individual
+# files inside keep their own tighter ownership (e.g. device.json stays
+# root:pi 640) -- this only grants pi the ability to create/remove entries.
+chown pi:pi /etc/greenhouse
 
 if [ ! -f /etc/greenhouse/firebase-service-account.json ]; then
   echo "NOTE: /etc/greenhouse/firebase-service-account.json not found."
