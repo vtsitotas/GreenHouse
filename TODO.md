@@ -317,9 +317,21 @@ untestable-without-hardware reason as the channel discovery item above.
       fan — only `pi/tools/simulator.py` fakes actuator state today. Confirmed
       via full repo search (`docs/technical/05-mqtt-broker.md §5`). This is a
       bigger gap than `HANDOFF.md` implies — it's not listed there explicitly.
-- [ ] Real-hardware field test of the full ESP-NOW → bridge → MQTT path —
-      everything validated so far is against `tools/simulator.py`, not real
-      sensor nodes in a real greenhouse.
+- [x] ~~Real-hardware field test of the full ESP-NOW → bridge → MQTT path~~ —
+      **done on the bench 2026-08-10.** Verified end to end on real hardware:
+      bridge ESP32 (`206EF16CBE80`) → UART → `serial_bridge.py` → Mosquitto →
+      `recorder.py` → SQLite, with `zone1`/`zone2` series taking live rows and
+      both bridge and node showing `online`. Still outstanding: a test in a
+      real greenhouse at range, and with a node running the **real** sensor
+      firmware rather than `fake_edge_node_esp32_c3` (the node reporting
+      during this test was publishing `light_lux`, which only the fake sketch
+      sends — see the unchecked item below).
+- [ ] Bench-test an edge node running the **real** `edge_node_esp32_c3.ino`
+      end to end. The soil pin moved GPIO2 → GPIO1 on 2026-08-10 (GPIO2 is a
+      C3 strapping pin whose board pull-up pins the ADC at 4095), so every
+      already-wired C3 node needs the AOUT wire moved **and** a reflash before
+      its soil readings mean anything. DHT22 + soil both verified good on the
+      bench via `firmware/sensor_pin_test/`.
 - [ ] Field hardening: solar/18650 battery power, IP65 enclosures, cellular
       fallback — hardware side **not started**, but the firmware side now
       exists: deep-sleep Phase 1 (leaf sleep) is fully coded per
