@@ -56,6 +56,15 @@ def new_state() -> dict:
         'bridge_mac': None,       # learned from the first heartbeat line seen
         'last_heartbeat': None,   # time.monotonic() of the last heartbeat
         'bridge_online': None,    # None = unknown yet, else True/False
+        # Startup staleness sweep. Liveness tracking above can only start once
+        # a heartbeat has been seen, so a restart while the ESP32 is dead used
+        # to leave every retained "online" standing forever -- the app, and
+        # anyone reading MQTT, saw a fleet that looked healthy while no byte
+        # had arrived on the UART for hours. These two fields let the first
+        # heartbeat-less timeout window retract those claims exactly once.
+        'started': time.monotonic(),
+        'retained_online': set(),  # MACs found retained-online at startup
+        'startup_swept': False,    # sweep runs at most once per process
     }
 
 
@@ -156,16 +165,62 @@ def check_heartbeat_offline(client, state: dict) -> None:
         state['bridge_online'] = False
 
 
+def note_retained_status(state: dict, topic: str, payload: bytes) -> None:
+    """Record a node the broker still claims is online, so the sweep below can
+    retract it if the UART turns out to be dead."""
+    if state['startup_swept'] or payload.strip() != b'online':
+        return
+    parts = topic.split('/')
+    if len(parts) == 4 and parts[0] == 'greenhouse' and parts[1] == 'nodes':
+        state['retained_online'].add(parts[2])
+
+
+def sweep_stale_online(client, state: dict) -> None:
+    """If no heartbeat has arrived at all within the timeout window, the UART
+    link is dead and NOTHING behind it can be asserted online -- retract every
+    retained claim we inherited at startup.
+
+    Deliberately gated on "no heartbeat ever seen this run" rather than on each
+    node's own age: an edge node's status is only republished by the bridge on
+    a transition, so a healthy node can legitimately go many minutes without
+    one. A live bridge, by contrast, heartbeats every 2 s -- so silence across
+    the whole window is specific evidence about the link, not about any node.
+    """
+    if state['startup_swept'] or state['last_heartbeat'] is not None:
+        return
+    if time.monotonic() - state['started'] <= HEARTBEAT_TIMEOUT_S:
+        return
+    for mac in sorted(state['retained_online']):
+        client.publish(_status_topic(mac), 'offline', retain=True)
+    if state['retained_online']:
+        print(f"[serial-bridge] no heartbeat within {HEARTBEAT_TIMEOUT_S:.0f}s of "
+              f"start -- marked {len(state['retained_online'])} stale node(s) offline",
+              flush=True)
+    state['startup_swept'] = True
+    state['retained_online'] = set()
+
+
 def run() -> None:
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id='greenhouse-serial-bridge')
     client.reconnect_delay_set(min_delay=1, max_delay=30)
+
+    # Callbacks MUST be registered before connect(): a handler attached
+    # afterwards can miss the CONNACK for the connection already in flight, and
+    # then the subscribe below never happens at all. Bench-observed as a sweep
+    # that silently never ran while the same code worked when driven by hand.
+    state = new_state()
+    client.on_message = lambda _c, _u, msg: note_retained_status(state, msg.topic, msg.payload)
+    # Subscribe from on_connect rather than inline, so it also re-subscribes
+    # after a broker reconnect -- and so the SUBSCRIBE is only sent once the
+    # session is actually established.
+    client.on_connect = lambda c, _u, _f, _rc: c.subscribe('greenhouse/nodes/+/status', qos=0)
+
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
 
     ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
     print(f'[serial-bridge] listening on {SERIAL_PORT} @ {BAUD}', flush=True)
 
-    state = new_state()
     last_offline_check = time.monotonic()
     while True:
         line = ser.readline()
@@ -175,6 +230,7 @@ def run() -> None:
         if now - last_offline_check >= OFFLINE_CHECK_INTERVAL_S:
             last_offline_check = now
             check_heartbeat_offline(client, state)
+            sweep_stale_online(client, state)
 
 
 if __name__ == '__main__':
