@@ -255,3 +255,79 @@ def test_heartbeat_after_offline_period_republishes_online(monkeypatch):
 
     client.publish.assert_called_once_with(
         'greenhouse/nodes/A0B1C2D3E4F5/status', 'online', retain=True)
+
+
+# ── startup staleness sweep ──────────────────────────────────────────────────
+# Regression: liveness tracking only begins once a heartbeat has been seen, so
+# restarting the service while the ESP32 was dead left every retained "online"
+# standing indefinitely -- MQTT showed a healthy fleet while the UART had been
+# silent for hours (observed on the bench 2026-08-10).
+def test_retained_online_is_recorded_at_startup():
+    state = _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
+    assert state['retained_online'] == {'AABBCC'}
+
+
+def test_retained_offline_is_not_recorded():
+    state = _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'offline')
+    assert state['retained_online'] == set()
+
+
+def test_unrelated_topic_is_ignored():
+    state = _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/zone1/air/temperature', b'online')
+    assert state['retained_online'] == set()
+
+
+def test_sweep_marks_stale_nodes_offline_when_no_heartbeat_arrives(monkeypatch):
+    client, state = _client(), _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/DDEEFF/status', b'online')
+    monkeypatch.setattr(serial_bridge.time, 'monotonic',
+                        lambda: state['started'] + serial_bridge.HEARTBEAT_TIMEOUT_S + 1)
+    serial_bridge.sweep_stale_online(client, state)
+    published = {c.args[0]: c.args[1] for c in client.publish.call_args_list}
+    assert published == {'greenhouse/nodes/AABBCC/status': 'offline',
+                         'greenhouse/nodes/DDEEFF/status': 'offline'}
+    assert state['startup_swept'] is True
+
+
+def test_sweep_does_not_fire_before_the_timeout_window(monkeypatch):
+    client, state = _client(), _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
+    monkeypatch.setattr(serial_bridge.time, 'monotonic',
+                        lambda: state['started'] + serial_bridge.HEARTBEAT_TIMEOUT_S - 0.5)
+    serial_bridge.sweep_stale_online(client, state)
+    client.publish.assert_not_called()
+    assert state['startup_swept'] is False
+
+
+def test_sweep_does_not_fire_when_a_heartbeat_was_seen(monkeypatch):
+    """A live bridge must never have its own nodes retracted."""
+    client, state = _client(), _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
+    serial_bridge.handle_line(client, _line({'type': 'heartbeat', 'mac': 'AABBCC'}), state)
+    client.reset_mock()
+    monkeypatch.setattr(serial_bridge.time, 'monotonic',
+                        lambda: state['started'] + serial_bridge.HEARTBEAT_TIMEOUT_S + 1)
+    serial_bridge.sweep_stale_online(client, state)
+    client.publish.assert_not_called()
+
+
+def test_sweep_runs_at_most_once(monkeypatch):
+    client, state = _client(), _state()
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
+    monkeypatch.setattr(serial_bridge.time, 'monotonic',
+                        lambda: state['started'] + serial_bridge.HEARTBEAT_TIMEOUT_S + 1)
+    serial_bridge.sweep_stale_online(client, state)
+    client.reset_mock()
+    serial_bridge.sweep_stale_online(client, state)
+    client.publish.assert_not_called()
+
+
+def test_retained_status_ignored_after_sweep_completed():
+    state = _state()
+    state['startup_swept'] = True
+    serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
+    assert state['retained_online'] == set()

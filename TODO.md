@@ -317,15 +317,19 @@ untestable-without-hardware reason as the channel discovery item above.
       fan — only `pi/tools/simulator.py` fakes actuator state today. Confirmed
       via full repo search (`docs/technical/05-mqtt-broker.md §5`). This is a
       bigger gap than `HANDOFF.md` implies — it's not listed there explicitly.
-- [x] ~~Real-hardware field test of the full ESP-NOW → bridge → MQTT path~~ —
-      **done on the bench 2026-08-10.** Verified end to end on real hardware:
+- [~] Real-hardware test of the full ESP-NOW → bridge → MQTT path — **partly
+      done on the bench 2026-08-10.** Proven with instrumented reads:
       bridge ESP32 (`206EF16CBE80`) → UART → `serial_bridge.py` → Mosquitto →
-      `recorder.py` → SQLite, with `zone1`/`zone2` series taking live rows and
-      both bridge and node showing `online`. Still outstanding: a test in a
-      real greenhouse at range, and with a node running the **real** sensor
-      firmware rather than `fake_edge_node_esp32_c3` (the node reporting
-      during this test was publishing `light_lux`, which only the fake sketch
-      sends — see the unchecked item below).
+      `recorder.py` → SQLite all work, and the bridge heartbeats reliably
+      (11 lines in 20 s at 115200 on `/dev/serial0` → `ttyS0`).
+      **Not yet proven: any edge node actually delivering a reading.** A 20 s
+      capture showed `heartbeat` lines only and zero `reading` lines, and no
+      mesh rows landed in the recorder over a 40 s window. The `zone1`/`zone2`
+      values visible in MQTT are *retained* messages from an earlier session,
+      not live data — retained topics read back instantly on subscribe and are
+      easy to mistake for a working feed. Close this out by powering an edge
+      node (post GPIO1 rewire + reflash) and confirming `reading` lines appear
+      on the UART and new rows appear in `readings`.
 - [ ] Bench-test an edge node running the **real** `edge_node_esp32_c3.ino`
       end to end. The soil pin moved GPIO2 → GPIO1 on 2026-08-10 (GPIO2 is a
       C3 strapping pin whose board pull-up pins the ADC at 4095), so every
