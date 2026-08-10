@@ -336,6 +336,20 @@ untestable-without-hardware reason as the channel discovery item above.
       already-wired C3 node needs the AOUT wire moved **and** a reflash before
       its soil readings mean anything. DHT22 + soil both verified good on the
       bench via `firmware/sensor_pin_test/`.
+- [x] ~~Bench Pi on stale (2026-07-27) code, 7 selftest failures~~ — **fixed
+      2026-08-10.** Full `deploy.ps1` run against the live unit surfaced one
+      more real bug in the process: `gen_certs.sh`'s mosquitto-cert guard
+      (`[ -f server.crt ] && exit 0`) sat *before* the portal HTTPS keypair
+      copy, so any unit whose mosquitto cert predated that copy step — this
+      one — could never get a portal keypair from any later `install.sh` run.
+      Split into two independent checks; verified the mosquitto cert stays
+      byte-identical (sha256) while the portal copy self-heals. `selftest.sh`:
+      **45 passed, 0 failed.**
+      Still true and *not* touched by this deploy (it only backfills missing
+      `device.json` fields, it doesn't rotate existing ones): the `app` MQTT
+      password on this unit is still `123`. Run `rotate_secrets.sh` if/when
+      that matters — deferred since it would invalidate any already-paired
+      app session.
 - [ ] Field hardening: solar/18650 battery power, IP65 enclosures, cellular
       fallback — hardware side **not started**, but the firmware side now
       exists: deep-sleep Phase 1 (leaf sleep) is fully coded per
