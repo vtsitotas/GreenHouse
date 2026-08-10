@@ -6,14 +6,36 @@ ok(){ echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 no(){ echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 echo "== services enabled =="
-for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge greenhouse-weather mosquitto; do
+for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge greenhouse-weather mosquitto; do
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
 echo "== services active =="
-for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge greenhouse-weather mosquitto; do
+for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge greenhouse-weather mosquitto; do
   systemctl is-active "$s" >/dev/null 2>&1 && ok "$s running" || no "$s not running"
 done
+
+# The UART link to bridge_esp32 replaced the bridge's old WiFi/MQTT uplink, so
+# nothing else in this file would notice it being dead: greenhouse-hivemq-bridge
+# is the unrelated local->cloud hop. Without this section a unit whose serial
+# link is unplugged, unconfigured, or shadowed by the login console still
+# reported a clean pass while receiving no sensor data at all.
+echo "== UART bridge (bridge_esp32 link) =="
+if [ -e /dev/serial0 ]; then
+  ok "/dev/serial0 present -> $(readlink -f /dev/serial0)"
+else
+  no "/dev/serial0 missing (run raspi-config: disable serial login shell, enable serial hardware)"
+fi
+if grep -rqs 'console=serial0\|console=ttyAMA0\|console=ttyS0' /boot/firmware/cmdline.txt /boot/cmdline.txt; then
+  no "a login console still owns the UART -- serial_bridge.py cannot read it"
+else
+  ok "UART free of the login console"
+fi
+# Node liveness is informational: a unit can be legitimately provisioned before
+# any ESP32 is wired up, so an absence of nodes must not fail the whole test.
+ONLINE=$(timeout 4 mosquitto_sub -h 127.0.0.1 -p 1883 -t 'greenhouse/nodes/+/status' -v 2>/dev/null \
+         | awk '$2=="online"' | wc -l)
+echo "       nodes currently reporting online: ${ONLINE:-0}"
 
 echo "== mosquitto listeners =="
 ss -tlnp 2>/dev/null | grep -q ':8883' && ok "TLS 8883 listening" || no "8883 not listening"
