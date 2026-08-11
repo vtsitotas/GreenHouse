@@ -34,14 +34,19 @@ def _h(value: str) -> str:
     return hashlib.sha256(value.encode()).hexdigest()
 
 
-# sha256(value) -> where it leaked. Verified with `git log --all -p -S '<value>'`
-# before hashing; see SECURITY.md §1 for how to recover the literals from
-# history if you need them for a filter-repo run.
+# sha256(value) -> where it leaked. The literals are gone from this repo's
+# history since the 2026-08-11 filter-repo scrub (SECURITY.md §1), but every
+# clone taken before then still carries them, so these hashes stay: the scrub
+# hid the values, only rotation makes them worthless.
 KNOWN_LEAKED = {
     "fb9070ecf721c5843a047ff79eb959267cc7d38562455567c02bb1649aa5012a":
-        "commit c0383b3 — home WiFi password in bridge_esp32.ino",
+        "home WiFi password, plaintext in bridge_esp32.ino pre-scrub",
     "a6f17ddb33fc284ed6d15ee677c48f8f581444e826362337541a69645ed6b662":
-        "commit c0383b3 — MQTT password in bridge_esp32.ino",
+        "MQTT password, plaintext in bridge_esp32.ino pre-scrub",
+    "b652f9166c72ff6556270b3ad7eba452a134d6392d45f79fe10b10adf715b893":
+        "phone-hotspot WiFi password, plaintext in bridge_esp32.ino pre-scrub",
+    "a665a45920422f9d417e4867efdc4fb8a04a1f3fff1fa07e998e86f7f7a27ae3":
+        "early throwaway MQTT password, plaintext in bridge_esp32.ino pre-scrub",
 }
 
 # Values shipped in the repo as placeholders. Not leaks, but equally useless as

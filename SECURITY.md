@@ -6,30 +6,38 @@ hand, and what the system does *not* protect against.
 
 ---
 
-## 1. Known live exposure: credentials in git history
+## 1. Credentials that leaked into git history
 
-**Verified, not hypothetical.** Commit `c0383b3` ("feat: edge node + bridge
-firmware for multi-zone sensor mesh") contains a real home WiFi password and a
-real MQTT password as plaintext `#define`s in
-`firmware/bridge_esp32/bridge_esp32.ino`. See them for yourself:
+**History scrubbed 2026-08-11.** The repository no longer contains any of the
+leaked values, in any commit. `git filter-repo --replace-text` rewrote all 223
+commits, replacing:
 
-```bash
-git show c0383b3:firmware/bridge_esp32/bridge_esp32.ino | grep -E 'WIFI_PASSWORD|MQTT_PASS'
-```
+| What | Replaced with |
+|---|---|
+| Home WiFi password (router) | `REDACTED_WIFI_PASSWORD` |
+| Phone-hotspot WiFi password | `REDACTED_WIFI_PASSWORD` |
+| Home WiFi SSID (router) | `REDACTED_WIFI_SSID` |
+| Phone-hotspot SSID | `REDACTED_WIFI_SSID` |
+| MQTT password (20-char) | `REDACTED_MQTT_PASSWORD` |
+| Early weak `#define MQTT_PASS "123"` | `REDACTED_MQTT_PASSWORD` |
 
-They are deliberately **not** reproduced in this file. Everything tracked in
-this repo avoids restating them — `check_leaked_secrets.py` matches on SHA-256
-hashes instead — so that the scrub in Step 3 below actually sticks rather than
-being undone by the next commit.
+They had lived as plaintext `#define`s in `firmware/bridge_esp32/bridge_esp32.ino`
+and were copied from there into the other sketches and two plan documents.
+They are deliberately **not** reproduced in this file — `check_leaked_secrets.py`
+matches on SHA-256 hashes instead, so the scrub is not undone by the next commit.
 
-Later commits removed these from the working tree and moved them into a
-gitignored `secrets.h` — that fixed the *structure* but **did not invalidate
-the credentials**. Anyone with a clone of this repository, including anyone
-who ever had access to it, still holds a working WiFi password and MQTT
-password. Deleting a secret from `HEAD` is not rotation.
+**Every commit hash changed.** References to pre-scrub hashes elsewhere in the
+repo's docs (the bridge-firmware commit formerly `c0383b3`, the bring-up stash
+formerly `1ce749f`) no longer resolve. The stash was dropped rather than
+rewritten.
 
-There is also a stash (`1ce749f`, "hardware bring-up: real MACs, wifi creds…")
-carrying real values.
+### The scrub is not rotation
+
+Deleting a secret from history does not invalidate it. **Anyone who cloned this
+repository before 2026-08-11 still holds a working WiFi password and MQTT
+password** — the scrub only stops *future* readers. Rotation below is what
+actually makes the leaked values worthless, and it is still outstanding until
+`check_leaked_secrets.py` passes on every unit.
 
 ### Is this unit still affected?
 
@@ -63,31 +71,34 @@ and tells you exactly what must be re-paired and re-flashed.
 | Home WiFi password | Router admin page | Re-flash the camera's `secrets.h` with the new one |
 | HiveMQ Cloud password | HiveMQ Cloud console | Update `/etc/greenhouse/hivemq.json`, restart `greenhouse-hivemq-bridge` |
 
-**Step 3 — decide about the history itself.** Rotation makes the leaked values
-worthless, which is the security-relevant part. Scrubbing history is optional
-and destructive; only do it if the repo will be made public:
+**Step 3 — the history scrub: already done (2026-08-11).** See §1. Nothing left
+to run here. Two consequences worth knowing:
+
+- **Any clone or fork made before 2026-08-11 must be re-cloned**, not pulled —
+  its objects still carry the literals, and a merge would reintroduce them.
+- `check_leaked_secrets.py` keeps working after the scrub: it stores SHA-256
+  hashes, not the values, so it still recognises an un-rotated credential on a
+  unit even though the literals are gone from history.
+
+If a leak ever happens again, the procedure that was used:
 
 ```bash
-# Rewrites every commit — everyone else must re-clone. Back up first.
 pip install git-filter-repo
+git clone --mirror . ../backup.git          # back up every ref first
 
-# Build the replacement list locally from history. Keep this file UNTRACKED:
-# committing it would put the literals straight back into the repo.
-git show c0383b3:firmware/bridge_esp32/bridge_esp32.ino \
-  | grep -oP '(?<=#define WIFI_PASSWORD ")[^"]+|(?<=#define MQTT_PASS     ")[^"]+' \
-  | sed 's/$/==>REDACTED/' > /tmp/leaked.txt
+# Build the replacement list locally. Keep it UNTRACKED and outside the repo:
+# committing it would put the literals straight back in.
+printf '%s\n' 'the-leaked-value==>REDACTED_WHATEVER' > /tmp/leaked.txt
 
-git filter-repo --replace-text /tmp/leaked.txt
+git filter-repo --replace-text /tmp/leaked.txt --force
 rm /tmp/leaked.txt
-git push --force --all      # coordinate with anyone else using the repo
+git remote add origin <url>                 # filter-repo removes it on purpose
+git push --force --all && git push --force --tags
 ```
 
-After scrubbing, `check_leaked_secrets.py` keeps working — it stores hashes,
-not the values, so it can still recognise an un-rotated credential on a unit
-even once the literals are gone from history.
-
-Also drop the stash carrying real values: `git stash drop stash@{0}` (check
-`git stash list` first — confirm it's the hardware bring-up one).
+Use a `regex:`-prefixed rule for any value short enough to collide with
+unrelated content — a bare `123` as a literal rule would rewrite version
+numbers and test fixtures across the whole repo.
 
 ---
 

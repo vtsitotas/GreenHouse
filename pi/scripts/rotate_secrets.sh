@@ -2,12 +2,12 @@
 # ═══════════════════════════════════════════════════════════════════════════
 # Greenhouse IoT — rotate every secret this Pi owns, in one pass.
 # ═══════════════════════════════════════════════════════════════════════════
-# Why this exists: real credentials were committed to this repo's git history
-# (verified — commit c0383b3 carries a live WiFi password and MQTT password in
-# firmware/bridge_esp32/bridge_esp32.ino). Moving them out of the tree in a
-# later commit does NOT invalidate them; anyone with the history still has
-# working credentials. Rotation is the only fix, and this script does every
-# part of it that lives on the Pi.
+# Why this exists: real credentials were committed to this repo's git history —
+# a live WiFi password and MQTT password, plaintext in
+# firmware/bridge_esp32/bridge_esp32.ino. Neither moving them out of the tree
+# nor the 2026-08-11 filter-repo scrub invalidates them: every clone taken
+# before the scrub still has working credentials. Rotation is the only fix, and
+# this script does every part of it that lives on the Pi.
 #
 #     sudo bash /home/pi/greenhouse/scripts/rotate_secrets.sh
 #

@@ -93,13 +93,16 @@ def test_empty_values_are_ignored_not_treated_as_secrets(tmp_path, monkeypatch):
 
 
 def test_leaked_list_is_stored_as_hashes_not_plaintext():
-    """SECURITY.md tells the owner to scrub the leaked literals out of git
-    history. If this file carried them verbatim, the next commit would put them
-    right back and silently undo that scrub."""
+    """The leaked literals were scrubbed out of git history on 2026-08-11
+    (SECURITY.md §1). If this file carried them verbatim, the next commit would
+    put them right back and silently undo that scrub."""
     assert len(leak.KNOWN_LEAKED) >= 2
     for digest in leak.KNOWN_LEAKED:
         assert len(digest) == 64 and all(c in '0123456789abcdef' for c in digest)
-    assert all('commit' in why for why in leak.KNOWN_LEAKED.values())
+    # Each entry must still say where it leaked from. Commit hashes are no
+    # longer usable for that — the scrub rewrote every one of them — so the
+    # provenance is the file the credential sat in.
+    assert all('bridge_esp32.ino' in why for why in leak.KNOWN_LEAKED.values())
 
 
 def test_placeholder_detection_still_works_end_to_end(tmp_path, monkeypatch):

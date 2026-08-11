@@ -1,8 +1,15 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-10 (WiFi provisioning + UART bridge bring-up,
-full bench deploy). Camera remains **parked** since 2026-08-02 (see that
-TL;DR below); the 2026-07-28 security-hardening pass is merged and live.
+**Last updated:** 2026-08-11 (git-history credential scrub). Previous session
+2026-08-10 (WiFi provisioning + UART bridge bring-up, full bench deploy).
+Camera remains **parked** since 2026-08-02 (see that TL;DR below); the
+2026-07-28 security-hardening pass is merged and live.
+
+> ⚠️ **Every commit hash changed on 2026-08-11.** History was rewritten to
+> remove leaked credentials. Any clone made before then must be **re-cloned**,
+> not pulled — pulling would merge the literals back in. Pre-scrub hashes
+> quoted in the older session notes below no longer resolve.
+
 **Status:** UART bridge to the Pi is now **working** — the 2026-07-27 "no
 traffic on `/dev/serial0`" note below is resolved (was a diagnostic artifact,
 not the link). WiFi first-time setup (captive portal) had four stacked bugs
@@ -13,7 +20,41 @@ see the 2026-08-10 TL;DR for the full list.
 
 ---
 
-## TL;DR of this session (2026-08-10 — WiFi provisioning + UART bridge fixed, full bench deploy)
+## TL;DR of this session (2026-08-11 — git-history credential scrub)
+
+Ran the scrub that `SECURITY.md` §1 Step 3 had been describing as optional
+since 2026-07-28. `git filter-repo --replace-text` rewrote all 223 commits.
+
+**What came out:** two WiFi passwords (home router + phone hotspot), two SSIDs,
+the 20-char MQTT password, and an early throwaway `#define MQTT_PASS "123"`.
+Verified: the five distinctive literals now return **0 hits** across every
+commit, against 2057 in the pre-scrub mirror kept as a backup.
+
+**The `"123"` one needed a `regex:` rule, not a literal one.** As a literal
+replacement it would have matched the substring `123` in 15 unrelated files —
+`pubspec.lock` version numbers, `123456` test PINs, `portal.py`. Anchoring it
+to `#define MQTT_PASS\s+"123"` scrubs the credential and leaves the rest alone.
+
+**Docs that had gone stale the moment the hashes changed**, now corrected:
+`SECURITY.md` §1 (was telling you to `git show c0383b3`, which no longer
+resolves), `check_leaked_secrets.py`'s leak descriptions, `rotate_secrets.sh`'s
+header comment, and `10-security.md` §8.7 (still claimed the secrets were in
+history).
+
+**`check_leaked_secrets.py` gained two hashes** — the hotspot WiFi password and
+the `"123"` MQTT password were leaked too but were never on its list, so a unit
+still using either passed the healthcheck clean. Now it fails, as it should.
+
+**Rotation is still not done, and the scrub did not do it.** Anyone who cloned
+before today still holds working credentials; the router and HiveMQ passwords
+in particular live outside anything this repo can reach. `SECURITY.md` §1
+Steps 1–2 remain open.
+
+`pytest pi/tests`: 182 passed.
+
+---
+
+## TL;DR of the previous session (2026-08-10 — WiFi provisioning + UART bridge fixed, full bench deploy)
 
 Bench session on a real Pi Zero W + ESP32-C3 bridge + phone hotspot. Commits
 `3ce691c`..`4f190ab` on `main`. Full details/rationale are in those commit

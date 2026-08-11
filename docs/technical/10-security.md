@@ -262,9 +262,12 @@ param σε κάθε `/capture` και `/event/<id>` — δηλαδή του πα
    setup του portal, αλλά ευρύ: οποιαδήποτε παραβίαση *οποιασδήποτε* υπηρεσίας
    που τρέχει ως `pi` αποκτά αυτό το δικαίωμα. Μετριάζεται από το §6β sandboxing
    και από το ότι πλέον κανένα endpoint δεν είναι ανοιχτό.
-7. **Τα secrets που διέρρευσαν σε παλιά commits παραμένουν στο git history**
-   (επιβεβαιωμένο: commit `c0383b3`, πραγματικό WiFi + MQTT password). Η δομική
-   μετακίνηση σε gitignored `secrets.h` **δεν** τα ακύρωσε. Πλέον υπάρχει
+7. **Τα secrets που διέρρευσαν σε παλιά commits έχουν αφαιρεθεί από το git
+   history** (filter-repo scrub, 2026-08-11 — πραγματικό WiFi + MQTT password,
+   plaintext στο `bridge_esp32.ino`), **αλλά αυτό δεν τα ακύρωσε**: όποιος
+   έκανε clone πριν από εκείνη την ημερομηνία τα κρατά ακόμα σε λειτουργική
+   μορφή. Ούτε η δομική μετακίνηση σε gitignored `secrets.h` τα ακύρωσε. Πλέον
+   υπάρχει
    αυτοματοποίηση για το μισό του προβλήματος: **`pi/scripts/rotate_secrets.sh`**
    εναλλάσσει με μία εντολή κάθε μυστικό που ανήκει στο Pi (MQTT passwords
    `app`+`bridge`, API token, PIN, cam token, και το ίδιο το TLS keypair).
