@@ -223,6 +223,96 @@ void main() {
     expect(offlineNodes['node1']!.lastSeen, seenAtOnline);
   });
 
+  test('a retained online status for a brand-new node has no lastSeen, not a fabricated "now"',
+      () async {
+    repo.connect(_config);
+    final future = repo.nodes.firstWhere((m) => m['node10'] != null);
+    await Future(() {});
+    // Every MQTT topic is replayed retained on (re)connect -- this is what
+    // that looks like for a node the app has never heard of before.
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node10', 'online', retain: true));
+    final nodes = await future;
+
+    expect(nodes['node10']?.isOnline, isTrue);
+    expect(nodes['node10']?.lastSeen, isNull);
+  });
+
+  test('a retained status redelivery does not advance lastSeen, but a later live one does',
+      () async {
+    repo.connect(_config);
+    // First contact is retained -- e.g. the app just launched and is
+    // replaying whatever the broker already had.
+    final firstFuture = repo.nodes.firstWhere((m) => m['node11'] != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node11', 'online', retain: true));
+    final afterRetained = await firstFuture;
+    expect(afterRetained['node11']!.lastSeen, isNull,
+        reason: 'a retained delivery is not live evidence, even for the very first sighting');
+
+    await Future.delayed(const Duration(milliseconds: 5));
+
+    // Now a genuinely live publish arrives (retain: false) -- this is real
+    // evidence and must set lastSeen.
+    final liveFuture = repo.nodes.firstWhere((m) => m['node11']?.lastSeen != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node11', 'online', retain: false));
+    final afterLive = await liveFuture;
+    expect(afterLive['node11']!.lastSeen, isNotNull);
+  });
+
+  test('a retained battery/mesh redelivery does not advance an existing lastSeen', () async {
+    repo.connect(_config);
+    final onlineFuture = repo.nodes.firstWhere((m) => m['node12']?.isOnline == true);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node12', 'online')); // live, sets lastSeen
+    final seenAt = (await onlineFuture)['node12']!.lastSeen;
+    expect(seenAt, isNotNull);
+
+    await Future.delayed(const Duration(milliseconds: 5));
+
+    // Simulates the app reconnecting: every retained /battery and /mesh
+    // topic replays too, same as /status.
+    final batteryFuture = repo.nodes.firstWhere((m) => m['node12']?.batteryPercent != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttBattery('node12', '81.0', retain: true));
+    final afterBattery = await batteryFuture;
+    expect(afterBattery['node12']!.lastSeen, seenAt);
+
+    final meshFuture = repo.nodes.firstWhere((m) => m['node12']?.parentId != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node12',
+      '{"parent":"bridge","rank":1,"rssi":-60,"sleepy":false,'
+      '"battery_mv":3800,"zone":"zone1"}',
+      retain: true,
+    ));
+    final afterMesh = await meshFuture;
+    expect(afterMesh['node12']!.lastSeen, seenAt);
+  });
+
+  test('an older retained mesh ts never overwrites a newer sighting', () async {
+    repo.connect(_config);
+    // Retained topics replay in arbitrary order on reconnect, so a record
+    // stamped an hour ago can legitimately arrive *after* a fresh one.
+    // "Last seen" is monotonic -- it must never move backwards.
+    final newerFuture = repo.nodes.firstWhere((m) => m['node13']?.lastSeen != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node13', '{"parent":"bridge","rank":1,"ts":1754000900}', retain: true));
+    final newer = (await newerFuture)['node13']!.lastSeen;
+    expect(newer, DateTime.fromMillisecondsSinceEpoch(1754000900 * 1000));
+
+    final olderFuture = repo.nodes.firstWhere((m) => m['node13']?.parentRssi != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttMesh(
+      'node13', '{"parent":"bridge","rank":1,"rssi":-55,"ts":1754000100}', retain: true));
+    final afterOlder = await olderFuture;
+
+    expect(afterOlder['node13']!.lastSeen, newer,
+        reason: 'the older ts must lose, but its other mesh fields still merge');
+    expect(afterOlder['node13']!.parentRssi, -55);
+  });
+
   test('a later mesh event does not resurrect isOnline true after an explicit offline status', () async {
     repo.connect(_config);
     final offlineFuture = repo.nodes.firstWhere((m) => m['node1']?.isOnline == false);
@@ -245,18 +335,17 @@ void main() {
     expect(node.isSleepy, isTrue);
   });
 
-  test('a first-ever offline status with no prior entry has no earlier lastSeen to fall back to',
-      () async {
+  test('a first-ever offline status with no prior entry has no lastSeen at all', () async {
     repo.connect(_config);
     final future = repo.nodes.firstWhere((m) => m['node7'] != null);
     await Future(() {});
     eventsCtrl.add(NodeStatus.fromMqttStatus('node7', 'offline'));
     final nodes = await future;
     expect(nodes['node7']?.isOnline, isFalse);
-    // No prior entry exists for this "no existing entry: store as-is"
-    // branch, so there's nothing better to fall back to than the moment the
-    // app first learned about this node -- not a claim that it was seen then.
-    expect(nodes['node7']?.lastSeen.difference(DateTime.now()).inSeconds.abs(), lessThan(5));
+    // No prior entry exists, and an offline status is not live evidence of
+    // anything -- null ("unknown") is the honest answer here, not a
+    // fabricated "just now" from when the app happened to learn about it.
+    expect(nodes['node7']?.lastSeen, isNull);
   });
 
   test('a first-ever battery event with no prior entry keeps its factory-default isOnline true', () async {

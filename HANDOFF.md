@@ -1,10 +1,11 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-11 (history false-alert fix + mesh map bugfixes +
-git-history credential scrub — three TL;DRs below, same day). Previous
-session 2026-08-10 (WiFi provisioning + UART bridge bring-up, full bench
-deploy). Camera remains **parked** since 2026-08-02 (see that TL;DR below);
-the 2026-07-28 security-hardening pass is merged and live.
+**Last updated:** 2026-08-12 (real `last seen` timestamps, drag-to-pin fix,
+QR tool rewrite). Previous same-day-2026-08-11 sessions: history false-alert
+fix + mesh map bugfixes + git-history credential scrub. Session 2026-08-10:
+WiFi provisioning + UART bridge bring-up, full bench deploy. Camera remains
+**parked** since 2026-08-02 (see that TL;DR below); the 2026-07-28
+security-hardening pass is merged and live.
 
 > ⚠️ **Every commit hash changed on 2026-08-11.** History was rewritten to
 > remove leaked credentials. Any clone made before then must be **re-cloned**,
@@ -21,7 +22,84 @@ see the 2026-08-10 TL;DR for the full list.
 
 ---
 
-## TL;DR of this session (2026-08-11 — history false-alert fix, mesh map bugfixes, overview doc)
+## TL;DR of this session (2026-08-12 — real "last seen", drag-to-pin fix, QR tool)
+
+Driven entirely by the owner using the app on the bench and reporting what was
+wrong. Three separate real bugs, each found by reproducing the complaint rather
+than trusting the previous session's notes.
+
+**"Last seen" was the previous session's fix done badly, and this is the real
+one.** 2026-08-11 stopped `lastSeen` advancing on an offline `/status`, which
+was correct but incomplete: MQTT replays *every* retained topic in full on
+every (re)connect with nothing in the protocol saying how old a message is, so
+every node still read as "seen just now" the instant the app opened. That
+session documented the gap and moved on; this one closes it properly, at the
+source rather than in the UI:
+
+- `serial_bridge.py` now stamps `ts` (epoch seconds) into every `/mesh` payload
+  it publishes. Because the topic is retained, **the stamp of the last real
+  sighting is what survives on the broker** — exactly the value "last seen"
+  wants, and it stays true through a replay.
+- The MQTT `retain` flag is now threaded from `mqtt_connection.dart` through
+  `NodeStatus` into the repository merge, so an event that is *only* a replay
+  can no longer be mistaken for evidence of life.
+- `NodeStatus.lastSeen` became nullable: "never confirmed alive" is a real
+  state, distinct from a time. It renders as `Unknown` rather than a
+  fabricated one. The merge takes the *later* of the two known times, since
+  retained topics replay in arbitrary order and last-seen must be monotonic.
+- Found and fixed a gap in the above while bench-testing it: the bridge's own
+  root record is sent by firmware only from `setup()`, so a `serial_bridge`
+  restart while the ESP32 keeps running would never see one and never refresh.
+  It now synthesises the canonical record (`parent: null, rank: 0` — the
+  firmware's own definition of itself) as a fallback.
+
+Verified on the bench Pi: the bridge's retained record now carries a live `ts`.
+The two edge nodes still read `Unknown` and that is correct — they have not
+reported since the upgrade, so the Pi genuinely never recorded when they were
+last seen. Inventing a time there would be the bug, not the fix.
+
+**Drag-to-pin on the mesh map silently did nothing, and "Unpin" looked broken
+as a result.** `_buildCard` switched between `Positioned` and
+`AnimatedPositioned` — *different widget types* — the moment a drag began, with
+no `Key` on either. `Element.canUpdate` returns false on a type change, so
+Flutter tore down and rebuilt the subtree, destroying the live
+`GestureRecognizer` mid-gesture. `onPanStart` fired once (recording the
+*pre-drag* position), and `onPanUpdate`/`onPanEnd` for that touch never
+arrived — so the "pin" captured exactly where the card already was,
+indistinguishable from auto-layout, leaving Unpin with nothing visible to
+undo. Fixed with a stable `ValueKey(nodeId)` and one unchanging widget type
+(animate via `duration: Duration.zero` instead of switching classes).
+Confirmed by a failing-first widget test driving a real multi-step gesture.
+
+**`pi/tools/show_qr.py` was silently stale twice over.** It took credentials as
+CLI args and recomputed a TLS fingerprint with `openssl` against a single cert
+file, so it never gained `api_token`/`cam_token` after the 2026-07-28 hardening
+pass, and produced one fingerprint where `device.json` stores the
+comma-separated CA+leaf pair (`79e37ff`). A QR from it paired "successfully"
+with an empty token — reproducing the very false-alert bug fixed the day
+before — and a fingerprint pinning would never match. Rewritten to read the
+exact files `portal.py`'s `_pairing_payload()` reads, so the two cannot drift
+again, plus LAN-IP auto-detection (the Pi's IP changes per DHCP lease on the
+phone-hotspot topology). New `pi/tests/test_show_qr.py` asserts the payload
+matches `ConnectionConfig.fromJson`'s field set.
+
+**Ghost nodes cleared off the bench broker.** `zone1_test` and two retired MACs
+(`75EC`, `6B50`, `88F1…`) were still sitting in retained topics from old
+hardware, showing up as phantom devices and a phantom dashboard zone. Retained
+messages live forever until explicitly cleared; six topics published empty.
+The broker now matches `mesh_config.h` exactly: bridge + zone1 + zone2.
+
+`pytest pi/tests`: 193 passed. `flutter test`: 213 passed. `flutter analyze`
+clean.
+
+**Process note worth keeping:** `flutter install` does **not** build — it
+installs whatever APK already sits in `build/`. Used alone it reinstalled a
+15-day-old binary that still contained the parked camera screen, which read as
+"the fixes didn't work". Always `flutter build apk --release` first.
+
+---
+
+## TL;DR of the previous session (2026-08-11 — history false-alert fix, mesh map bugfixes, overview doc)
 
 Follow-up work later the same day as the credential scrub below, triggered by
 the owner actually using the app and noticing (1) a "security alert" pushed
@@ -76,7 +154,36 @@ the first thing to read before `ARCHITECTURE.md`/`docs/technical/`.
 path, the lastSeen-on-offline fix, the last-seen date formatter, and the
 Direct/hop-count labels). `flutter analyze`: clean.
 
-Full detail and rationale for both fixes: `IMPROVEMENTS.md` Β8-Β10.
+**Rebuilt and reinstalled the app on the test phone** to pick up both fixes.
+`flutter install` uninstalled the previous build first (different keystore
+on this machine than whatever built it before — known gotcha, see the
+"App on the phone" section further down) — all local app data including the
+old pairing was wiped, so this was effectively a from-scratch re-pair, not
+just a token refresh.
+
+**Re-pairing surfaced a live topology problem: the phone is on its own
+hotspot with the Pi as a client, and mDNS "Find my greenhouse" cannot work
+there.** Android's `WifiManager.MulticastLock` (which the app already
+acquires around its mDNS lookup) only governs the WiFi *client* radio; when
+the phone is itself the hotspot, its radio is in SoftAP mode, a state the
+app has no hook into at all. This isn't new (matches the 2026-08-10 bench
+notes) but is worth restating: on this topology, only manual entry or QR
+scan can pair, never the search button.
+
+**That surfaced `pi/tools/show_qr.py` was stale in exactly the same way as
+the history bug above.** It never gained `api_token`/`cam_token` after
+2026-07-28, and separately computed a single TLS fingerprint via `openssl`
+instead of reading the comma-separated CA+leaf pair `device.json` actually
+stores (`79e37ff`) — so a QR from it would pair "successfully" with an empty
+token (the same false-alert bug) and a fingerprint pinning would never match.
+Rewritten to read the exact files `portal.py`'s `_pairing_payload()` reads,
+so the two can't drift again; also auto-detects the Pi's current LAN IP
+(routing-table trick, sends no packet) instead of requiring a manually-typed
+`--lan`, since that IP changes every DHCP lease on the hotspot topology.
+`pi/tests/test_show_qr.py` (5 tests, new) checks the payload shape.
+`pytest pi/tests`: 187 passed (was 182).
+
+Full detail and rationale: `IMPROVEMENTS.md` Β8-Β11.
 
 ---
 

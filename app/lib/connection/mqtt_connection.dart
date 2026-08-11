@@ -155,11 +155,14 @@ class MqttConnection implements GreenhouseConnection {
     for (final msg in messages) {
       final pub = msg.payload as MqttPublishMessage;
       final payload = MqttPublishPayload.bytesToStringAsString(pub.payload.message);
-      _route(msg.topic, payload);
+      // Every retained topic is replayed in full on every (re)connect, with
+      // no way to tell "this just happened" from "this has been sitting on
+      // the broker for days" apart from this flag -- see NodeStatus.retain.
+      _route(msg.topic, payload, retain: pub.header?.retain ?? false);
     }
   }
 
-  void _route(String topic, String payload) {
+  void _route(String topic, String payload, {bool retain = false}) {
     if (isWeatherAlertTopic(topic)) {
       try { _events.add(WeatherAlert.fromMqtt(payload)); } catch (_) {}
     } else if (isWeatherForecastTopic(topic)) {
@@ -173,11 +176,13 @@ class MqttConnection implements GreenhouseConnection {
     } else if (isSensorTopic(topic)) {
       try { _events.add(SensorReading.fromMqtt(topic, payload)); } catch (_) {}
     } else if (isNodeStatusTopic(topic)) {
-      _events.add(NodeStatus.fromMqttStatus(extractNodeId(topic), payload));
+      _events.add(NodeStatus.fromMqttStatus(extractNodeId(topic), payload, retain: retain));
     } else if (isNodeBatteryTopic(topic)) {
-      _events.add(NodeStatus.fromMqttBattery(extractNodeId(topic), payload));
+      _events.add(NodeStatus.fromMqttBattery(extractNodeId(topic), payload, retain: retain));
     } else if (isNodeMeshTopic(topic)) {
-      try { _events.add(NodeStatus.fromMqttMesh(extractNodeId(topic), payload)); } catch (_) {}
+      try {
+        _events.add(NodeStatus.fromMqttMesh(extractNodeId(topic), payload, retain: retain));
+      } catch (_) {}
     } else if (isActuatorStateTopic(topic)) {
       _events.add(ActuatorState.fromMqttState(extractActuatorId(topic), payload));
     }
@@ -185,7 +190,8 @@ class MqttConnection implements GreenhouseConnection {
 
   // Test seam: drives the same dispatch `_handleMessages` uses, without a
   // live broker connection.
-  void routeForTest(String topic, String payload) => _route(topic, payload);
+  void routeForTest(String topic, String payload, {bool retain = false}) =>
+      _route(topic, payload, retain: retain);
 
   @override
   Future<void> sendCommand(String actuatorId, bool on) async {

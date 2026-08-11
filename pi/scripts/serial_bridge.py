@@ -41,6 +41,15 @@ HEARTBEAT_TIMEOUT_S = HEARTBEAT_INTERVAL_S * HEARTBEAT_OFFLINE_AFTER
 # tighter than this since HEARTBEAT_TIMEOUT_S is itself several seconds.
 OFFLINE_CHECK_INTERVAL_S = 1.0
 
+# How often the bridge's OWN mesh record is republished with a fresh timestamp
+# while heartbeats keep arriving. The firmware sends that record once at boot
+# (setup()'s sendMesh(bridgeMac, nullptr, 0, ...)), so without this its
+# "last seen" would freeze at boot time even though the bridge proves itself
+# alive every HEARTBEAT_INTERVAL_S. Deliberately much slower than the
+# heartbeat: this is a retained publish, and one per minute is enough
+# resolution for a human-readable "last seen" without churning the broker.
+BRIDGE_MESH_REFRESH_S = 60.0
+
 # Mesh JSON keys republished verbatim to greenhouse/nodes/<mac>/mesh -- "type"
 # and "mac" are transport/routing fields (mac becomes the topic segment
 # instead), not part of the MQTT contract. Matches the payload shape already
@@ -48,6 +57,15 @@ OFFLINE_CHECK_INTERVAL_S = 1.0
 # the app (app/lib/models/node_status.dart), per
 # docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md §Telemetry.
 _MESH_PAYLOAD_KEYS = ('parent', 'rank', 'rssi', 'sleepy', 'battery_mv', 'zone')
+
+# The bridge's own root mesh record, byte-identical to what the firmware
+# emits for itself at boot (verified against the retained payload on the
+# bench unit). Used only as a fallback when no real one has been seen this
+# run -- see _handle_heartbeat.
+_BRIDGE_ROOT_MESH = {
+    'parent': None, 'rank': 0, 'rssi': None,
+    'sleepy': False, 'battery_mv': None, 'zone': None,
+}
 
 
 def new_state() -> dict:
@@ -65,6 +83,11 @@ def new_state() -> dict:
         'started': time.monotonic(),
         'retained_online': set(),  # MACs found retained-online at startup
         'startup_swept': False,    # sweep runs at most once per process
+        # The bridge's own root mesh record, cached from the one the firmware
+        # sends at boot so heartbeats can republish it with a fresh timestamp
+        # (see BRIDGE_MESH_REFRESH_S).
+        'bridge_mesh': None,
+        'bridge_mesh_pub': None,   # time.monotonic() of that last republish
     }
 
 
@@ -97,16 +120,40 @@ def _handle_battery(client, msg: dict) -> None:
     client.publish(_battery_topic(msg['mac']), f"{float(msg['pct']):.1f}", retain=True)
 
 
-def _handle_mesh(client, msg: dict) -> None:
+def _publish_mesh(client, mac: str, payload: dict) -> None:
+    """Publish a mesh record stamped with when it was actually observed.
+
+    The `ts` (epoch seconds, wall clock) is the whole point: MQTT retains
+    every one of these topics and replays them in full on every client
+    (re)connect, with nothing in the protocol to say whether a message is
+    seconds or days old. Without a timestamp in the payload itself, an app
+    reconnecting can only date a node by when the replay happened to arrive
+    -- which made every node look freshly seen on every app launch. Since
+    this is a retained publish, the stamp of the LAST real sighting is what
+    survives on the broker, which is exactly the value "last seen" wants.
+    """
+    stamped = dict(payload, ts=int(time.time()))
+    client.publish(_mesh_topic(mac), json.dumps(stamped), retain=True)
+
+
+def _handle_mesh(client, msg: dict, state: dict) -> None:
     mac = msg['mac']
     payload = {key: msg[key] for key in _MESH_PAYLOAD_KEYS}
-    client.publish(_mesh_topic(mac), json.dumps(payload), retain=True)
+    # The bridge's own root record -- identified by the firmware's own
+    # definition of it (parent null + rank 0, see bridge_esp32.ino's comment
+    # on sendMesh) rather than by comparing against state['bridge_mac'],
+    # which isn't known yet: at boot the firmware sends this record from
+    # setup(), before the first heartbeat line that teaches us the MAC.
+    if payload['parent'] is None and payload['rank'] == 0:
+        state['bridge_mesh'] = payload
+    _publish_mesh(client, mac, payload)
 
 
 def _handle_heartbeat(client, msg: dict, state: dict) -> None:
     mac = msg['mac']
     state['bridge_mac'] = mac
-    state['last_heartbeat'] = time.monotonic()
+    now = time.monotonic()
+    state['last_heartbeat'] = now
     # Only publish "online" on the transition into online (or the very first
     # heartbeat ever) -- not on every heartbeat, to avoid needless retained-
     # message spam, matching how the firmware/old bridge only publish on
@@ -114,13 +161,29 @@ def _handle_heartbeat(client, msg: dict, state: dict) -> None:
     if state['bridge_online'] is not True:
         client.publish(_status_topic(mac), 'online', retain=True)
         state['bridge_online'] = True
+    # Heartbeats are the bridge's only proof of life -- unlike an edge node,
+    # it never sends a fresh mesh record of its own after boot. Refresh it so
+    # its "last seen" tracks reality instead of freezing at boot.
+    #
+    # Falls back to synthesising the record rather than requiring a cached
+    # one: the firmware sends it from setup(), so a serial_bridge that starts
+    # (or is redeployed) while the ESP32 is already running would otherwise
+    # never see one and never refresh at all -- the common case on any
+    # service restart. The synthesised shape is not a guess: "parent null,
+    # rank 0" IS the bridge's definition of its own root record
+    # (bridge_esp32.ino's sendMesh(bridgeMac, nullptr, 0, ...)).
+    last_pub = state.get('bridge_mesh_pub')
+    if last_pub is None or now - last_pub >= BRIDGE_MESH_REFRESH_S:
+        _publish_mesh(client, mac, state.get('bridge_mesh') or _BRIDGE_ROOT_MESH)
+        state['bridge_mesh_pub'] = now
 
 
+# Handlers that need no run-state. `heartbeat` and `mesh` are dispatched
+# separately below because both read/write `state`.
 _HANDLERS = {
     'reading': _handle_reading,
     'status': _handle_status,
     'battery': _handle_battery,
-    'mesh': _handle_mesh,
 }
 
 
@@ -141,6 +204,8 @@ def handle_line(client, line: bytes, state: dict) -> None:
     try:
         if msg_type == 'heartbeat':
             _handle_heartbeat(client, msg, state)
+        elif msg_type == 'mesh':
+            _handle_mesh(client, msg, state)
         else:
             handler = _HANDLERS.get(msg_type)
             if handler is not None:

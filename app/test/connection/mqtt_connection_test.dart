@@ -68,6 +68,22 @@ void main() {
       await sub.cancel();
     });
 
+    test('retain flag from the MQTT header reaches the emitted NodeStatus', () async {
+      final conn = MqttConnection();
+      final events = <dynamic>[];
+      final sub = conn.events.listen(events.add);
+
+      conn.routeForTest('greenhouse/nodes/n1/status', 'online', retain: true);
+      conn.routeForTest('greenhouse/nodes/n2/status', 'online', retain: false);
+      await Future(() {});
+
+      expect(events, hasLength(2));
+      expect((events[0] as NodeStatus).retain, isTrue);
+      expect((events[1] as NodeStatus).retain, isFalse);
+
+      await sub.cancel();
+    });
+
     test('a malformed payload on .../mesh emits nothing and does not throw', () async {
       final conn = MqttConnection();
       final events = <dynamic>[];

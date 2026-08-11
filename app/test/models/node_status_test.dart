@@ -17,7 +17,33 @@ void main() {
       expect(status.isSleepy, isTrue);
       expect(status.zone, 'zone1');
       expect(status.batteryMv, 3312);
-      expect(status.lastSeen.difference(DateTime.now()).inSeconds.abs(), lessThan(5));
+      // `ts` is the sighting time stamped by serial_bridge.py, NOT arrival
+      // time -- that's what makes a retained replay still datable. This
+      // payload's ts long predates "now", so a parser that ignored it (as
+      // this one used to) would be caught here.
+      expect(status.lastSeen,
+          DateTime.fromMillisecondsSinceEpoch(1753500000 * 1000));
+    });
+
+    test('a payload with no ts falls back to arrival time when live', () {
+      final status = NodeStatus.fromMqttMesh('node2', '{"rank":1}');
+      expect(status.lastSeen!.difference(DateTime.now()).inSeconds.abs(), lessThan(5));
+    });
+
+    test('a payload with no ts has no lastSeen at all when retained', () {
+      // Pre-2026-08-11 Pi code published no ts. A retained replay of one
+      // carries no datable evidence whatsoever, so "unknown" is the only
+      // honest answer -- the alternative is every node reading as "seen
+      // just now" every time the app reconnects.
+      final status = NodeStatus.fromMqttMesh('node2', '{"rank":1}', retain: true);
+      expect(status.lastSeen, isNull);
+    });
+
+    test('ts is trusted even on a retained replay -- that is its whole purpose', () {
+      final status =
+          NodeStatus.fromMqttMesh('node2', '{"rank":1,"ts":1753500000}', retain: true);
+      expect(status.lastSeen,
+          DateTime.fromMillisecondsSinceEpoch(1753500000 * 1000));
     });
 
     test('explicit nulls map to null fields', () {
@@ -106,6 +132,43 @@ void main() {
       expect(copy.isSleepy, isTrue);
       expect(copy.zone, 'zone2');
       expect(copy.batteryMv, 3300);
+    });
+  });
+
+  group('NodeStatus.withLastSeen', () {
+    test('can explicitly clear lastSeen to null, unlike copyWith', () {
+      final original = NodeStatus(
+        nodeId: 'node1',
+        isOnline: true,
+        lastSeen: DateTime(2026, 1, 1),
+        zone: 'zone1',
+      );
+      final cleared = original.withLastSeen(null);
+      expect(cleared.lastSeen, isNull);
+      // Everything else survives untouched.
+      expect(cleared.nodeId, 'node1');
+      expect(cleared.isOnline, isTrue);
+      expect(cleared.zone, 'zone1');
+    });
+
+    test('can also set a real value, same as copyWith would', () {
+      const original = NodeStatus(nodeId: 'node1', isOnline: true, lastSeen: null);
+      final seen = DateTime(2026, 6, 1, 12, 0);
+      expect(original.withLastSeen(seen).lastSeen, seen);
+    });
+  });
+
+  group('retain flag on the MQTT factories', () {
+    test('defaults to false when not specified', () {
+      expect(NodeStatus.fromMqttStatus('n1', 'online').retain, isFalse);
+      expect(NodeStatus.fromMqttBattery('n1', '50.0').retain, isFalse);
+      expect(NodeStatus.fromMqttMesh('n1', '{"rank":1}').retain, isFalse);
+    });
+
+    test('is carried through from each factory when passed', () {
+      expect(NodeStatus.fromMqttStatus('n1', 'online', retain: true).retain, isTrue);
+      expect(NodeStatus.fromMqttBattery('n1', '50.0', retain: true).retain, isTrue);
+      expect(NodeStatus.fromMqttMesh('n1', '{"rank":1}', retain: true).retain, isTrue);
     });
   });
 }

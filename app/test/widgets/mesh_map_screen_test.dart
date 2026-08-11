@@ -166,6 +166,81 @@ void main() {
 
       expect(find.text('Relayed — 2 hops (via node1)'), findsOneWidget);
     });
+
+    testWidgets('dragging a card actually pins it at the dragged-to position, and Unpin clears it',
+        (tester) async {
+      // Regression test for a real bug: _buildCard used to switch between
+      // Positioned and AnimatedPositioned (different widget types) based on
+      // isDragging, with no Key on either. The moment a drag starts,
+      // MeshLayout's insertion order shifts (pinned nodes are emitted where
+      // first encountered rather than in their rank-sorted slot), and
+      // without a stable key Flutter's unkeyed reconciliation, combined
+      // with the type switch, tore down and rebuilt the Element -- killing
+      // the live GestureRecognizer mid-drag. onPanStart fired once (with
+      // the pre-drag position); onPanUpdate/onPanEnd for that same touch
+      // never arrived, so the pin silently captured the ORIGINAL position
+      // -- indistinguishable from auto-layout, making "Unpin" look like a
+      // no-op since there was nothing actually moved to undo.
+      // Default 800x600 puts the link-quality legend (bottom-right overlay)
+      // right on top of the rank-1 card's position, stealing the pointer
+      // down before it ever reaches the card -- grow the viewport to fit
+      // the whole canvas instead, same as the relayed-node detail test.
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      SharedPreferences.setMockInitialValues({});
+      late ProviderContainer container;
+      await tester.pumpWidget(ProviderScope(
+        overrides: [
+          nodesProvider.overrideWith((ref) => Stream.value({
+                'A0B1C2D3E4F5': _node('A0B1C2D3E4F5', rank: 0, zone: 'bridge-zone'),
+                'node1': _node('node1', rank: 1, zone: 'zone1'),
+              })),
+        ],
+        child: Consumer(builder: (context, ref, _) {
+          container = ProviderScope.containerOf(context);
+          return const MaterialApp(home: MeshMapScreen());
+        }),
+      ));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 20));
+      await tester.pump(const Duration(milliseconds: 50));
+
+      const originalPosition = Offset(0.5, 0.3); // rank-1 row, sole occupant
+      expect(container.read(pinnedPositionsProvider).valueOrNull, isEmpty);
+
+      // Multiple incremental moves (not a single teleport) -- this is what
+      // exposed the bug: the Element/recognizer died after the very first
+      // setState, so only a single-jump gesture could ever look like it
+      // "worked" (and even then, at the wrong position).
+      final gesture = await tester.startGesture(tester.getCenter(find.text('zone1')));
+      await tester.pump(const Duration(milliseconds: 50));
+      for (var i = 0; i < 5; i++) {
+        await gesture.moveBy(const Offset(30, 40));
+        await tester.pump(const Duration(milliseconds: 20));
+      }
+      await gesture.up();
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      final pinnedAfterDrag = container.read(pinnedPositionsProvider).valueOrNull;
+      expect(pinnedAfterDrag?['node1'], isNotNull);
+      expect(pinnedAfterDrag!['node1'], isNot(originalPosition),
+          reason: 'the pin must capture where the card was actually dragged to, '
+              'not silently snap back to its pre-drag auto-layout position');
+
+      // Long-press -> confirm "Unpin" in the dialog -> pin is gone.
+      await tester.longPress(find.text('zone1'));
+      await tester.pump();
+      expect(find.text('Unpin node?'), findsOneWidget);
+      await tester.tap(find.text('Unpin'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 50));
+
+      expect(container.read(pinnedPositionsProvider).valueOrNull?.containsKey('node1'), isFalse);
+    });
   });
 
   group('NodePositionsStore', () {

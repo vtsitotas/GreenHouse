@@ -76,12 +76,28 @@ class GreenhouseRepository {
 
   Stream<ConnectionStatus> get connectionStatus => connection.status;
 
+  /// The later of two possibly-unknown sighting times. Null means "never
+  /// confirmed", so it always loses to a real timestamp.
+  static DateTime? _laterOf(DateTime? a, DateTime? b) {
+    if (a == null) return b;
+    if (b == null) return a;
+    return b.isAfter(a) ? b : a;
+  }
+
   void _handle(dynamic event) {
     if (event is SensorReading) {
       _readings.putIfAbsent(event.zone, () => {})[event.metric] = event.value;
       _readingsCtrl.add(Map.from(_readings));
     } else if (event is NodeStatus) {
       final prev = _nodes[event.nodeId];
+      // Each factory already decided whether its event is real evidence of a
+      // sighting (null lastSeen when it isn't -- see NodeStatus), so the
+      // merge only has to keep the best answer known so far. Taking the
+      // later of the two rather than simply the newest event matters on
+      // reconnect: retained topics replay in an arbitrary order, and a
+      // replayed record stamped an hour ago must not overwrite a sighting
+      // from a minute ago. "Last seen" can only ever move forwards.
+      final mergedLastSeen = _laterOf(prev?.lastSeen, event.lastSeen);
       if (prev == null) {
         // No existing entry: store the event as-is regardless of source —
         // its factory default `isOnline` stands until a `/status` event
@@ -90,20 +106,11 @@ class GreenhouseRepository {
       } else {
         switch (event.source) {
           case NodeStatusSource.status:
-            // `/status` exclusively owns isOnline. lastSeen only advances on
-            // a transition TO online: the wire payload for an offline event
-            // carries no timestamp of its own (bridge_esp32.ino and
-            // serial_bridge.py just publish the bare string "offline" the
-            // instant they detect staleness), so treating that arrival time
-            // as "last seen" would show a node that just went offline as
-            // seen "just now" -- the opposite of what offline means. Known
-            // residual gap: a *retained* "online" replayed on app reconnect
-            // still advances lastSeen, since retained delivery isn't
-            // distinguished from a live one anywhere in this pipeline.
+            // `/status` exclusively owns isOnline.
             _nodes[event.nodeId] = prev.copyWith(
               isOnline:       event.isOnline,
               batteryPercent: event.batteryPercent ?? prev.batteryPercent,
-              lastSeen:       event.isOnline ? event.lastSeen : prev.lastSeen,
+              lastSeen:       mergedLastSeen,
             );
             break;
           case NodeStatusSource.battery:
@@ -112,7 +119,7 @@ class GreenhouseRepository {
             _nodes[event.nodeId] = prev.copyWith(
               isOnline:       prev.isOnline,
               batteryPercent: event.batteryPercent ?? prev.batteryPercent,
-              lastSeen:       event.lastSeen,
+              lastSeen:       mergedLastSeen,
             );
             break;
           case NodeStatusSource.mesh:
@@ -126,7 +133,7 @@ class GreenhouseRepository {
               isSleepy:    event.isSleepy ?? prev.isSleepy,
               zone:        event.zone ?? prev.zone,
               batteryMv:   event.batteryMv ?? prev.batteryMv,
-              lastSeen:    event.lastSeen,
+              lastSeen:    mergedLastSeen,
             );
             break;
         }

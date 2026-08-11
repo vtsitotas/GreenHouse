@@ -142,16 +142,34 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
       child: MeshNodeCard(node: node, onTap: () => _showNodeDetail(node)),
     );
 
-    return isDragging
-        ? Positioned(left: left, top: top, width: _cardWidth, child: content)
-        : AnimatedPositioned(
-            duration: const Duration(milliseconds: 250),
-            curve: Curves.easeInOut,
-            left: left,
-            top: top,
-            width: _cardWidth,
-            child: content,
-          );
+    // A stable key AND a single, unchanging widget type across every
+    // rebuild are both required here -- not just style. Once a drag starts,
+    // effectivePinned (in _buildCanvas) immediately includes this node, so
+    // MeshLayout.compute's insertion order shifts it (pinned nodes are
+    // inserted where they're first encountered, unpinned ones only later,
+    // bucketed by rank) -- without a key, Flutter's unkeyed positional
+    // reconciliation can attribute this Element to a different logical
+    // node after such a reorder. Worse, switching the widget class itself
+    // (Positioned vs AnimatedPositioned, as this used to do based on
+    // isDragging) makes Element.canUpdate return false even when the slot
+    // does line up, so Flutter tears down and recreates the whole subtree
+    // -- including the live GestureRecognizer tracking the pointer that's
+    // mid-drag. The recognizer dies right after onPanStart's first
+    // setState, so onPanUpdate/onPanEnd for that same touch never arrive:
+    // pinning silently captured only the pre-drag position, making the
+    // pin indistinguishable from auto-layout and "Unpin" look like a no-op.
+    // Animating via `duration` instead of switching types keeps one
+    // consistent Element (and its recognizer) alive through the whole
+    // gesture, whatever the map's iteration order does.
+    return AnimatedPositioned(
+      key: ValueKey(node.nodeId),
+      duration: isDragging ? Duration.zero : const Duration(milliseconds: 250),
+      curve: Curves.easeInOut,
+      left: left,
+      top: top,
+      width: _cardWidth,
+      child: content,
+    );
   }
 
   void _onPanUpdate(String nodeId, DragUpdateDetails details) {

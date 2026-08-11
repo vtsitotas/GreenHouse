@@ -2,7 +2,7 @@
 import json
 import os
 import sys
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, call as mock_call
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
 import serial_bridge
@@ -76,8 +76,9 @@ def test_battery_line_publishes_formatted_percent():
 
 
 # ── mesh ─────────────────────────────────────────────────────────────────────
-def test_mesh_line_republishes_payload_with_all_fields_and_null_parent():
+def test_mesh_line_republishes_payload_with_all_fields_and_null_parent(monkeypatch):
     client = _client()
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: 1754000000.7)
     line = _line({'type': 'mesh', 'mac': 'A0B1C2D3E4F5', 'parent': None,
                    'rank': 0, 'rssi': None, 'sleepy': False,
                    'battery_mv': None, 'zone': None})
@@ -91,12 +92,14 @@ def test_mesh_line_republishes_payload_with_all_fields_and_null_parent():
     assert payload == {
         'parent': None, 'rank': 0, 'rssi': None,
         'sleepy': False, 'battery_mv': None, 'zone': None,
+        'ts': 1754000000,  # truncated to whole seconds
     }
     assert kwargs.get('retain') is True
 
 
-def test_mesh_line_republishes_payload_with_populated_fields():
+def test_mesh_line_republishes_payload_with_populated_fields(monkeypatch):
     client = _client()
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: 1754000123.0)
     line = _line({'type': 'mesh', 'mac': '206EF16CA1B0', 'parent': 'A0B1C2D3E4F5',
                    'rank': 2, 'rssi': -61, 'sleepy': True,
                    'battery_mv': 3312, 'zone': 'zone1'})
@@ -109,8 +112,139 @@ def test_mesh_line_republishes_payload_with_populated_fields():
     assert payload == {
         'parent': 'A0B1C2D3E4F5', 'rank': 2, 'rssi': -61,
         'sleepy': True, 'battery_mv': 3312, 'zone': 'zone1',
+        'ts': 1754000123,
     }
     assert kwargs.get('retain') is True
+
+
+# ── mesh timestamping (the app's "last seen" depends entirely on this) ───────
+# Every mesh topic is retained, and MQTT replays retained topics in full on
+# every client (re)connect with no indication of age. Without `ts` in the
+# payload the app can only date a node by when the replay arrived, which made
+# every node read as "seen just now" on every app launch.
+def test_mesh_ts_reflects_when_the_sighting_happened_not_when_it_is_read(monkeypatch):
+    client, state = _client(), _state()
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: 1754000500.0)
+    serial_bridge.handle_line(client, _line(
+        {'type': 'mesh', 'mac': '206EF16CA1B0', 'parent': 'A0B1C2D3E4F5', 'rank': 1,
+         'rssi': -60, 'sleepy': True, 'battery_mv': 3300, 'zone': 'zone1'}), state)
+
+    payload = json.loads(client.publish.call_args.args[1])
+    assert payload['ts'] == 1754000500
+
+
+def test_bridge_own_mesh_record_is_cached_and_refreshed_by_heartbeats(monkeypatch):
+    """The firmware sends the bridge's own root record once, from setup().
+    Its heartbeats are what actually prove it alive afterwards, so without
+    this refresh the bridge's "last seen" would freeze at boot forever."""
+    client, state = _client(), _state()
+    wall, mono = [1754000000.0], [500.0]
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: wall[0])
+    monkeypatch.setattr(serial_bridge.time, 'monotonic', lambda: mono[0])
+
+    # Boot order matters: the firmware sends this root record BEFORE the
+    # first heartbeat, so the MAC isn't known yet -- it must be recognised
+    # by parent=null + rank=0, not by matching state['bridge_mac'].
+    serial_bridge.handle_line(client, _line(
+        {'type': 'mesh', 'mac': 'A0B1C2D3E4F5', 'parent': None, 'rank': 0,
+         'rssi': None, 'sleepy': False, 'battery_mv': None, 'zone': None}), state)
+    assert state['bridge_mesh'] is not None
+    client.publish.reset_mock()
+
+    # First heartbeat: publishes online, and refreshes the mesh ts.
+    wall[0] = 1754000060.0
+    serial_bridge.handle_line(client, _line({'type': 'heartbeat', 'mac': 'A0B1C2D3E4F5'}), state)
+    mesh_pubs = [c for c in client.publish.call_args_list if c.args[0].endswith('/mesh')]
+    assert len(mesh_pubs) == 1
+    assert json.loads(mesh_pubs[0].args[1])['ts'] == 1754000060
+
+
+def test_bridge_mesh_refresh_is_throttled_between_heartbeats(monkeypatch):
+    """Heartbeats arrive every ~2s; this is a retained publish, so refreshing
+    on every one of them would churn the broker for no added resolution."""
+    client, state = _client(), _state()
+    wall, mono = [1754000000.0], [500.0]
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: wall[0])
+    monkeypatch.setattr(serial_bridge.time, 'monotonic', lambda: mono[0])
+
+    serial_bridge.handle_line(client, _line(
+        {'type': 'mesh', 'mac': 'A0B1C2D3E4F5', 'parent': None, 'rank': 0,
+         'rssi': None, 'sleepy': False, 'battery_mv': None, 'zone': None}), state)
+    hb = _line({'type': 'heartbeat', 'mac': 'A0B1C2D3E4F5'})
+    serial_bridge.handle_line(client, hb, state)  # first refresh
+    client.publish.reset_mock()
+
+    mono[0] += serial_bridge.HEARTBEAT_INTERVAL_S  # next heartbeat, well inside the window
+    serial_bridge.handle_line(client, hb, state)
+    assert [c for c in client.publish.call_args_list if c.args[0].endswith('/mesh')] == []
+
+    mono[0] += serial_bridge.BRIDGE_MESH_REFRESH_S  # window elapsed
+    wall[0] = 1754000900.0
+    serial_bridge.handle_line(client, hb, state)
+    mesh_pubs = [c for c in client.publish.call_args_list if c.args[0].endswith('/mesh')]
+    assert len(mesh_pubs) == 1
+    assert json.loads(mesh_pubs[0].args[1])['ts'] == 1754000900
+
+
+def test_heartbeat_refreshes_bridge_mesh_even_if_no_mesh_line_was_ever_seen(monkeypatch):
+    """The firmware only sends its root record from setup(). Restarting or
+    redeploying serial_bridge while the ESP32 keeps running -- the normal
+    case for any service restart -- means no mesh line ever arrives, so
+    without a synthesised fallback the bridge's "last seen" would stay
+    unknown forever despite it heartbeating every 2s."""
+    client, state = _client(), _state()
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: 1754000777.0)
+    monkeypatch.setattr(serial_bridge.time, 'monotonic', lambda: 500.0)
+    assert state['bridge_mesh'] is None  # never saw one
+
+    serial_bridge.handle_line(client, _line({'type': 'heartbeat', 'mac': 'A0B1C2D3E4F5'}), state)
+
+    mesh_pubs = [c for c in client.publish.call_args_list if c.args[0].endswith('/mesh')]
+    assert len(mesh_pubs) == 1
+    assert mesh_pubs[0].args[0] == 'greenhouse/nodes/A0B1C2D3E4F5/mesh'
+    assert json.loads(mesh_pubs[0].args[1]) == {
+        'parent': None, 'rank': 0, 'rssi': None,
+        'sleepy': False, 'battery_mv': None, 'zone': None,
+        'ts': 1754000777,
+    }
+
+
+def test_a_real_cached_bridge_record_wins_over_the_synthesised_fallback(monkeypatch):
+    """Synthesising is only a fallback -- if the firmware did send its own
+    record, that one is the source of truth (it may carry fields a future
+    firmware adds that the hardcoded fallback wouldn't know about)."""
+    client, state = _client(), _state()
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: 1754000000.0)
+    monkeypatch.setattr(serial_bridge.time, 'monotonic', lambda: 500.0)
+    serial_bridge.handle_line(client, _line(
+        {'type': 'mesh', 'mac': 'A0B1C2D3E4F5', 'parent': None, 'rank': 0,
+         'rssi': -42, 'sleepy': False, 'battery_mv': 4100, 'zone': 'hub'}), state)
+    client.publish.reset_mock()
+
+    serial_bridge.handle_line(client, _line({'type': 'heartbeat', 'mac': 'A0B1C2D3E4F5'}), state)
+
+    mesh_pubs = [c for c in client.publish.call_args_list if c.args[0].endswith('/mesh')]
+    payload = json.loads(mesh_pubs[0].args[1])
+    assert payload['rssi'] == -42
+    assert payload['battery_mv'] == 4100
+    assert payload['zone'] == 'hub'
+
+
+def test_an_edge_node_mesh_record_is_never_mistaken_for_the_bridges_own(monkeypatch):
+    """Only parent=null AND rank=0 is the bridge. A rank-0-looking record
+    that still has a parent, or a normal rank-1 leaf, must not be cached."""
+    client, state = _client(), _state()
+    monkeypatch.setattr(serial_bridge.time, 'time', lambda: 1754000000.0)
+
+    serial_bridge.handle_line(client, _line(
+        {'type': 'mesh', 'mac': '206EF16CA1B0', 'parent': 'A0B1C2D3E4F5', 'rank': 1,
+         'rssi': -60, 'sleepy': True, 'battery_mv': 3300, 'zone': 'zone1'}), state)
+    assert state['bridge_mesh'] is None
+
+    serial_bridge.handle_line(client, _line(
+        {'type': 'mesh', 'mac': '206EF16C9DB0', 'parent': 'A0B1C2D3E4F5', 'rank': 0,
+         'rssi': -58, 'sleepy': True, 'battery_mv': 3200, 'zone': 'zone2'}), state)
+    assert state['bridge_mesh'] is None
 
 
 # ── malformed / unknown ──────────────────────────────────────────────────────
@@ -160,6 +294,13 @@ def test_empty_line_timeout_is_a_noop():
 
 
 # ── heartbeat-based bridge liveness ─────────────────────────────────────────
+def _status_publishes(client):
+    """Only the /status publishes. A heartbeat also refreshes the bridge's
+    own /mesh record (see BRIDGE_MESH_REFRESH_S), so counting every publish
+    would conflate the two independent behaviours."""
+    return [c for c in client.publish.call_args_list if c.args[0].endswith('/status')]
+
+
 def test_first_heartbeat_ever_publishes_online():
     client = _client()
     state = _state()
@@ -167,8 +308,8 @@ def test_first_heartbeat_ever_publishes_online():
 
     serial_bridge.handle_line(client, line, state)
 
-    client.publish.assert_called_once_with(
-        'greenhouse/nodes/A0B1C2D3E4F5/status', 'online', retain=True)
+    assert _status_publishes(client) == [
+        mock_call('greenhouse/nodes/A0B1C2D3E4F5/status', 'online', retain=True)]
 
 
 def test_second_heartbeat_shortly_after_does_not_republish_online(monkeypatch):
@@ -179,12 +320,12 @@ def test_second_heartbeat_shortly_after_does_not_republish_online(monkeypatch):
 
     line = _line({'type': 'heartbeat', 'mac': 'A0B1C2D3E4F5'})
     serial_bridge.handle_line(client, line, state)
-    assert client.publish.call_count == 1
+    assert len(_status_publishes(client)) == 1
 
     fake_now[0] += 2.0  # normal heartbeat cadence, well under offline threshold
     serial_bridge.handle_line(client, line, state)
 
-    assert client.publish.call_count == 1  # no duplicate "online" publish
+    assert len(_status_publishes(client)) == 1  # no duplicate "online" publish
 
 
 def test_offline_check_publishes_offline_after_missed_heartbeats(monkeypatch):
