@@ -166,12 +166,20 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   MeshDataPacket pkt;
   memcpy(&pkt, data, sizeof(pkt));
   if (pkt.magic != MESH_MAGIC) { Serial.println("[esp-now] bad magic, dropped"); return; }
-  if (meshDedupSeen(pkt.origin_mac, pkt.seq)) return;  // route-flap duplicate
 
   // Zone lookup by ORIGIN, not the immediate sender — with relaying, the
   // ESP-NOW src_addr may be an intermediate hop, not the node that measured.
   char mac[13];
   meshFormatMac(pkt.origin_mac, mac);
+
+  // Logged, not silent: a node that loses its RTC state across sleep restarts
+  // seq at 0 every wake, so every packet after its first looks like a route-flap
+  // duplicate. Dropping that silently is indistinguishable from a dead link.
+  if (meshDedupSeen(pkt.origin_mac, pkt.seq)) {
+    Serial.printf("[esp-now] %s seq=%u dropped as duplicate\n", mac, pkt.seq);
+    return;
+  }
+
   int idx = meshTrustedIndex(pkt.origin_mac);
   if (idx < 0 || TRUSTED_NODES[idx].zone == nullptr) {
     Serial.printf("[esp-now] unknown origin %s — add to TRUSTED_NODES[]\n", mac);

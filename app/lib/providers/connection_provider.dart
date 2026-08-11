@@ -32,8 +32,8 @@ final connectionStatusProvider = StreamProvider<ConnectionStatus>((ref) =>
     ref.watch(repositoryProvider).connectionStatus);
 
 /// The stored pairing config (null when unpaired). Read-only accessor for
-/// screens that need a secret from it — e.g. the camera screen needs
-/// `camToken` to open the camera's now-authenticated `/stream`.
+/// screens that need a secret from it — e.g. the history service needs
+/// `apiToken` to query authentication-gated APIs.
 final savedConfigProvider = FutureProvider<ConnectionConfig?>(
     (ref) => ref.read(pairingServiceProvider).loadConfig());
 

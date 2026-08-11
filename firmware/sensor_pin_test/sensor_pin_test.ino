@@ -6,6 +6,7 @@
 // ESP32-C3 only. Flash, open Serial Monitor at 115200.
 
 #include <Arduino.h>
+#include <WiFi.h>
 #include <DHT.h>
 
 #define SOIL_DATA_PIN  1   // ADC1_CH1 — NOT GPIO2: that's an ESP32-C3 strapping
@@ -40,6 +41,8 @@ void setup() {
   Serial.begin(115200);
   delay(1500);
 
+  WiFi.mode(WIFI_STA);
+
   pinMode(SOIL_PWR_PIN, OUTPUT);
   pinMode(DHT_PWR_PIN,  OUTPUT);
   digitalWrite(SOIL_PWR_PIN, HIGH);  // left on for the whole test — probe joints live
@@ -49,6 +52,7 @@ void setup() {
 
   Serial.println("--- SENSOR PIN TEST ---");
   Serial.println("board: ESP32-C3");
+  Serial.printf("MAC address: %s\n", WiFi.macAddress().c_str());
   Serial.printf("soil: data=GPIO%d pwr=GPIO%d | dht: data=GPIO%d pwr=GPIO%d\n",
                 SOIL_DATA_PIN, SOIL_PWR_PIN, DHT_DATA_PIN, DHT_PWR_PIN);
   Serial.println("Wiggle/probe connections while readings stream — dropouts or");

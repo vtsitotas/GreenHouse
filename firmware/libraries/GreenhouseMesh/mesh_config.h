@@ -51,8 +51,7 @@
 // ── Deep sleep (Phase 1: leaf sleep — spec 2026-07-26-mesh-deep-sleep) ────────
 #define MESH_FLAG_SLEEPY          0x01      // beacon/data flags bit: sender is a
                                             // battery node — NEVER adopt as parent
-#define MESH_SLEEP_INTERVAL_MS    900000UL  // 15 min duty cycle (power doc
-                                            // Scenario B: ~290 µA average draw)
+#define MESH_SLEEP_INTERVAL_MS    60000UL   // 1 min test duty cycle (change back to 900000UL for 15 min production)
 #define MESH_WAKE_DISCOVERY_MS    5000UL    // orphaned-wake listen window before
                                             // giving up and buffering the reading
 #define MESH_TX_CONFIRM_WAIT_MS   500UL     // wait for the ESP-NOW send callback
@@ -64,8 +63,30 @@
 
 // ── Buffers ───────────────────────────────────────────────────────────────────
 #define MESH_DEDUP_CACHE_SIZE  32   // (origin_mac, seq) ring — drops route-flap dupes
+#define MESH_DEDUP_WINDOW_MS   30000UL  // how long a (mac, seq) counts as "already
+                                    // seen". seq only identifies a reading while its
+                                    // origin keeps RTC state across sleep; any power
+                                    // loss (dead pack, brownout, battery swap)
+                                    // restarts it at 0, so entries MUST expire or the
+                                    // bridge rejects that node's every later reading
+                                    // until someone reboots the bridge. Keep above
+                                    // MESH_WAKE_MAX_AWAKE_MS (a wake cycle re-sends
+                                    // the SAME seq after an unconfirmed tx, and that
+                                    // retry must still de-dup) and below
+                                    // MESH_SLEEP_INTERVAL_MS (a restarted node's
+                                    // recycled seq must have expired by its next wake).
 #define MESH_DATA_BUFFER_SIZE  10   // own readings buffered while isolated
                                     // (most-recent 10, oldest dropped, RAM only)
+
+// Both bounds on the de-dup window are load-bearing, and MESH_SLEEP_INTERVAL_MS
+// is routinely retuned (test vs production duty cycle) — enforce them at compile
+// time instead of trusting the comment above to be re-read.
+static_assert(MESH_DEDUP_WINDOW_MS > MESH_WAKE_MAX_AWAKE_MS,
+              "MESH_DEDUP_WINDOW_MS must outlast one wake cycle, or a wake's own "
+              "same-seq retry stops being de-duped");
+static_assert(MESH_DEDUP_WINDOW_MS < MESH_SLEEP_INTERVAL_MS,
+              "MESH_DEDUP_WINDOW_MS must expire before a restarted node's next wake, "
+              "or that node's recycled seq is dropped as a duplicate forever");
 
 // ── Bridge offline detection ──────────────────────────────────────────────────
 #define MESH_OFFLINE_AFTER               3       // x expected report interval
@@ -101,8 +122,8 @@ struct TrustedNode {
 };
 
 static const TrustedNode TRUSTED_NODES[] = {
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0x6B, 0x50 }, nullptr, false },  // bridge (ESP32-C3)
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0xA1, 0xB0 }, "zone1", true  },  // ESP32-C3 edge node (battery)
-  { { 0x88, 0xF1, 0x55, 0x31, 0x45, 0x64 }, "zone2", false },  // ESP32 WROOM-32 edge node
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0xBE, 0x80 }, nullptr, false },  // bridge (ESP32-C3)
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0xA1, 0xB0 }, "zone1", true  },  // ESP32-C3 edge node 1 (battery)
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0x9D, 0xB0 }, "zone2", true  },  // ESP32-C3 edge node 2 (battery)
 };
 static const int TRUSTED_NODE_COUNT = sizeof(TRUSTED_NODES) / sizeof(TRUSTED_NODES[0]);

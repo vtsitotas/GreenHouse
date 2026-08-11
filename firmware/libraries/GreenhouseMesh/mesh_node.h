@@ -72,7 +72,7 @@ static uint32_t meshWindowDurationMs  = MESH_WINDOW_DURATION_MS;
 
 static uint32_t meshNeighborLastHeard[TRUSTED_NODE_COUNT];  // 0 = never heard
 
-typedef struct { uint8_t mac[6]; uint16_t seq; bool used; } MeshDedupEntry;
+typedef struct { uint8_t mac[6]; uint16_t seq; uint32_t ms; bool used; } MeshDedupEntry;
 static MeshDedupEntry meshDedup[MESH_DEDUP_CACHE_SIZE];
 static int meshDedupNext = 0;
 
@@ -297,13 +297,34 @@ static void meshNotifyTxStatus(bool ok) {
 }
 
 // ── De-dup cache ──────────────────────────────────────────────────────────────
-// Returns true if (origin, seq) was already seen; otherwise records it.
+// Returns true if (origin, seq) was seen within the last MESH_DEDUP_WINDOW_MS;
+// otherwise records it and returns false.
+//
+// Entries expire on purpose. A seq identifies a reading only while its origin
+// keeps its RTC state — a node that loses power restarts seq at 0, so a cache
+// that remembered forever would treat that node's every subsequent reading as a
+// duplicate and drop it, leaving a bridge reboot as the only recovery. Expiry
+// makes that self-healing: genuine duplicates (one packet arriving over two
+// routes, or a wake cycle deliberately re-sending the same seq after an
+// unconfirmed tx) land within seconds and are still caught, while a recycled seq
+// arrives a whole sleep interval later and is correctly treated as new.
+//
+// A hit deliberately does NOT refresh the timestamp — refreshing would hold the
+// window open for exactly the node that is stuck re-sending one seq, which is
+// the case this expiry exists to release. Expired entries are left in place
+// rather than compacted; the ring overwrites oldest-first, so they are the first
+// slots reused anyway.
 static bool meshDedupSeen(const uint8_t* originMac, uint16_t seq) {
-  for (int i = 0; i < MESH_DEDUP_CACHE_SIZE; i++)
-    if (meshDedup[i].used && meshDedup[i].seq == seq &&
+  uint32_t now = millis();
+  for (int i = 0; i < MESH_DEDUP_CACHE_SIZE; i++) {
+    if (!meshDedup[i].used) continue;
+    if (now - meshDedup[i].ms >= MESH_DEDUP_WINDOW_MS) continue;  // expired
+    if (meshDedup[i].seq == seq &&
         meshMacEqual(meshDedup[i].mac, originMac)) return true;
+  }
   memcpy(meshDedup[meshDedupNext].mac, originMac, 6);
   meshDedup[meshDedupNext].seq  = seq;
+  meshDedup[meshDedupNext].ms   = now;
   meshDedup[meshDedupNext].used = true;
   meshDedupNext = (meshDedupNext + 1) % MESH_DEDUP_CACHE_SIZE;
   return false;
@@ -498,7 +519,12 @@ static void meshRelayData(const uint8_t* srcMac, const uint8_t* data, int len) {
   memcpy(&pkt, data, sizeof(pkt));
   if (pkt.magic != MESH_MAGIC) return;
   if (pkt.ttl == 0) { Serial.println("[mesh] ttl expired — dropped"); return; }
-  if (meshDedupSeen(pkt.origin_mac, pkt.seq)) return;  // route-flap duplicate
+  // Logged like every other drop path here: a silent drop is indistinguishable
+  // from a link that never delivered at all.
+  if (meshDedupSeen(pkt.origin_mac, pkt.seq)) {
+    Serial.println("[mesh] duplicate — dropped");
+    return;
+  }
   if (meshParentIdx < 0) { Serial.println("[mesh] relay with no parent — dropped"); return; }
   pkt.ttl--;
   meshUnicastToParent(&pkt);
