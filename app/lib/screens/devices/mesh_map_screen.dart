@@ -7,6 +7,7 @@ import 'package:greenhouse_app/screens/devices/mesh_map/mesh_link_painter.dart';
 import 'package:greenhouse_app/screens/devices/mesh_map/mesh_node_card.dart';
 import 'package:greenhouse_app/screens/devices/mesh_map/node_positions_store.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/last_seen_format.dart';
 
 /// The live Mesh Map screen (spec §Screen structure): every known node as a
 /// card on a pannable/zoomable field, auto-laid-out by mesh rank via
@@ -73,7 +74,18 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
           return Column(
             children: [
               if (showDegradedBanner) const _DegradedDataBanner(),
-              Expanded(child: _buildCanvas(nodes)),
+              _MeshSummaryBar(nodes: nodes),
+              Expanded(
+                child: Stack(
+                  children: [
+                    _buildCanvas(nodes),
+                    // Fixed to the screen, not the pannable canvas -- a
+                    // legend that scrolled off with the map it's explaining
+                    // would defeat the point.
+                    const Positioned(right: 12, bottom: 12, child: _LinkQualityLegend()),
+                  ],
+                ),
+              ),
             ],
           );
         },
@@ -193,6 +205,68 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
   }
 }
 
+/// "How many nodes are there and how many can I actually reach right now" at
+/// a glance, without counting cards on the canvas by eye.
+class _MeshSummaryBar extends StatelessWidget {
+  final Map<String, NodeStatus> nodes;
+  const _MeshSummaryBar({required this.nodes});
+
+  @override
+  Widget build(BuildContext context) {
+    final total = nodes.length;
+    final online = nodes.values.where((n) => n.isOnline).length;
+    final offline = total - online;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
+      child: Text(
+        '$total node${total == 1 ? '' : 's'} · $online online · $offline offline',
+        style: Theme.of(context).textTheme.labelSmall,
+      ),
+    );
+  }
+}
+
+/// What the link colors/dash pattern mean (spec §Link quality mapping,
+/// `mesh_link_painter.dart`'s `linkQualityOf`) — without this, the map shows
+/// colored/dashed lines with nothing explaining them to anyone but whoever
+/// wrote the painter.
+class _LinkQualityLegend extends StatelessWidget {
+  const _LinkQualityLegend();
+
+  static const _entries = [
+    (AppColors.online, 'Good (≥ −60 dBm)'),
+    (Colors.amber, 'Fair (−61…−75 dBm)'),
+    (Colors.deepOrange, 'Weak (< −75 dBm)'),
+    (Colors.grey, 'Stale / offline (dashed)'),
+  ];
+
+  @override
+  Widget build(BuildContext context) => Card(
+        margin: EdgeInsets.zero,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              for (final (color, label) in _entries)
+                Padding(
+                  padding: const EdgeInsets.symmetric(vertical: 2),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(width: 14, height: 3, color: color),
+                      const SizedBox(width: 6),
+                      Text(label, style: const TextStyle(fontSize: 10)),
+                    ],
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+}
+
 class _DegradedDataBanner extends StatelessWidget {
   const _DegradedDataBanner();
 
@@ -208,20 +282,32 @@ class _DegradedDataBanner extends StatelessWidget {
       );
 }
 
+/// Human-readable answer to "how is this node reaching the bridge?" — the
+/// raw `Rank`/`Parent` rows stay too (rank is the actual field the mesh and
+/// the layout engine key off), but "rank 2" doesn't tell a reader "that's
+/// two hops away through a relay" at a glance the way this does.
+String _connectionLabel(NodeStatus node) {
+  final rank = node.meshRank;
+  if (rank == null) return 'Unknown — no mesh data yet';
+  if (rank == 0) return 'This is the bridge';
+  if (rank == 1) return 'Direct to bridge';
+  return 'Relayed — $rank hops (via ${node.parentId ?? "unknown"})';
+}
+
 /// Detail bottom sheet shown on card tap (spec §Node card tap → detail
-/// sheet): MAC, zone, rank, parent, RSSI, battery (% and mV), sleepy,
-/// online state, and last-seen time (same `HH:mm` format as `NodeListTile`).
+/// sheet): MAC, zone, connection (direct/relayed/unknown), rank, parent,
+/// RSSI, battery (% and mV), sleepy, online state, and last-seen time (same
+/// format as `NodeListTile`, qualified with a date once it isn't today).
 class _NodeDetailSheet extends StatelessWidget {
   final NodeStatus node;
   const _NodeDetailSheet({required this.node});
 
   @override
   Widget build(BuildContext context) {
-    final lastSeen = '${node.lastSeen.hour.toString().padLeft(2, '0')}:'
-        '${node.lastSeen.minute.toString().padLeft(2, '0')}';
     final rows = <(String, String)>[
       ('MAC', node.nodeId),
       ('Zone', node.zone ?? '—'),
+      ('Connection', _connectionLabel(node)),
       ('Rank', node.meshRank?.toString() ?? '—'),
       ('Parent', node.parentId ?? '—'),
       ('RSSI', node.parentRssi != null ? '${node.parentRssi} dBm' : '—'),
@@ -231,7 +317,7 @@ class _NodeDetailSheet extends StatelessWidget {
       ('Battery (mV)', node.batteryMv != null ? '${node.batteryMv} mV' : '—'),
       ('Sleepy', node.isSleepy == true ? 'Yes' : 'No'),
       ('Status', node.isOnline ? 'Online' : 'Offline'),
-      ('Last seen', lastSeen),
+      ('Last seen', formatLastSeen(node.lastSeen)),
     ];
 
     // Scrollable so the full row list stays reachable when the sheet's max

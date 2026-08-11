@@ -90,11 +90,20 @@ class GreenhouseRepository {
       } else {
         switch (event.source) {
           case NodeStatusSource.status:
-            // `/status` exclusively owns isOnline.
+            // `/status` exclusively owns isOnline. lastSeen only advances on
+            // a transition TO online: the wire payload for an offline event
+            // carries no timestamp of its own (bridge_esp32.ino and
+            // serial_bridge.py just publish the bare string "offline" the
+            // instant they detect staleness), so treating that arrival time
+            // as "last seen" would show a node that just went offline as
+            // seen "just now" -- the opposite of what offline means. Known
+            // residual gap: a *retained* "online" replayed on app reconnect
+            // still advances lastSeen, since retained delivery isn't
+            // distinguished from a live one anywhere in this pipeline.
             _nodes[event.nodeId] = prev.copyWith(
               isOnline:       event.isOnline,
               batteryPercent: event.batteryPercent ?? prev.batteryPercent,
-              lastSeen:       event.lastSeen,
+              lastSeen:       event.isOnline ? event.lastSeen : prev.lastSeen,
             );
             break;
           case NodeStatusSource.battery:

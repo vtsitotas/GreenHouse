@@ -1,9 +1,10 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-11 (git-history credential scrub). Previous session
-2026-08-10 (WiFi provisioning + UART bridge bring-up, full bench deploy).
-Camera remains **parked** since 2026-08-02 (see that TL;DR below); the
-2026-07-28 security-hardening pass is merged and live.
+**Last updated:** 2026-08-11 (history false-alert fix + mesh map bugfixes +
+git-history credential scrub — three TL;DRs below, same day). Previous
+session 2026-08-10 (WiFi provisioning + UART bridge bring-up, full bench
+deploy). Camera remains **parked** since 2026-08-02 (see that TL;DR below);
+the 2026-07-28 security-hardening pass is merged and live.
 
 > ⚠️ **Every commit hash changed on 2026-08-11.** History was rewritten to
 > remove leaked credentials. Any clone made before then must be **re-cloned**,
@@ -17,6 +18,65 @@ and is now fixed end to end. The bench Pi is fully deployed off current
 `main`, `selftest.sh` reports 45/45. Still open: no edge node has actually
 delivered a sensor *reading* yet (bridge heartbeats fine, mesh path unproven);
 see the 2026-08-10 TL;DR for the full list.
+
+---
+
+## TL;DR of this session (2026-08-11 — history false-alert fix, mesh map bugfixes, overview doc)
+
+Follow-up work later the same day as the credential scrub below, triggered by
+the owner actually using the app and noticing (1) a "security alert" pushed
+to their own phone every time they opened weather history, and (2) the mesh
+map "feels buggy" — nodes shown offline with a last-seen time that reads as
+"just now".
+
+**History screen was crying wolf at its own owner.** A phone paired before
+2026-07-28 has no `api_token` stored locally (the field didn't exist yet at
+pairing time). Every history-screen open sent `/api/history` with no auth,
+`portal.py` correctly 401'd, and `history_auth_failure` is one of
+`security_log.py`'s alertable kinds — so the owner's own stale pairing
+triggered real "Greenhouse security alert" pushes indistinguishable from an
+actual intrusion attempt. Fixed client-side: `historyPointsProvider` now
+checks `config.apiToken.isEmpty` and throws a dedicated
+`HistoryTokenMissingException` *before* ever hitting the network, so the
+doomed request (and the false alert it caused) never happens; the history
+screen shows a "Re-pair" button instead of a raw 401. Owner still needs to
+re-pair once to get a real token.
+
+**Mesh map: the actual bug behind "shows offline but last-seen says now".**
+`greenhouse_repository.dart`'s `/status` merge wrote `lastSeen: event.lastSeen`
+unconditionally, and `event.lastSeen` is stamped `DateTime.now()` at parse
+time regardless of what the payload says — an offline event (which carries no
+timestamp of its own; the bridge/serial_bridge just publish the bare string
+the instant they detect staleness) was overwriting a node's last-seen with
+the exact moment it was found to be gone. Fixed: lastSeen now only advances on
+a transition *to* online. Consequence fix: `NodeListTile` and the mesh map's
+detail sheet now qualify last-seen with a date once it isn't today
+(`app/lib/utils/last_seen_format.dart`) — a bare `HH:mm` misreads as "recent"
+once nodes can legitimately show hours- or days-old timestamps. Known,
+documented-not-fixed residual gap: a *retained* MQTT redelivery (e.g. on app
+reconnect) still advances lastSeen, since the wire protocol carries no real
+timestamp to fall back on either — fixing that needs the MQTT retain flag
+threaded through `mqtt_connection.dart`, out of scope for this pass.
+
+**Mesh map: "how do I know if a node is bridged" now has an answer on
+screen.** `meshRank` already *is* hop-count-from-bridge in this mesh (one
+bridge, rank assigned by hop distance) but nothing surfaced that — added an
+explicit "Direct"/"N hops" label on each card and a "Connection" row in the
+detail sheet ("Direct to bridge" / "Relayed — 2 hops (via node1)" / "This is
+the bridge" / "Unknown — no mesh data yet"). Also added a link-quality color
+legend and a node-count summary bar (`N nodes · N online · N offline`) —
+both were flagged as "missing structure", and the map had zero explanation
+of what its own link colors meant.
+
+**New doc:** `docs/SYSTEM_OVERVIEW_SIMPLE.md` — a friendlier, prose-style
+walkthrough combining the full system layout and the security work, meant as
+the first thing to read before `ARCHITECTURE.md`/`docs/technical/`.
+
+`flutter test`: 200 passed (was 184; ~15 new tests for the token-missing
+path, the lastSeen-on-offline fix, the last-seen date formatter, and the
+Direct/hop-count labels). `flutter analyze`: clean.
+
+Full detail and rationale for both fixes: `IMPROVEMENTS.md` Β8-Β10.
 
 ---
 

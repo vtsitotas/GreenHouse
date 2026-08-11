@@ -202,6 +202,27 @@ void main() {
     expect(node.batteryMv, 4000);
   });
 
+  test('lastSeen does not advance when a node transitions to offline', () async {
+    repo.connect(_config);
+    final onlineFuture = repo.nodes.firstWhere((m) => m['node1']?.isOnline == true);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'online'));
+    final seenAtOnline = (await onlineFuture)['node1']!.lastSeen;
+
+    // Real delay so a bug that stamps lastSeen at "now" on the offline event
+    // would produce a measurably later timestamp than the online one.
+    await Future.delayed(const Duration(milliseconds: 5));
+
+    final offlineFuture = repo.nodes.firstWhere((m) => m['node1']?.isOnline == false);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node1', 'offline'));
+    final offlineNodes = await offlineFuture;
+
+    // lastSeen must be the moment it was last confirmed online, not the
+    // moment the app found out it went quiet.
+    expect(offlineNodes['node1']!.lastSeen, seenAtOnline);
+  });
+
   test('a later mesh event does not resurrect isOnline true after an explicit offline status', () async {
     repo.connect(_config);
     final offlineFuture = repo.nodes.firstWhere((m) => m['node1']?.isOnline == false);
@@ -222,6 +243,20 @@ void main() {
     expect(node.isOnline, isFalse);
     expect(node.parentId, 'bridge');
     expect(node.isSleepy, isTrue);
+  });
+
+  test('a first-ever offline status with no prior entry has no earlier lastSeen to fall back to',
+      () async {
+    repo.connect(_config);
+    final future = repo.nodes.firstWhere((m) => m['node7'] != null);
+    await Future(() {});
+    eventsCtrl.add(NodeStatus.fromMqttStatus('node7', 'offline'));
+    final nodes = await future;
+    expect(nodes['node7']?.isOnline, isFalse);
+    // No prior entry exists for this "no existing entry: store as-is"
+    // branch, so there's nothing better to fall back to than the moment the
+    // app first learned about this node -- not a claim that it was seen then.
+    expect(nodes['node7']?.lastSeen.difference(DateTime.now()).inSeconds.abs(), lessThan(5));
   });
 
   test('a first-ever battery event with no prior entry keeps its factory-default isOnline true', () async {

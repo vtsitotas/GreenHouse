@@ -316,6 +316,52 @@ NaN περνάει σωστά μέσα από ESP-NOW — ίδια IEEE-754 κω
 `catch (e) { if (kDebugMode) debugPrint('...: $e'); }`, με ξεχωριστό μήνυμα
 ανά σημείο για να λέει τι ακριβώς απέτυχε να γίνει parse.
 
+### Β8. Mesh map: "last seen" έδειχνε τρέχουσα ώρα σε offline κόμβους **[εύκολο]** — ✅ έγινε (2026-08-11)
+Το `greenhouse_repository.dart` έγραφε `lastSeen: event.lastSeen` σε *κάθε*
+`/status` merge, και το `event.lastSeen` είναι πάντα `DateTime.now()` τη
+στιγμή του parse — ό,τι κι αν έλεγε το payload. Ένα offline μήνυμα δεν
+κουβαλάει δικό του timestamp (η γέφυρα/serial_bridge στέλνουν απλά το
+string `"offline"` τη στιγμή που το εντοπίζουν), οπότε ένας κόμβος που
+μόλις χάθηκε έδειχνε «είδα τον μόλις τώρα» — ακριβώς το αντίθετο. Τώρα το
+lastSeen προχωράει μόνο σε μετάβαση σε **online**· σε offline κρατά την
+προηγούμενη τιμή. `NodeListTile`/το detail sheet του mesh map δείχνουν
+πλέον και ημερομηνία όταν το lastSeen δεν είναι σημερινό
+(`app/lib/utils/last_seen_format.dart`), αλλιώς ένα παλιό `HH:mm` διαβάζεται
+σαν πρόσφατο.
+
+**Γνωστό υπολειπόμενο κενό, τεκμηριωμένο σε σχόλιο όχι διορθωμένο:** ένα
+*retained* MQTT μήνυμα (π.χ. σε reconnect της εφαρμογής) ξαναπροχωράει το
+lastSeen σε "τώρα" ακόμα κι αν είναι ώρες παλιό — το πρωτόκολλο δεν
+κουβαλάει καθόλου πραγματικό timestamp ώστε να ξεχωρίσει live delivery από
+retained replay. Η σωστή διόρθωση θέλει να περάσει το MQTT `retain` flag
+μέσα από `mqtt_connection.dart` ως τα models — μεγαλύτερη αλλαγή,
+σκόπιμα εκτός εμβέλειας αυτού του περάσματος.
+
+### Β9. Mesh map: καμία ένδειξη "direct στη γέφυρα" vs "relayed" **[εύκολο]** — ✅ έγινε (2026-08-11)
+Το `meshRank` ΕΙΝΑΙ ήδη αριθμός αλμάτων από τη γέφυρα σε αυτό το mesh (μία
+γέφυρα, rank=hops), αλλά τίποτα στην οθόνη δεν το μετέφραζε σε κάτι
+αναγνώσιμο — έπρεπε να ξέρεις τη σύμβαση "rank 1 = απευθείας" εκ των
+προτέρων. Προστέθηκε ρητή ετικέτα "Direct" / "N hops" πάνω στην κάρτα
+(`mesh_node_card.dart`) και αναλυτική γραμμή "Connection" στο detail sheet
+("Direct to bridge" / "Relayed — 2 hops (via node1)" / "This is the
+bridge" / "Unknown — no mesh data yet"). Παράλληλα προστέθηκε legend για τα
+χρώματα σύνδεσης και μια γραμμή σύνοψης (N nodes · N online · N offline) —
+έλειπε εντελώς οποιαδήποτε εξήγηση τι σημαίνουν τα χρώματα των γραμμών.
+
+### Β10. Η εφαρμογή πυροδοτούσε ψευδή security alert στο history **[εύκολο]** — ✅ έγινε (2026-08-11)
+Ένα κινητό ζευγαρωμένο πριν τις 2026-07-28 (πριν προστεθεί το `api_token`
+στο `/pair/confirm`) έχει άδειο `apiToken` αποθηκευμένο τοπικά. Κάθε άνοιγμα
+του weather/zone history έστελνε αίτημα στο `/api/history` χωρίς κανένα
+token, το `portal.py` σωστά απαντούσε 401, και επειδή το
+`history_auth_failure` είναι alertable kind στο `security_log.py`, το Pi
+έστελνε "Greenhouse security alert" push στο ίδιο το κινητό του ιδιοκτήτη —
+φαινόταν σαν επίθεση, ήταν απλά ξεπερασμένο pairing. Η εφαρμογή τώρα
+ελέγχει `config.apiToken.isEmpty` **πριν** στείλει το αίτημα
+(`historyPointsProvider`, νέο `HistoryTokenMissingException`) αντί να
+ρίξει ένα σίγουρα-θα-αποτύχει request στο δίκτυο, και το history screen
+δείχνει κουμπί **Re-pair** αντί για σκέτο "401". Ο ιδιοκτήτης χρειάζεται να
+ξαναζευγαρώσει μία φορά για να πάρει πραγματικό token.
+
 ---
 
 ## Γ. Απόδοση

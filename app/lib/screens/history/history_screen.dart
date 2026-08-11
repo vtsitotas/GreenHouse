@@ -4,6 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/models/history_point.dart';
 import 'package:greenhouse_app/providers/history_provider.dart';
+import 'package:greenhouse_app/screens/pairing/pairing_screen.dart';
+import 'package:greenhouse_app/services/history_service.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
 
 String _unitFor(String metric) {
@@ -206,10 +208,12 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
             child: dataAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
               error: (e, _) => Center(
-                child: Padding(
-                  padding: const EdgeInsets.all(32),
-                  child: Text('Could not load history.\n$e', textAlign: TextAlign.center),
-                ),
+                child: e is HistoryTokenMissingException
+                    ? const _ReauthPrompt(key: Key('history-reauth-prompt'))
+                    : Padding(
+                        padding: const EdgeInsets.all(32),
+                        child: Text('Could not load history.\n$e', textAlign: TextAlign.center),
+                      ),
               ),
               data: (data) {
                 final actual = data.actual;
@@ -441,4 +445,34 @@ class _HistoryChart extends StatelessWidget {
       ),
     );
   }
+}
+
+/// Shown instead of a raw error when the paired config has no history API
+/// token (see [HistoryTokenMissingException]) — a stale pairing, not a live
+/// fetch failure, so the fix is one tap away rather than a wall of text.
+class _ReauthPrompt extends StatelessWidget {
+  const _ReauthPrompt({super.key});
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.lock_outline, size: 40, color: Colors.grey),
+            const SizedBox(height: 12),
+            const Text(
+              "This pairing predates history access — re-pair to restore it.",
+              textAlign: TextAlign.center,
+            ),
+            const SizedBox(height: 16),
+            ElevatedButton(
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const PairingScreen()),
+              ),
+              child: const Text('Re-pair'),
+            ),
+          ],
+        ),
+      );
 }

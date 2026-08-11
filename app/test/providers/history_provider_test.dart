@@ -56,6 +56,7 @@ void main() {
           password: '',
           remoteUsername: '',
           remotePassword: '',
+          apiToken: 'test-token',
         ));
     when(() => mockService.fetchPoints(
           lanHost: any(named: 'lanHost'),
@@ -63,6 +64,8 @@ void main() {
           kind: any(named: 'kind'),
           metric: any(named: 'metric'),
           hours: any(named: 'hours'),
+          apiToken: any(named: 'apiToken'),
+          tlsFingerprint: any(named: 'tlsFingerprint'),
         )).thenAnswer((_) async => [
           HistoryPoint(time: DateTime.fromMillisecondsSinceEpoch(0), avg: 1, min: 1, max: 1),
         ]);
@@ -83,7 +86,45 @@ void main() {
           kind: 'weather',
           metric: 'temperature',
           hours: 168,
+          apiToken: 'test-token',
+          tlsFingerprint: any(named: 'tlsFingerprint'),
         )).called(1);
+  });
+
+  test('historyPointsProvider throws HistoryTokenMissingException without ever '
+      'calling HistoryService when apiToken is empty', () async {
+    final mockService = MockHistoryService();
+    final mockPairing = MockPairingService();
+    when(() => mockPairing.loadConfig()).thenAnswer((_) async => const ConnectionConfig(
+          lanHost: 'greenhouse.local',
+          remoteHost: '',
+          port: 8883,
+          tlsFingerprint: '',
+          username: '',
+          password: '',
+          remoteUsername: '',
+          remotePassword: '',
+          apiToken: '',
+        ));
+
+    final container = ProviderContainer(overrides: [
+      historyServiceProvider.overrideWithValue(mockService),
+      pairingServiceProvider.overrideWithValue(mockPairing),
+    ]);
+    addTearDown(container.dispose);
+
+    const query = HistoryQuery(zone: null, kind: 'weather', metric: 'temperature', hours: 24);
+    await expectLater(
+      () => container.read(historyPointsProvider(query).future),
+      throwsA(isA<HistoryTokenMissingException>()),
+    );
+    verifyNever(() => mockService.fetchPoints(
+          lanHost: any(named: 'lanHost'),
+          zone: any(named: 'zone'),
+          kind: any(named: 'kind'),
+          metric: any(named: 'metric'),
+          hours: any(named: 'hours'),
+        ));
   });
 
   test('historyPointsProvider forwards since/until to HistoryService for a custom range', () async {
@@ -98,6 +139,7 @@ void main() {
           password: '',
           remoteUsername: '',
           remotePassword: '',
+          apiToken: 'test-token',
         ));
     when(() => mockService.fetchPoints(
           lanHost: any(named: 'lanHost'),
@@ -107,6 +149,8 @@ void main() {
           hours: any(named: 'hours'),
           since: any(named: 'since'),
           until: any(named: 'until'),
+          apiToken: any(named: 'apiToken'),
+          tlsFingerprint: any(named: 'tlsFingerprint'),
         )).thenAnswer((_) async => []);
 
     final container = ProviderContainer(overrides: [
@@ -128,6 +172,8 @@ void main() {
           hours: 24,
           since: since,
           until: until,
+          apiToken: 'test-token',
+          tlsFingerprint: any(named: 'tlsFingerprint'),
         )).called(1);
   });
 

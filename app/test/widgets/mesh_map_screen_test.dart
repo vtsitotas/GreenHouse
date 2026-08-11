@@ -104,6 +104,25 @@ void main() {
       expect(find.text('No nodes detected yet'), findsOneWidget);
     });
 
+    testWidgets('summary bar shows node/online/offline counts', (tester) async {
+      await _pumpMeshMap(tester, {
+        'A0B1C2D3E4F5': _node('A0B1C2D3E4F5', rank: 0, zone: 'bridge-zone'),
+        'node1': _node('node1', rank: 1, zone: 'zone1'),
+        'node2': _node('node2', isOnline: false, rank: 1, zone: 'zone2'),
+      });
+
+      expect(find.text('3 nodes · 2 online · 1 offline'), findsOneWidget);
+    });
+
+    testWidgets('link-quality legend is shown alongside the canvas', (tester) async {
+      await _pumpMeshMap(tester, {
+        'A0B1C2D3E4F5': _node('A0B1C2D3E4F5', rank: 0, zone: 'bridge-zone'),
+      });
+
+      expect(find.textContaining('Good ('), findsOneWidget);
+      expect(find.textContaining('Stale / offline'), findsOneWidget);
+    });
+
     testWidgets('tapping a card opens a detail sheet with MAC and rank', (tester) async {
       await _pumpMeshMap(tester, {
         'A0B1C2D3E4F5': _node('A0B1C2D3E4F5', rank: 0, zone: 'bridge-zone'),
@@ -119,6 +138,33 @@ void main() {
 
       expect(find.text('A0B1C2D3E4F5'), findsWidgets); // card subtitle + MAC row
       expect(find.text('0'), findsOneWidget); // Rank row value, unique in this fixture
+      expect(find.text('This is the bridge'), findsOneWidget); // Connection row
+    });
+
+    testWidgets('detail sheet labels a relayed node with its hop count and parent',
+        (tester) async {
+      // The canvas is a fixed 1200x1600 logical pixels regardless of node
+      // count -- a rank-2 row sits below the default 600px-tall test
+      // viewport, so grow the viewport to fit the whole canvas rather than
+      // panning the InteractiveViewer mid-test.
+      tester.view.physicalSize = const Size(1200, 1600);
+      tester.view.devicePixelRatio = 1.0;
+      addTearDown(tester.view.resetPhysicalSize);
+      addTearDown(tester.view.resetDevicePixelRatio);
+
+      await _pumpMeshMap(tester, {
+        'A0B1C2D3E4F5': _node('A0B1C2D3E4F5', rank: 0, zone: 'bridge-zone'),
+        'node1': _node('node1', rank: 1, zone: 'zone1', parentId: 'A0B1C2D3E4F5'),
+        'node2': _node('node2', rank: 2, zone: 'zone2', parentId: 'node1'),
+      });
+
+      // Three cards on screen -> tap the one with rank 2 specifically by its
+      // zone label, since InkWell alone would be ambiguous with three cards.
+      await tester.tap(find.text('zone2'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 300));
+
+      expect(find.text('Relayed — 2 hops (via node1)'), findsOneWidget);
     });
   });
 

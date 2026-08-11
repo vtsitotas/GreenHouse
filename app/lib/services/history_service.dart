@@ -8,6 +8,22 @@ import 'package:greenhouse_app/utils/cert_pinning.dart';
 /// captive portal, which can't be encrypted without breaking the OS popup.
 const kPortalHttpsPort = 8443;
 
+/// Thrown by [historyPointsProvider] instead of ever calling [HistoryService]
+/// when the paired config has no `apiToken` — e.g. a pairing done before the
+/// history API required one (`connection_config.dart`'s doc comment on
+/// `apiToken`). Sending the request anyway would always 401, and
+/// `history_auth_failure` is one of the alertable kinds in
+/// `pi/shared/security_log.py`: every such call also fires a rate-limited but
+/// real "Greenhouse security alert" push to the owner's own phone for what is
+/// actually a stale local pairing, not an intrusion attempt. Checking
+/// client-side (the Pi has no way to tell the difference) avoids ever
+/// sending the doomed request.
+class HistoryTokenMissingException implements Exception {
+  const HistoryTokenMissingException();
+  @override
+  String toString() => 'No history API token on this pairing — re-pair to restore history access.';
+}
+
 class HistoryService {
   /// Injected only by tests. In production each request builds a client whose
   /// TLS trust is pinned to the paired unit's fingerprint.

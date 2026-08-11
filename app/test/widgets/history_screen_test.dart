@@ -1,9 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:mocktail/mocktail.dart';
 import 'package:greenhouse_app/models/history_point.dart';
 import 'package:greenhouse_app/providers/history_provider.dart';
 import 'package:greenhouse_app/screens/history/history_screen.dart';
+import 'package:greenhouse_app/screens/pairing/pairing_screen.dart';
+import 'package:greenhouse_app/services/history_service.dart';
+import 'package:greenhouse_app/services/pairing_service.dart';
+
+class MockPairingService extends Mock implements PairingService {}
 
 HistoryPoint _pt(int epochSeconds, double avg) => HistoryPoint(
       time: DateTime.fromMillisecondsSinceEpoch(epochSeconds * 1000),
@@ -88,6 +94,30 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.textContaining('Could not load history'), findsOneWidget);
+  });
+
+  testWidgets('shows a re-pair prompt instead of a raw error when the token is missing',
+      (tester) async {
+    final mockPairing = MockPairingService();
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        historyWithPredictionProvider.overrideWith(
+            (ref, query) async => throw const HistoryTokenMissingException()),
+        pairingServiceProvider.overrideWithValue(mockPairing),
+      ],
+      child: const MaterialApp(home: HistoryScreen(zone: 'zone1', metric: 'air_temperature')),
+    ));
+    await tester.pumpAndSettle();
+
+    // The generic error path must not also render — the whole point is this
+    // case gets its own actionable UI instead of "Could not load history".
+    expect(find.textContaining('Could not load history'), findsNothing);
+    expect(find.byKey(const Key('history-reauth-prompt')), findsOneWidget);
+    expect(find.text('Re-pair'), findsOneWidget);
+
+    await tester.tap(find.text('Re-pair'));
+    await tester.pumpAndSettle();
+    expect(find.byType(PairingScreen), findsOneWidget);
   });
 
   testWidgets('weather sentinel zone shows weather metric tabs', (tester) async {

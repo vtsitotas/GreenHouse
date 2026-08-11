@@ -16,6 +16,18 @@ class MeshNodeCard extends StatelessWidget {
 
   bool get _isBridge => node.meshRank == 0;
 
+  /// "How is this node reaching the bridge" at a glance — null (hidden) for
+  /// the bridge's own card and for a node with no `/mesh` data yet. `rank`
+  /// already *is* hop-count-from-bridge in this mesh (one bridge, rank
+  /// assigned by hop distance — see docs/technical/03-mesh-routing.md), so
+  /// rank 1 means directly reachable without cross-referencing `parentId`
+  /// against the bridge's own node id.
+  String? get _hopLabel {
+    final rank = node.meshRank;
+    if (rank == null || rank == 0) return null;
+    return rank == 1 ? 'Direct' : '$rank hops';
+  }
+
   String get _title {
     final zone = node.zone;
     if (zone != null && zone.isNotEmpty) return zone;
@@ -72,6 +84,9 @@ class MeshNodeCard extends StatelessWidget {
                       ),
                     if (node.parentRssi != null)
                       Text('${node.parentRssi} dBm', style: const TextStyle(fontSize: 10)),
+                    if (_hopLabel != null)
+                      Text(_hopLabel!,
+                          style: const TextStyle(fontSize: 10, fontStyle: FontStyle.italic)),
                     if (node.isSleepy == true)
                       const Tooltip(
                         message: 'Deep-sleep node',

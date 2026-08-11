@@ -24,6 +24,41 @@ void main() {
     expect(find.text('-55 dBm'), findsOneWidget);
     expect(find.byIcon(Icons.nightlight_round), findsOneWidget);
     expect(find.byType(Tooltip), findsOneWidget);
+    // The bridge's own card doesn't need a "how do I reach the bridge" label.
+    expect(find.text('Direct'), findsNothing);
+  });
+
+  testWidgets('MeshNodeCard labels a rank-1 node "Direct"', (tester) async {
+    final node = NodeStatus(
+      nodeId: 'node1',
+      isOnline: true,
+      lastSeen: DateTime(2026, 7, 26, 10, 0),
+      meshRank: 1,
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MeshNodeCard(node: node))));
+    expect(find.text('Direct'), findsOneWidget);
+  });
+
+  testWidgets('MeshNodeCard labels a relayed node with its hop count', (tester) async {
+    final node = NodeStatus(
+      nodeId: 'node2',
+      isOnline: true,
+      lastSeen: DateTime(2026, 7, 26, 10, 0),
+      meshRank: 3,
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MeshNodeCard(node: node))));
+    expect(find.text('3 hops'), findsOneWidget);
+  });
+
+  testWidgets('MeshNodeCard shows no connection label when mesh rank is unknown', (tester) async {
+    final node = NodeStatus(
+      nodeId: 'node4',
+      isOnline: true,
+      lastSeen: DateTime(2026, 7, 26, 10, 0),
+    );
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: MeshNodeCard(node: node))));
+    expect(find.text('Direct'), findsNothing);
+    expect(find.textContaining('hops'), findsNothing);
   });
 
   testWidgets('MeshNodeCard falls back to last-4-of-MAC title when zone is unknown', (tester) async {

@@ -17,4 +17,19 @@ void main() {
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: NodeListTile(node: node))));
     expect(find.text('Offline'), findsOneWidget);
   });
+
+  testWidgets('NodeListTile shows a bare time for a last-seen from today', (tester) async {
+    final now = DateTime.now();
+    final node = NodeStatus(nodeId: 'node3', isOnline: true, lastSeen: now);
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: NodeListTile(node: node))));
+    final hm = '${now.hour.toString().padLeft(2, '0')}:${now.minute.toString().padLeft(2, '0')}';
+    expect(find.text('Last seen: $hm'), findsOneWidget);
+  });
+
+  testWidgets('NodeListTile qualifies an old last-seen with a date instead of a bare time',
+      (tester) async {
+    final node = NodeStatus(nodeId: 'node4', isOnline: false, lastSeen: DateTime(2026, 6, 25, 9, 0));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: NodeListTile(node: node))));
+    expect(find.textContaining('Jun 25'), findsOneWidget);
+  });
 }

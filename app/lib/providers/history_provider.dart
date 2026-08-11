@@ -67,6 +67,13 @@ final historyPointsProvider =
     return HistoryService.parsePoints(data);
   }
 
+  // Sending this with no token would always 401 and trip the Pi's
+  // history_auth_failure security alert for what is really just a stale
+  // pairing — see HistoryTokenMissingException.
+  if (config.apiToken.isEmpty) {
+    throw const HistoryTokenMissingException();
+  }
+
   final service = ref.read(historyServiceProvider);
   return service.fetchPoints(
     lanHost: config.lanHost,

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/screens/devices/battery_icon.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/last_seen_format.dart';
 
 class NodeListTile extends StatelessWidget {
   final NodeStatus node;
@@ -11,7 +12,7 @@ class NodeListTile extends StatelessWidget {
   Widget build(BuildContext context) => ListTile(
         leading: Icon(Icons.sensors, color: node.isOnline ? AppColors.online : AppColors.offline),
         title: Text(node.nodeId),
-        subtitle: Text('Last seen: ${node.lastSeen.hour.toString().padLeft(2,'0')}:${node.lastSeen.minute.toString().padLeft(2,'0')}'),
+        subtitle: Text('Last seen: ${formatLastSeen(node.lastSeen)}'),
         trailing: Row(mainAxisSize: MainAxisSize.min, children: [
           if (node.batteryPercent != null) ...[
             Icon(batteryIconFor(node.batteryPercent), size: 18),

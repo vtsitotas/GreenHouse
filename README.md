@@ -40,6 +40,10 @@ Full architecture diagrams: [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md).
 A deep, OSI-layer technical reference (protocols, ports, why each piece was
 chosen) lives in [`docs/technical/`](docs/technical/00-INDEX.md) — written
 in Greek for the thesis writeup; everything else in this repo is English.
+A friendlier, prose-style walkthrough of both the system layout and the
+security work (also Greek) is
+[`docs/SYSTEM_OVERVIEW_SIMPLE.md`](docs/SYSTEM_OVERVIEW_SIMPLE.md) — read
+that one first.
 
 ## Repo layout
 
