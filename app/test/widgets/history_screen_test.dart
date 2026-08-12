@@ -85,7 +85,8 @@ void main() {
     expect(find.textContaining('No history yet'), findsOneWidget);
   });
 
-  testWidgets('shows error message when the fetch fails', (tester) async {
+  testWidgets('shows a friendly error, with the raw text kept out of the headline',
+      (tester) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
         historyWithPredictionProvider.overrideWith((ref, query) async => throw Exception('boom')),
@@ -93,7 +94,14 @@ void main() {
       child: const MaterialApp(home: HistoryScreen(zone: 'zone1', metric: 'air_temperature')),
     ));
     await tester.pumpAndSettle();
-    expect(find.textContaining('Could not load history'), findsOneWidget);
+
+    expect(find.text('Something went wrong'), findsOneWidget);
+    expect(find.text('What to try'), findsOneWidget);
+    // The exception text is still reachable, just not shouted at the user.
+    expect(find.textContaining('boom'), findsNothing);
+    await tester.tap(find.text('Technical details'));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('boom'), findsOneWidget);
   });
 
   testWidgets('shows a re-pair prompt instead of a raw error when the token is missing',

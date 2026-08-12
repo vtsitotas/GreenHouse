@@ -2,12 +2,17 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/providers/nodes_provider.dart';
+import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
+import 'package:greenhouse_app/screens/common/rename_device_dialog.dart';
 import 'package:greenhouse_app/screens/devices/mesh_map/mesh_layout.dart';
 import 'package:greenhouse_app/screens/devices/mesh_map/mesh_link_painter.dart';
 import 'package:greenhouse_app/screens/devices/mesh_map/mesh_node_card.dart';
 import 'package:greenhouse_app/screens/devices/mesh_map/node_positions_store.dart';
+import 'package:greenhouse_app/services/device_names_store.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/display_name.dart';
 import 'package:greenhouse_app/utils/last_seen_format.dart';
+import 'package:greenhouse_app/utils/plain_language.dart';
 
 /// The live Mesh Map screen (spec §Screen structure): every known node as a
 /// card on a pannable/zoomable field, auto-laid-out by mesh rank via
@@ -62,13 +67,16 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
     final nodesAsync = ref.watch(nodesProvider);
 
     return Scaffold(
-      appBar: AppBar(title: const Text('Mesh Map')),
+      appBar: AppBar(title: const Text('Sensor network')),
       body: nodesAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (error, _) => Center(child: Text('Error: $error')),
+        error: (error, _) => FriendlyErrorView(
+          error: error,
+          onRetry: () => ref.invalidate(nodesProvider),
+        ),
         data: (nodes) {
           if (nodes.isEmpty) {
-            return const Center(child: Text('No nodes detected yet'));
+            return const Center(child: Text('No sensors found yet'));
           }
           final showDegradedBanner = nodes.values.every((n) => n.meshRank == null);
           return Column(
@@ -96,6 +104,7 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
   Widget _buildCanvas(Map<String, NodeStatus> nodes) {
     final pinnedAsync = ref.watch(pinnedPositionsProvider);
     final pinned = pinnedAsync.valueOrNull ?? const <String, Offset>{};
+    final names = ref.watch(deviceNamesProvider).valueOrNull ?? const {};
     final effectivePinned = {...pinned, ..._dragging};
     final positions = MeshLayout.compute(nodes, effectivePinned);
 
@@ -122,14 +131,15 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
             // `MeshLayout.compute` only ever emits keys it read from `nodes`
             // (see mesh_layout.dart), so this lookup is always non-null.
             for (final entry in positions.entries)
-              _buildCard(nodes[entry.key]!, entry.value),
+              _buildCard(nodes[entry.key]!, entry.value, names, nodes),
           ],
         ),
       ),
     );
   }
 
-  Widget _buildCard(NodeStatus node, Offset normalized) {
+  Widget _buildCard(NodeStatus node, Offset normalized,
+      Map<String, String> names, Map<String, NodeStatus> allNodes) {
     final left = normalized.dx * _canvasWidth - _cardWidth / 2;
     final top = normalized.dy * _canvasHeight - _cardHeight / 2;
     final isDragging = _dragging.containsKey(node.nodeId);
@@ -138,8 +148,14 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
       onPanStart: (_) => setState(() => _dragging[node.nodeId] = normalized),
       onPanUpdate: (details) => _onPanUpdate(node.nodeId, details),
       onPanEnd: (_) => _onPanEnd(node.nodeId),
+      // Long-press is already spoken for here (unpin); renaming lives in the
+      // detail sheet instead, reachable by tapping the card.
       onLongPress: () => _confirmUnpin(node),
-      child: MeshNodeCard(node: node, onTap: () => _showNodeDetail(node)),
+      child: MeshNodeCard(
+        node: node,
+        names: names,
+        onTap: () => _showNodeDetail(node, allNodes),
+      ),
     );
 
     // A stable key AND a single, unchanging widget type across every
@@ -192,12 +208,15 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
   }
 
   Future<void> _confirmUnpin(NodeStatus node) async {
-    final label = node.zone ?? node.nodeId;
+    final names = ref.read(deviceNamesProvider).valueOrNull ?? const {};
+    final label = displayNameFor(node.nodeId, names, zone: node.zone);
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => AlertDialog(
-        title: const Text('Unpin node?'),
-        content: Text('Unpin $label? It will return to automatic layout.'),
+        title: const Text('Move back automatically?'),
+        content: Text(
+            'Let the app position $label again instead of keeping it where '
+            'you placed it.'),
         actions: [
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(false),
@@ -205,7 +224,7 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
           ),
           TextButton(
             onPressed: () => Navigator.of(dialogContext).pop(true),
-            child: const Text('Unpin'),
+            child: const Text('Move back'),
           ),
         ],
       ),
@@ -215,10 +234,35 @@ class _MeshMapScreenState extends ConsumerState<MeshMapScreen>
     }
   }
 
-  void _showNodeDetail(NodeStatus node) {
+  void _showNodeDetail(NodeStatus node, Map<String, NodeStatus> allNodes) {
+    final names = ref.read(deviceNamesProvider).valueOrNull ?? const {};
+    // Resolved here, where the whole node map is in scope: naming the relaying
+    // sensor ("passes through Tomato bed") only helps if it uses that
+    // sensor's own zone as a fallback, which needs more than the tapped node.
+    final parentId = node.parentId;
+    final parentName = parentId == null
+        ? null
+        : displayNameFor(parentId, names, zone: allNodes[parentId]?.zone);
     showModalBottomSheet<void>(
       context: context,
-      builder: (_) => _NodeDetailSheet(node: node),
+      builder: (_) => _NodeDetailSheet(
+        node: node,
+        names: names,
+        parentName: parentName,
+        // Long-press on the card is taken by unpin, so renaming is offered
+        // here instead — the sheet is also where a user goes to work out
+        // *which* device this is, which is exactly when they want to name it.
+        onRename: () {
+          Navigator.of(context).pop();
+          showRenameDeviceDialog(
+            context,
+            ref,
+            deviceId: node.nodeId,
+            currentAutoLabel:
+                displayNameFor(node.nodeId, const {}, zone: node.zone),
+          );
+        },
+      ),
     );
   }
 }
@@ -237,7 +281,8 @@ class _MeshSummaryBar extends StatelessWidget {
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 6, 16, 6),
       child: Text(
-        '$total node${total == 1 ? '' : 's'} · $online online · $offline offline',
+        '$total sensor${total == 1 ? '' : 's'} · $online working · '
+        '$offline not responding',
         style: Theme.of(context).textTheme.labelSmall,
       ),
     );
@@ -251,11 +296,14 @@ class _MeshSummaryBar extends StatelessWidget {
 class _LinkQualityLegend extends StatelessWidget {
   const _LinkQualityLegend();
 
+  // Words, not dBm -- the legend has to be readable by whoever is standing in
+  // the greenhouse. The exact numbers are one tap away in any node's
+  // "Technical details".
   static const _entries = [
-    (AppColors.online, 'Good (≥ −60 dBm)'),
-    (Colors.amber, 'Fair (−61…−75 dBm)'),
-    (Colors.deepOrange, 'Weak (< −75 dBm)'),
-    (Colors.grey, 'Stale / offline (dashed)'),
+    (AppColors.online, 'Strong signal'),
+    (Colors.amber, 'Fair signal'),
+    (Colors.deepOrange, 'Weak signal'),
+    (Colors.grey, 'Not responding'),
   ];
 
   @override
@@ -293,49 +341,69 @@ class _DegradedDataBanner extends StatelessWidget {
         width: double.infinity,
         color: AppColors.warning,
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+        // Names the symptom the user can see, then the one action that fixes
+        // it -- the old copy ("update bridge/node firmware") named neither a
+        // symptom nor a step anyone could follow.
         child: const Text(
-          'Mesh topology data not being published yet — update bridge/node firmware',
+          "Your sensors haven't reported how they're connected yet, so the "
+          'map can only show them as a list. They need updating — see the '
+          'setup guide.',
           style: TextStyle(color: Colors.white, fontSize: 12),
         ),
       );
 }
 
-/// Human-readable answer to "how is this node reaching the bridge?" — the
-/// raw `Rank`/`Parent` rows stay too (rank is the actual field the mesh and
-/// the layout engine key off), but "rank 2" doesn't tell a reader "that's
-/// two hops away through a relay" at a glance the way this does.
-String _connectionLabel(NodeStatus node) {
-  final rank = node.meshRank;
-  if (rank == null) return 'Unknown — no mesh data yet';
-  if (rank == 0) return 'This is the bridge';
-  if (rank == 1) return 'Direct to bridge';
-  return 'Relayed — $rank hops (via ${node.parentId ?? "unknown"})';
-}
-
-/// Detail bottom sheet shown on card tap (spec §Node card tap → detail
-/// sheet): MAC, zone, connection (direct/relayed/unknown), rank, parent,
-/// RSSI, battery (% and mV), sleepy, online state, and last-seen time (same
-/// format as `NodeListTile`, qualified with a date once it isn't today).
+/// Detail bottom sheet shown on card tap.
+///
+/// Two tiers on purpose: what a grower needs in order to *act* (is it working,
+/// when was it last heard from, how is it connected, what do I do if it's
+/// offline), and — collapsed underneath — the raw mesh fields that only matter
+/// when debugging on the bench. Nothing is removed; it is just no longer the
+/// first thing you have to read past.
 class _NodeDetailSheet extends StatelessWidget {
   final NodeStatus node;
-  const _NodeDetailSheet({required this.node});
+  final Map<String, String> names;
+
+  /// Already-resolved friendly name of the relaying sensor, if any — the
+  /// caller has the full node map and can fall back to the parent's own zone,
+  /// which this widget could not do from `node` alone.
+  final String? parentName;
+
+  final VoidCallback? onRename;
+
+  const _NodeDetailSheet({
+    required this.node,
+    this.names = const {},
+    this.parentName,
+    this.onRename,
+  });
 
   @override
   Widget build(BuildContext context) {
-    final rows = <(String, String)>[
-      ('MAC', node.nodeId),
+    final plainRows = <(String, String)>[
+      ('Status', node.isOnline ? 'Working' : 'Not responding'),
+      ('Last heard from', formatLastSeen(node.lastSeen)),
+      ('Connection', connectionLabel(node, parentName: parentName)),
+      if (node.parentRssi != null) ('Signal', signalLabel(node.parentRssi)),
+      if (node.batteryPercent != null)
+        ('Battery', '${batteryLabel(node.batteryPercent)} '
+            '(${node.batteryPercent!.toStringAsFixed(0)}%)'),
+      if (node.isSleepy != null) ('Power mode', sleepLabel(node.isSleepy)),
+    ];
+
+    // Everything an engineer would want and a grower would not. Kept verbatim
+    // -- these are the values you compare against `mosquitto_sub` output when
+    // something looks wrong.
+    final technicalRows = <(String, String)>[
+      ('Device ID', node.nodeId),
       ('Zone', node.zone ?? '—'),
-      ('Connection', _connectionLabel(node)),
-      ('Rank', node.meshRank?.toString() ?? '—'),
-      ('Parent', node.parentId ?? '—'),
+      ('Mesh rank', node.meshRank?.toString() ?? '—'),
+      ('Parent ID', node.parentId ?? '—'),
       ('RSSI', node.parentRssi != null ? '${node.parentRssi} dBm' : '—'),
-      ('Battery', node.batteryPercent != null
-          ? '${node.batteryPercent!.toStringAsFixed(0)}%'
-          : '—'),
       ('Battery (mV)', node.batteryMv != null ? '${node.batteryMv} mV' : '—'),
-      ('Sleepy', node.isSleepy == true ? 'Yes' : 'No'),
-      ('Status', node.isOnline ? 'Online' : 'Offline'),
-      ('Last seen', formatLastSeen(node.lastSeen)),
+      ('Sleepy flag', node.isSleepy == null
+          ? '—'
+          : (node.isSleepy! ? 'true' : 'false')),
     ];
 
     // Scrollable so the full row list stays reachable when the sheet's max
@@ -347,22 +415,72 @@ class _NodeDetailSheet extends StatelessWidget {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            for (final (label, value) in rows)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 4),
-                child: Row(
-                  children: [
-                    SizedBox(
-                      width: 110,
-                      child: Text(label, style: const TextStyle(fontWeight: FontWeight.bold)),
-                    ),
-                    Expanded(child: Text(value)),
-                  ],
+            Row(
+              children: [
+                Expanded(
+                  child: Text(
+                    displayNameFor(node.nodeId, names, zone: node.zone),
+                    style: Theme.of(context).textTheme.titleMedium,
+                  ),
                 ),
-              ),
+                if (onRename != null)
+                  TextButton.icon(
+                    onPressed: onRename,
+                    icon: const Icon(Icons.edit_outlined, size: 18),
+                    label: const Text('Rename'),
+                  ),
+              ],
+            ),
+            const Divider(),
+            for (final (label, value) in plainRows) _DetailRow(label, value),
+            if (!node.isOnline) ...[
+              const SizedBox(height: 12),
+              Text('What to try',
+                  style: Theme.of(context).textTheme.titleSmall),
+              const SizedBox(height: 4),
+              for (final step in kOfflineNodeSteps)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text('•  $step',
+                      style: Theme.of(context).textTheme.bodySmall),
+                ),
+            ],
+            const SizedBox(height: 8),
+            ExpansionTile(
+              title: const Text('Technical details'),
+              tilePadding: EdgeInsets.zero,
+              childrenPadding: const EdgeInsets.only(bottom: 8),
+              expandedCrossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                for (final (label, value) in technicalRows)
+                  _DetailRow(label, value),
+              ],
+            ),
           ],
         ),
       ),
     );
   }
+}
+
+class _DetailRow extends StatelessWidget {
+  final String label;
+  final String value;
+  const _DetailRow(this.label, this.value);
+
+  @override
+  Widget build(BuildContext context) => Padding(
+        padding: const EdgeInsets.symmetric(vertical: 4),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            SizedBox(
+              width: 120,
+              child: Text(label,
+                  style: const TextStyle(fontWeight: FontWeight.bold)),
+            ),
+            Expanded(child: Text(value)),
+          ],
+        ),
+      );
 }

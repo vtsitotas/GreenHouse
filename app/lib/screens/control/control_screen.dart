@@ -4,7 +4,11 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/models/actuator_state.dart';
 import 'package:greenhouse_app/providers/actuators_provider.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
+import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
+import 'package:greenhouse_app/screens/common/rename_device_dialog.dart';
 import 'package:greenhouse_app/screens/control/actuator_toggle.dart';
+import 'package:greenhouse_app/services/device_names_store.dart';
+import 'package:greenhouse_app/utils/display_name.dart';
 
 class ControlScreen extends ConsumerStatefulWidget {
   const ControlScreen({super.key});
@@ -19,8 +23,14 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     _timers[actuatorId]?.cancel();
     _timers[actuatorId] = Timer(const Duration(seconds: 5), () {
       if (!mounted) return;
+      final names = ref.read(deviceNamesProvider).valueOrNull ?? const {};
+      final label = displayNameFor(actuatorId, names);
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('No response from $actuatorId')),
+        SnackBar(
+          content: Text(
+            '$label did not respond. Check it has power and is switched on.',
+          ),
+        ),
       );
     });
   }
@@ -42,16 +52,47 @@ class _ControlScreenState extends ConsumerState<ControlScreen> {
     });
 
     final actuators = ref.watch(actuatorsProvider);
+    final names = ref.watch(deviceNamesProvider).valueOrNull ?? const {};
     return Scaffold(
-      appBar: AppBar(title: const Text('Control')),
+      appBar: AppBar(title: const Text('Switches')),
       body: actuators.when(
         loading: () => const Center(child: CircularProgressIndicator()),
-        error: (e, _) => Center(child: Text('Error: $e')),
+        error: (e, _) => FriendlyErrorView(
+          error: e,
+          onRetry: () => ref.invalidate(actuatorsProvider),
+        ),
         data: (map) => map.isEmpty
-            ? const Center(child: Text('No actuators discovered yet'))
-            : ListView(children: map.values
-                .map((s) => ActuatorToggle(state: s, onToggle: (on) => _toggle(s.actuatorId, on)))
-                .toList()),
+            ? const Center(
+                child: Padding(
+                  padding: EdgeInsets.all(32),
+                  child: Text(
+                    'Nothing to switch yet.\n\nPumps, fans and lights appear '
+                    'here once your greenhouse reports them.',
+                    textAlign: TextAlign.center,
+                  ),
+                ),
+              )
+            : ListView(children: [
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 12, 16, 4),
+                  child: Text(
+                    'Hold a switch to give it a name.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                ...map.values.map((s) => ActuatorToggle(
+                      state: s,
+                      names: names,
+                      onToggle: (on) => _toggle(s.actuatorId, on),
+                      onRename: () => showRenameDeviceDialog(
+                        context,
+                        ref,
+                        deviceId: s.actuatorId,
+                        currentAutoLabel:
+                            displayNameFor(s.actuatorId, const {}),
+                      ),
+                    )),
+              ]),
       ),
     );
   }

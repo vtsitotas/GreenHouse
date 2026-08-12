@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/models/history_point.dart';
 import 'package:greenhouse_app/providers/history_provider.dart';
+import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
 import 'package:greenhouse_app/screens/pairing/pairing_screen.dart';
 import 'package:greenhouse_app/services/history_service.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
@@ -207,14 +208,17 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
           Expanded(
             child: dataAsync.when(
               loading: () => const Center(child: CircularProgressIndicator()),
-              error: (e, _) => Center(
-                child: e is HistoryTokenMissingException
-                    ? const _ReauthPrompt(key: Key('history-reauth-prompt'))
-                    : Padding(
-                        padding: const EdgeInsets.all(32),
-                        child: Text('Could not load history.\n$e', textAlign: TextAlign.center),
-                      ),
-              ),
+              // The token-missing case keeps its own bespoke UI: it has a
+              // single, one-tap remedy (re-pair) that a generic error view
+              // with a bulleted list would only bury.
+              error: (e, _) => e is HistoryTokenMissingException
+                  ? const Center(
+                      child: _ReauthPrompt(key: Key('history-reauth-prompt')))
+                  : FriendlyErrorView(
+                      error: e,
+                      onRetry: () =>
+                          ref.invalidate(historyWithPredictionProvider(query)),
+                    ),
               data: (data) {
                 final actual = data.actual;
                 if (actual.isEmpty) {

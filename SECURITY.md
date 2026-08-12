@@ -190,6 +190,12 @@ Compare with **Settings → Safety code** in the app. They must match. If they
 don't, something impersonated your greenhouse during pairing: disconnect,
 rotate secrets, and re-pair using the QR code.
 
+This command is deliberately documented **here and not in the app**. Settings
+used to print `sudo bash scripts/selftest.sh` as the subtitle of the safety
+code, which is an operator instruction shown to whoever happens to be holding
+the phone. The app now just states what the code is for; the terminal step
+belongs with the rest of the operator runbook.
+
 ---
 
 ## 3. What this system does and does not defend against

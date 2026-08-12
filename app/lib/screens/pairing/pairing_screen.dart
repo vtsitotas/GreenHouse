@@ -12,6 +12,7 @@ import 'package:greenhouse_app/models/connection_config.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/services/multicast_lock.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
+import 'package:greenhouse_app/utils/friendly_error.dart';
 
 class PairingScreen extends ConsumerStatefulWidget {
   const PairingScreen({super.key});
@@ -61,7 +62,7 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       _apiToken.text   = j['api_token']       ?? '';
       _camToken.text   = j['cam_token']       ?? '';
     } catch (_) {
-      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text('Invalid QR code')));
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("That QR code isn't one of ours — scan the one on the hub")));
     }
   }
 
@@ -76,7 +77,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       return await _confirmWithPin(baseUrl);
     } else if (res.statusCode == 403) {
       setState(() {
-        _error = 'Pairing window expired. Restart the Pi and try again within 10 minutes.';
+        _error = 'The greenhouse only accepts new phones for 10 minutes after it '
+            'starts up. Switch the hub off and on again, then try straight away.';
         _busy = false;
       });
       return true;
@@ -156,15 +158,15 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       barrierDismissible: false,
       builder: (ctx) => AlertDialog(
         icon: const Icon(Icons.gpp_maybe_outlined),
-        title: const Text('Cannot verify this greenhouse'),
+        title: const Text("Can't confirm this is your greenhouse"),
         content: const Text(
-          'This greenhouse has not been identified before, so the app cannot '
-          'confirm it is really yours rather than another device answering on '
-          'the network.\n\n'
-          'The most secure option is to cancel and pair by scanning the QR '
-          'code instead.\n\n'
-          'If you continue, check afterwards that Settings → Safety code '
-          'matches the code shown by "selftest.sh" on the Pi.',
+          "This is the first time connecting here, so the app can't tell your "
+          'greenhouse apart from another device answering on the same '
+          'network.\n\n'
+          'Safest: cancel and scan the QR code on the hub instead — that '
+          'proves which greenhouse you are talking to.\n\n'
+          'If you continue, afterwards check that the safety code in Settings '
+          'matches the one shown on the hub.',
         ),
         actions: [
           TextButton(
@@ -223,11 +225,17 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     } on HandshakeException {
       // Only reachable when a fingerprint was known up front, so this is a
       // certificate that does not match the greenhouse we expected.
-      _error = 'Security warning: this device presented an unexpected '
-               'certificate. Someone may be impersonating your greenhouse. '
-               'Pairing was cancelled and no PIN was sent.';
+      // Keep the warning -- this is a genuine security control -- but lead
+      // with the far likelier innocent cause. Told only that someone may be
+      // impersonating their greenhouse, a user who simply reinstalled the hub
+      // has no idea that they are the explanation.
+      _error = "This doesn't match the greenhouse you paired with before. "
+               'If you recently reset or reinstalled the hub, that is '
+               'expected — scan its QR code again. If you did not, stop: '
+               'another device may be pretending to be it. Nothing was sent.';
     } catch (e) {
-      _error = 'Could not reach the greenhouse: $e';
+      final friendly = describeError(e);
+      _error = '${friendly.title}. ${friendly.message}';
     }
     setState(() { _busy = false; });
     return true;
@@ -246,8 +254,8 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
           keyboardType: TextInputType.number,
           maxLength: 6,
           decoration: const InputDecoration(
-            labelText: 'PIN',
-            hintText: '6-digit PIN from the device label',
+            labelText: 'PIN from the sticker on the hub',
+            hintText: '6 digits',
           ),
         ),
         actions: [
@@ -309,7 +317,15 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
     }
 
     setState(() {
-      _error = 'Greenhouse not found. Make sure you are on the same WiFi.';
+      // Deliberately does NOT say "make sure you're on the same WiFi": the
+      // user very often IS. Automatic discovery relies on multicast, which
+      // Android cannot receive at all when the phone is itself the hotspot
+      // the hub is connected to — the exact bench setup here. Blaming the
+      // network sends people to re-check something that was never wrong.
+      _error = "Couldn't find the greenhouse automatically. "
+          'Scan the QR code on the hub instead — it also sets up the secure '
+          'connection. If you know the hub\'s address, you can type it in '
+          'below.';
       _busy = false;
     });
   }
@@ -333,7 +349,9 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
       final ok = await ref.read(mqttConnectionProvider).testConnect(config);
       if (!ok) {
         setState(() {
-          _error = 'Could not connect. Check the address and password.';
+          _error = "Couldn't connect with those details. Check the address and "
+              'password, or scan the QR code on the hub to fill them in '
+              'automatically.';
           _busy = false;
         });
         return;
@@ -347,12 +365,15 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
   }
 
   Widget _field(TextEditingController c, String label,
-      {bool obscure = false, TextInputType? type, String? Function(String?)? validator, String? hint}) =>
+      {bool obscure = false, TextInputType? type, String? Function(String?)? validator,
+       String? hint, String? helper}) =>
       Padding(
         padding: const EdgeInsets.only(bottom: 12),
         child: TextFormField(
           controller: c,
-          decoration: InputDecoration(labelText: label, hintText: hint),
+          decoration: InputDecoration(
+              labelText: label, hintText: hint, helperText: helper,
+              helperMaxLines: 3),
           obscureText: obscure,
           keyboardType: type,
           validator: validator ?? (v) => v!.isEmpty ? 'Required' : null,
@@ -370,7 +391,7 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
               FilledButton.icon(
                 onPressed: _busy ? null : _discover,
                 icon: const Icon(Icons.search),
-                label: const Text('Find my greenhouse'),
+                label: const Text('Find my greenhouse automatically'),
                 style: FilledButton.styleFrom(
                   minimumSize: const Size.fromHeight(52),
                 ),
@@ -382,7 +403,7 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                   if (result != null) _applyQr(result);
                 },
                 icon: const Icon(Icons.qr_code_scanner),
-                label: const Text('Scan QR code'),
+                label: const Text('Scan the QR code on the hub'),
               ),
               // The QR carries the unit's certificate fingerprint out of band,
               // which is what lets pairing verify the identity of whatever
@@ -392,9 +413,11 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                 padding: const EdgeInsets.only(top: 6),
                 child: Text(
                   _fp.text.trim().isEmpty
-                      ? 'Scanning the QR is the most secure option — it lets the '
-                        'app verify the greenhouse\'s identity.'
-                      : 'Greenhouse identity known — pairing will be verified.',
+                      ? 'Scanning the QR code is the safest way — it proves '
+                        'which greenhouse you are connecting to, and fills in '
+                        'every setting for you.'
+                      : "This greenhouse is recognised — we'll check it really "
+                        'is yours before connecting.',
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -406,9 +429,15 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                   Expanded(child: Divider()),
                 ]),
               ),
-              _field(_host, 'Pi address', hint: '192.168.1.x or pi.local'),
-              _field(_pass, 'Password', obscure: true),
-              // Advanced section
+              _field(_host, 'Greenhouse address',
+                  hint: '192.168.1.x or greenhouse.local',
+                  helper: "Shown on the hub's screen or label"),
+              _field(_pass, 'Password', obscure: true,
+                  helper: 'From the QR code or the label on the hub'),
+              // Every field below stays: when automatic discovery fails —
+              // which it always does when the phone is itself the hotspot —
+              // typing them in is the only way through. What they lacked was
+              // any hint of what they are or where to find them.
               InkWell(
                 onTap: () => setState(() => _showAdvanced = !_showAdvanced),
                 child: Padding(
@@ -416,20 +445,42 @@ class _PairingScreenState extends ConsumerState<PairingScreen> {
                   child: Row(children: [
                     Icon(_showAdvanced ? Icons.expand_less : Icons.expand_more, size: 18),
                     const SizedBox(width: 4),
-                    Text('Advanced', style: Theme.of(context).textTheme.bodySmall),
+                    Text("Manual setup — only if the QR code isn't available",
+                        style: Theme.of(context).textTheme.bodySmall),
                   ]),
                 ),
               ),
               if (_showAdvanced) ...[
-                _field(_remoteHost, 'Remote host (HiveMQ)', validator: (_) => null, hint: 'xxxxx.s1.eu.hivemq.cloud'),
-                _field(_remoteUser, 'Remote username', validator: (_) => null),
-                _field(_remotePass, 'Remote password', obscure: true, validator: (_) => null),
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 12),
+                  child: Text(
+                    'Scanning the QR code fills all of this in for you. Leave '
+                    'anything you were not given blank.',
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+                ),
+                _field(_remoteHost, 'Address for access from away',
+                    validator: (_) => null, hint: 'xxxxx.s1.eu.hivemq.cloud',
+                    helper: 'Lets you check the greenhouse when not at home. '
+                        'Leave blank to use it only at home.'),
+                _field(_remoteUser, 'Username for access from away',
+                    validator: (_) => null),
+                _field(_remotePass, 'Password for access from away',
+                    obscure: true, validator: (_) => null),
                 _field(_port, 'Port', type: TextInputType.number,
+                    helper: 'Leave as 8883 unless you were told otherwise',
                     validator: (v) => int.tryParse(v ?? '') == null ? 'Must be a number' : null),
-                _field(_user, 'Username'),
-                _field(_fp, 'TLS fingerprint', validator: (_) => null),
-                _field(_apiToken, 'History API token', obscure: true, validator: (_) => null),
-                _field(_camToken, 'Camera token', obscure: true, validator: (_) => null),
+                _field(_user, 'Username',
+                    helper: 'Leave as "app" unless you were told otherwise'),
+                _field(_fp, 'Security fingerprint', validator: (_) => null,
+                    helper: "Proves the greenhouse is really yours. Filled in "
+                        'automatically by the QR code.'),
+                _field(_apiToken, 'History access key', obscure: true,
+                    validator: (_) => null,
+                    helper: 'Needed to view past readings. From the QR code.'),
+                _field(_camToken, 'Camera key', obscure: true,
+                    validator: (_) => null,
+                    helper: 'Only needed if a camera is fitted.'),
               ],
               const SizedBox(height: 8),
               if (_error != null) ...[

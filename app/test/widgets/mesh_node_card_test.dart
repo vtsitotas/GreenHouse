@@ -17,11 +17,14 @@ void main() {
     );
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: MeshNodeCard(node: node))));
 
-    expect(find.text('greenhouse-a'), findsOneWidget);
+    expect(find.text('Greenhouse-a'), findsOneWidget);
     expect(find.text('A0B1C2D3E4F5'), findsOneWidget);
     expect(find.byIcon(Icons.router), findsOneWidget);
     expect(find.textContaining('72'), findsOneWidget);
-    expect(find.text('-55 dBm'), findsOneWidget);
+    // dBm means nothing to a grower; the word does. The number is
+    // still available under "Technical details" in the detail sheet.
+    expect(find.text('Strong'), findsOneWidget);
+    expect(find.text('-55 dBm'), findsNothing);
     expect(find.byIcon(Icons.nightlight_round), findsOneWidget);
     expect(find.byType(Tooltip), findsOneWidget);
     // The bridge's own card doesn't need a "how do I reach the bridge" label.
@@ -47,7 +50,7 @@ void main() {
       meshRank: 3,
     );
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: MeshNodeCard(node: node))));
-    expect(find.text('3 hops'), findsOneWidget);
+    expect(find.text('3 steps'), findsOneWidget);
   });
 
   testWidgets('MeshNodeCard shows no connection label when mesh rank is unknown', (tester) async {

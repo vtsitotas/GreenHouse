@@ -21,6 +21,37 @@ void main() {
     expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
   });
 
+  testWidgets('the low-soil warning explains itself instead of just alarming',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: {'soil/moisture': 15.0},
+    ))));
+
+    // A bare triangle says "something is wrong" without saying what.
+    expect(find.text('Dry — may need watering'), findsOneWidget);
+    final tooltip = tester.widget<Tooltip>(find.byType(Tooltip));
+    expect(tooltip.message, contains('30%'));
+    expect(tooltip.message, contains('watering'));
+  });
+
+  testWidgets('the threshold quoted to the user is the one that fired',
+      (tester) async {
+    // Just below the constant warns; exactly at it does not. Locks the text
+    // and the comparison together so they cannot drift.
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: {'soil/moisture': kLowSoilMoisturePct - 0.1},
+    ))));
+    expect(find.byIcon(Icons.warning_amber_rounded), findsOneWidget);
+
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: {'soil/moisture': kLowSoilMoisturePct},
+    ))));
+    expect(find.byIcon(Icons.warning_amber_rounded), findsNothing);
+  });
+
   testWidgets('ZoneCard does not show warning icon when soil moisture >= 30%', (tester) async {
     await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
       zone: 'zone1',

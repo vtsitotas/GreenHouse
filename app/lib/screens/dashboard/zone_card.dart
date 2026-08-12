@@ -1,21 +1,26 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/display_name.dart';
+
+/// Soil moisture below this (%) shows a warning on the zone card.
+///
+/// A single named constant rather than a bare `30` in a comparison: the value
+/// is also quoted in the warning text, so the number a user reads and the
+/// number that triggered it cannot drift apart.
+const double kLowSoilMoisturePct = 30;
 
 class ZoneCard extends StatelessWidget {
   final String zone;
   final Map<String, double> readings;
   const ZoneCard({required this.zone, required this.readings, super.key});
 
-  String get _title {
-    if (zone.startsWith('zone')) return 'Zone ${zone.substring(4)}';
-    return '${zone[0].toUpperCase()}${zone.substring(1)}';
-  }
+  String get _title => zoneLabel(zone);
 
   @override
   Widget build(BuildContext context) {
     final soil = readings['soil/moisture'];
-    final lowSoil = soil != null && soil < 30;
+    final lowSoil = soil != null && soil < kLowSoilMoisturePct;
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
@@ -24,9 +29,29 @@ class ZoneCard extends StatelessWidget {
             Text(_title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
             if (lowSoil) ...[
               const SizedBox(width: 8),
-              const Icon(Icons.warning_amber_rounded, color: AppColors.warning, size: 18),
+              // A bare warning triangle says "something is wrong" without
+              // saying what or what to do -- the tooltip names the rule that
+              // fired and the action it implies.
+              Tooltip(
+                message: 'Soil moisture is below '
+                    '${kLowSoilMoisturePct.toStringAsFixed(0)}% — '
+                    'these plants may need watering',
+                child: const Icon(Icons.warning_amber_rounded,
+                    color: AppColors.warning, size: 18),
+              ),
             ],
           ]),
+          if (lowSoil)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                'Dry — may need watering',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: AppColors.warning),
+              ),
+            ),
           const SizedBox(height: 12),
           Wrap(spacing: 16, runSpacing: 8, children: [
             if (readings['air/temperature'] != null)

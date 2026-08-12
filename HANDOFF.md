@@ -1,11 +1,12 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-12 (real `last seen` timestamps, drag-to-pin fix,
-QR tool rewrite). Previous same-day-2026-08-11 sessions: history false-alert
-fix + mesh map bugfixes + git-history credential scrub. Session 2026-08-10:
-WiFi provisioning + UART bridge bring-up, full bench deploy. Camera remains
-**parked** since 2026-08-02 (see that TL;DR below); the 2026-07-28
-security-hardening pass is merged and live.
+**Last updated:** 2026-08-12 (plain-language UX overhaul; earlier the same day:
+real `last seen` timestamps, drag-to-pin fix, QR tool rewrite). Previous
+same-day-2026-08-11 sessions: history false-alert fix + mesh map bugfixes +
+git-history credential scrub. Session 2026-08-10: WiFi provisioning + UART
+bridge bring-up, full bench deploy. Camera remains **parked** since 2026-08-02
+(see that TL;DR below); the 2026-07-28 security-hardening pass is merged and
+live.
 
 > ⚠️ **Every commit hash changed on 2026-08-11.** History was rewritten to
 > remove leaked credentials. Any clone made before then must be **re-cloned**,
@@ -22,7 +23,81 @@ see the 2026-08-10 TL;DR for the full list.
 
 ---
 
-## TL;DR of this session (2026-08-12 — real "last seen", drag-to-pin fix, QR tool)
+## TL;DR of this session (2026-08-12 — plain-language UX overhaul)
+
+The app talked to its user the way a debugger talks to its author. This pass
+fixes that, for a grower who does not know what MQTT, a MAC address, dBm or a
+mesh is. App-only: no firmware, no protocol changes. Planned first (see
+`.claude/plans/`), audited with three parallel read-only agents, then every
+finding verified in the source by hand before anything was written — several
+of the agents' reported line numbers and one whole claim were wrong.
+
+**Devices have names now.** New `services/device_names_store.dart` (mirrors
+`NodePositionsStore` exactly: same SharedPreferences-single-JSON-blob shape,
+same provider style) plus `utils/display_name.dart`, resolving user-set name →
+zone (`zone1` → `Zone 1`) → last 4 of the MAC. Long-press to rename on the
+device list and the switches list; on the mesh map long-press is already taken
+by unpin, so renaming lives in the detail sheet. The MAC stays as a subtitle —
+it is what you match against the sticker on the physical box.
+
+**Engineering units became words.** `signalLabel`/`batteryLabel`/`sleepLabel`/
+`connectionLabel` in `utils/plain_language.dart`: `-55 dBm` → "Strong",
+`rank 2` → "Passes through Tomato bed (2 steps to the hub)", `sleepy` →
+"Battery saver" (it reads like a fault; it is why the battery lasts). The
+raw values are not gone — they moved into a collapsed "Technical details"
+section in the node detail sheet, which is where you compare against
+`mosquitto_sub` output on the bench.
+
+**The thresholds are now shared, not copied.** `-60`/`-75` live in
+`plain_language.dart` and are imported by `linkQualityOf`; `80`/`50`/`20`
+likewise by `batteryIconFor`. Two tests assert the word and the colour/icon
+change bands at exactly the same values — they fail if someone edits one
+number and not the other, which is how a legend ends up disagreeing with the
+line next to it.
+
+**No raw exception reaches the user.** `utils/friendly_error.dart` maps
+timeout / unreachable / certificate-mismatch / malformed-reply / unknown to a
+title, an explanation and cheapest-first steps; `screens/common/
+friendly_error_view.dart` renders that with `e.toString()` under an expander.
+Ordering matters and is tested: `HandshakeException` is an `IOException`, so a
+possible impersonation would otherwise be reported as a generic connection
+failure.
+
+**Two messages were actively misleading and are gone.** Discovery failure said
+"Make sure you are on the same WiFi" — on the phone-hotspot topology the user
+*is*, and mDNS still cannot work, because Android's `MulticastLock` governs the
+client radio and not SoftAP. And the certificate-mismatch error led with
+"someone may be impersonating your greenhouse" when the overwhelmingly likelier
+cause is that the owner reinstalled the hub; it now leads with that and keeps
+the real warning second.
+
+**Safety.** "Disconnect" wiped the pairing on a single tap, one row below a
+navigation item, with no undo (the only way back is the QR code). It now
+confirms, and is called "Forget this greenhouse". And Settings no longer prints
+`sudo bash scripts/selftest.sh` at the user — that is an operator instruction
+and now lives only in `SECURITY.md`.
+
+**Honesty.** The offline banner says *when* ("showing readings from 09:12"),
+reusing `formatLastSeen`, via a new `lastSensorSightingProvider` that takes the
+newest non-null `lastSeen` across nodes. When nothing has ever been confirmed
+it says "no readings yet" rather than inventing a time — the same principle as
+this morning's retained-`ts` work. The soil warning explains its own rule, and
+`30` became `kLowSoilMoisturePct`, quoted in the text a test pins to it.
+
+**Deliberately not done:** automatic sensor discovery. `TRUSTED_NODES[]`
+(`mesh_config.h:124`) is a compile-time constant and `mesh_node.h:517` drops
+any unlisted MAC; adding a node means editing that header and reflashing the
+whole fleet, since ESP-NOW registers encrypted peers up front (max 8). It is a
+firmware/provisioning problem, not a UI one, and firmware cannot be built here.
+Also kept: every Advanced pairing field — they are the only path when discovery
+fails — but each now has a hint saying what it is and where to find it.
+
+`flutter test`: 279 passed (was 213). `flutter analyze`: clean. Built and
+installed on the bench phone.
+
+---
+
+## TL;DR of the previous session (2026-08-12 — real "last seen", drag-to-pin fix, QR tool)
 
 Driven entirely by the owner using the app on the bench and reporting what was
 wrong. Three separate real bugs, each found by reproducing the complaint rather

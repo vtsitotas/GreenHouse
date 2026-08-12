@@ -3,24 +3,28 @@ import 'dart:math' as math;
 import 'package:flutter/material.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/plain_language.dart';
 
 /// Link quality mapping (spec §Link quality mapping), a pure function of
 /// the child-side RSSI reading and the node's online state.
 ///
-/// | RSSI (dBm, at child)   | Color              | Meaning |
-/// |------------------------|--------------------|---------|
-/// | >= -60                 | `AppColors.online`  | good    |
-/// | -61 ... -75             | amber               | fair    |
-/// | < -75                  | red/orange          | weak    |
-/// | offline or rssi null   | grey, dashed        | stale   |
+/// | RSSI (dBm, at child)        | Color              | `signalLabel` |
+/// |-----------------------------|--------------------|---------------|
+/// | >= [kRssiGoodDbm]           | `AppColors.online`  | Strong        |
+/// | [kRssiFairDbm] .. -61       | amber               | Fair          |
+/// | < [kRssiFairDbm]            | red/orange          | Weak          |
+/// | offline or rssi null        | grey, dashed        | Unknown       |
+///
+/// The boundaries are imported rather than written here so this colour and
+/// the word `signalLabel` puts next to it can never drift apart.
 ({Color color, bool dashed}) linkQualityOf(int? rssi, bool online) {
   if (!online || rssi == null) {
     return (color: Colors.grey, dashed: true);
   }
-  if (rssi >= -60) {
+  if (rssi >= kRssiGoodDbm) {
     return (color: AppColors.online, dashed: false);
   }
-  if (rssi >= -75) {
+  if (rssi >= kRssiFairDbm) {
     return (color: Colors.amber, dashed: false);
   }
   return (color: Colors.deepOrange, dashed: false);

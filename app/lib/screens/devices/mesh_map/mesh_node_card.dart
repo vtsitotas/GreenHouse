@@ -2,38 +2,38 @@ import 'package:flutter/material.dart';
 import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/screens/devices/battery_icon.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/display_name.dart';
+import 'package:greenhouse_app/utils/plain_language.dart';
 
 /// One node's card on the mesh map (spec §Node card). Self-contained: no
-/// provider imports — the caller supplies the `NodeStatus` and an optional
-/// tap callback (a detail bottom sheet is the screen's job, Task 5).
+/// provider imports — the caller supplies the `NodeStatus`, the user's chosen
+/// names and an optional tap callback (a detail bottom sheet is the screen's
+/// job, Task 5).
 class MeshNodeCard extends StatelessWidget {
   static const double width = 120;
 
   final NodeStatus node;
+
+  /// User-chosen names, from `deviceNamesProvider`. Kept as a parameter so
+  /// this widget stays provider-free and cheap to test.
+  final Map<String, String> names;
+
   final VoidCallback? onTap;
 
-  const MeshNodeCard({required this.node, this.onTap, super.key});
+  const MeshNodeCard({
+    required this.node,
+    this.names = const {},
+    this.onTap,
+    super.key,
+  });
 
   bool get _isBridge => node.meshRank == 0;
 
-  /// "How is this node reaching the bridge" at a glance — null (hidden) for
-  /// the bridge's own card and for a node with no `/mesh` data yet. `rank`
-  /// already *is* hop-count-from-bridge in this mesh (one bridge, rank
-  /// assigned by hop distance — see docs/technical/03-mesh-routing.md), so
-  /// rank 1 means directly reachable without cross-referencing `parentId`
-  /// against the bridge's own node id.
-  String? get _hopLabel {
-    final rank = node.meshRank;
-    if (rank == null || rank == 0) return null;
-    return rank == 1 ? 'Direct' : '$rank hops';
-  }
+  /// "How is this node reaching the hub" at a glance — null (hidden) for the
+  /// hub's own card and for a node with no `/mesh` data yet.
+  String? get _hopLabel => shortConnectionLabel(node);
 
-  String get _title {
-    final zone = node.zone;
-    if (zone != null && zone.isNotEmpty) return zone;
-    final id = node.nodeId;
-    return id.length > 4 ? id.substring(id.length - 4) : id;
-  }
+  String get _title => displayNameFor(node.nodeId, names, zone: node.zone);
 
   @override
   Widget build(BuildContext context) {
@@ -82,15 +82,20 @@ class MeshNodeCard extends StatelessWidget {
                           ),
                         ],
                       ),
+                    // "Strong/Fair/Weak" rather than "-55 dBm": the number is
+                    // meaningless without knowing the scale, and it is still
+                    // available in the detail sheet's technical section.
                     if (node.parentRssi != null)
-                      Text('${node.parentRssi} dBm', style: const TextStyle(fontSize: 10)),
+                      Text(signalLabel(node.parentRssi),
+                          style: const TextStyle(fontSize: 10)),
                     if (_hopLabel != null)
                       Text(_hopLabel!,
                           style: const TextStyle(fontSize: 10, fontStyle: FontStyle.italic)),
                     if (node.isSleepy == true)
-                      const Tooltip(
-                        message: 'Deep-sleep node',
-                        child: Icon(Icons.nightlight_round, size: 14),
+                      Tooltip(
+                        message: '${sleepLabel(true)} — sleeps between '
+                            'readings so the battery lasts',
+                        child: const Icon(Icons.nightlight_round, size: 14),
                       ),
                   ],
                 ),

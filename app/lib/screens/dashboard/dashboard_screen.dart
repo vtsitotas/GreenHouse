@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
+import 'package:greenhouse_app/providers/nodes_provider.dart';
 import 'package:greenhouse_app/providers/readings_provider.dart';
+import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
 import 'package:greenhouse_app/screens/dashboard/connection_banner.dart';
 import 'package:greenhouse_app/screens/dashboard/weather_card.dart';
 import 'package:greenhouse_app/screens/dashboard/zone_card.dart';
@@ -17,13 +19,19 @@ class DashboardScreen extends ConsumerWidget {
       appBar: AppBar(title: const Text('Greenhouse')),
       body: Column(children: [
         statusAsync.when(
-          data: (s) => ConnectionBanner(status: s),
+          data: (s) => ConnectionBanner(
+            status: s,
+            lastSighting: ref.watch(lastSensorSightingProvider),
+          ),
           loading: () => const SizedBox.shrink(),
           error: (_, __) => const SizedBox.shrink(),
         ),
         Expanded(child: readingsAsync.when(
           loading: () => ListView.builder(itemCount: 3, itemBuilder: (_, __) => const _Skeleton()),
-          error: (e, _) => Center(child: Text('Error: $e')),
+          error: (e, _) => FriendlyErrorView(
+            error: e,
+            onRetry: () => ref.invalidate(readingsProvider),
+          ),
           data: (r) {
             // Separate weather zone from sensor zones
             final sensorZones = Map.fromEntries(

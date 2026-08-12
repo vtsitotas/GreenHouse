@@ -58,8 +58,8 @@ void main() {
             rank: 1, zone: 'zone1', rssi: -55, parentId: 'A0B1C2D3E4F5'),
       });
 
-      expect(find.text('bridge-zone'), findsOneWidget);
-      expect(find.text('zone1'), findsOneWidget);
+      expect(find.text('Bridge-zone'), findsOneWidget);
+      expect(find.text('Zone 1'), findsOneWidget);
       expect(find.byIcon(Icons.router), findsOneWidget);
     });
 
@@ -80,7 +80,7 @@ void main() {
       });
 
       expect(
-        find.textContaining('Mesh topology data not being published yet'),
+        find.textContaining("haven't reported how they're connected"),
         findsOneWidget,
       );
     });
@@ -93,7 +93,7 @@ void main() {
       });
 
       expect(
-        find.textContaining('Mesh topology data not being published yet'),
+        find.textContaining("haven't reported how they're connected"),
         findsNothing,
       );
     });
@@ -101,7 +101,7 @@ void main() {
     testWidgets('empty node map shows the empty state', (tester) async {
       await _pumpMeshMap(tester, {});
 
-      expect(find.text('No nodes detected yet'), findsOneWidget);
+      expect(find.text('No sensors found yet'), findsOneWidget);
     });
 
     testWidgets('summary bar shows node/online/offline counts', (tester) async {
@@ -111,7 +111,7 @@ void main() {
         'node2': _node('node2', isOnline: false, rank: 1, zone: 'zone2'),
       });
 
-      expect(find.text('3 nodes · 2 online · 1 offline'), findsOneWidget);
+      expect(find.text('3 sensors · 2 working · 1 not responding'), findsOneWidget);
     });
 
     testWidgets('link-quality legend is shown alongside the canvas', (tester) async {
@@ -119,8 +119,8 @@ void main() {
         'A0B1C2D3E4F5': _node('A0B1C2D3E4F5', rank: 0, zone: 'bridge-zone'),
       });
 
-      expect(find.textContaining('Good ('), findsOneWidget);
-      expect(find.textContaining('Stale / offline'), findsOneWidget);
+      expect(find.text('Strong signal'), findsOneWidget);
+      expect(find.text('Not responding'), findsWidgets);
     });
 
     testWidgets('tapping a card opens a detail sheet with MAC and rank', (tester) async {
@@ -136,9 +136,12 @@ void main() {
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('A0B1C2D3E4F5'), findsWidgets); // card subtitle + MAC row
-      expect(find.text('0'), findsOneWidget); // Rank row value, unique in this fixture
-      expect(find.text('This is the bridge'), findsOneWidget); // Connection row
+      expect(find.text('A0B1C2D3E4F5'), findsWidgets); // card subtitle
+      expect(find.text('This is the hub'), findsOneWidget); // Connection row
+      // Mesh rank is engineering detail: present, but collapsed behind
+      // "Technical details" rather than shown up front.
+      expect(find.text('0'), findsNothing);
+      expect(find.text('Technical details'), findsOneWidget);
     });
 
     testWidgets('detail sheet labels a relayed node with its hop count and parent',
@@ -160,11 +163,11 @@ void main() {
 
       // Three cards on screen -> tap the one with rank 2 specifically by its
       // zone label, since InkWell alone would be ambiguous with three cards.
-      await tester.tap(find.text('zone2'));
+      await tester.tap(find.text('Zone 2'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 300));
 
-      expect(find.text('Relayed — 2 hops (via node1)'), findsOneWidget);
+      expect(find.text('Passes through Zone 1 (2 steps to the hub)'), findsOneWidget);
     });
 
     testWidgets('dragging a card actually pins it at the dragged-to position, and Unpin clears it',
@@ -215,7 +218,7 @@ void main() {
       // exposed the bug: the Element/recognizer died after the very first
       // setState, so only a single-jump gesture could ever look like it
       // "worked" (and even then, at the wrong position).
-      final gesture = await tester.startGesture(tester.getCenter(find.text('zone1')));
+      final gesture = await tester.startGesture(tester.getCenter(find.text('Zone 1')));
       await tester.pump(const Duration(milliseconds: 50));
       for (var i = 0; i < 5; i++) {
         await gesture.moveBy(const Offset(30, 40));
@@ -232,10 +235,10 @@ void main() {
               'not silently snap back to its pre-drag auto-layout position');
 
       // Long-press -> confirm "Unpin" in the dialog -> pin is gone.
-      await tester.longPress(find.text('zone1'));
+      await tester.longPress(find.text('Zone 1'));
       await tester.pump();
-      expect(find.text('Unpin node?'), findsOneWidget);
-      await tester.tap(find.text('Unpin'));
+      expect(find.text('Move back automatically?'), findsOneWidget);
+      await tester.tap(find.text('Move back'));
       await tester.pump();
       await tester.pump(const Duration(milliseconds: 50));
 

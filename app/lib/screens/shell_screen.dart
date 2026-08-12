@@ -19,7 +19,7 @@ class ShellScreen extends StatelessWidget {
         destinations: const [
           NavigationDestination(icon: Icon(Icons.dashboard),    label: 'Dashboard'),
           NavigationDestination(icon: Icon(Icons.sensors),      label: 'Devices'),
-          NavigationDestination(icon: Icon(Icons.toggle_on),    label: 'Control'),
+          NavigationDestination(icon: Icon(Icons.toggle_on),    label: 'Switches'),
           NavigationDestination(icon: Icon(Icons.cloud),        label: 'Weather'),
           NavigationDestination(icon: Icon(Icons.settings),     label: 'Settings'),
         ],

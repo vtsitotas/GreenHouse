@@ -4,6 +4,7 @@ import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/providers/connection_provider.dart';
 import 'package:greenhouse_app/services/pairing_service.dart';
 import 'package:greenhouse_app/utils/cert_pinning.dart';
+import 'package:greenhouse_app/utils/plain_language.dart';
 
 class SettingsScreen extends ConsumerWidget {
   const SettingsScreen({super.key});
@@ -17,7 +18,10 @@ class SettingsScreen extends ConsumerWidget {
           leading: const Icon(Icons.wifi),
           title: const Text('Connection'),
           subtitle: statusAsync.when(
-            data: (s) => Text(s.name),
+            // `s.name` is the raw enum identifier ("local", "reconnecting").
+            // It reads like a debug print, and "local" in particular tells a
+            // user nothing about whether things are working.
+            data: (s) => Text(connectionStatusLabel(s)),
             loading: () => const Text('Connecting…'),
             error: (_, __) => const Text('Unknown'),
           ),
@@ -35,10 +39,16 @@ class SettingsScreen extends ConsumerWidget {
             return ListTile(
               leading: const Icon(Icons.verified_user_outlined),
               title: const Text('Safety code'),
+              // The shell command that used to live here (`sudo bash
+              // scripts/selftest.sh`) is an operator instruction, not
+              // something to put in front of whoever is holding the phone.
+              // It lives in SECURITY.md, where someone with a terminal open
+              // will actually look.
               subtitle: Text(
                 code.isEmpty
                     ? 'Not paired'
-                    : '$code\nMust match the Pi: sudo bash scripts/selftest.sh',
+                    : '$code\nThis code identifies your greenhouse. It should '
+                        'match the one shown on the hub.',
               ),
               isThreeLine: code.isNotEmpty,
             );
@@ -57,13 +67,41 @@ class SettingsScreen extends ConsumerWidget {
         const Divider(),
         ListTile(
           leading: const Icon(Icons.qr_code),
-          title: const Text('Re-pair with server'),
+          title: const Text('Connect to a greenhouse again'),
+          subtitle: const Text('Scan the QR code on the hub'),
           onTap: () => context.go('/pair'),
         ),
         ListTile(
           leading: const Icon(Icons.logout),
-          title: const Text('Disconnect'),
+          title: const Text('Forget this greenhouse'),
+          subtitle: const Text('Removes the connection from this phone'),
+          // This wipes the stored pairing -- MQTT credentials, the API token
+          // and the pinned certificate. It used to fire on a single tap, one
+          // row below a navigation item, with nothing to undo it: the only
+          // way back is the QR code (or typing every field by hand).
           onTap: () async {
+            final confirmed = await showDialog<bool>(
+              context: context,
+              builder: (dialogContext) => AlertDialog(
+                icon: const Icon(Icons.warning_amber_rounded),
+                title: const Text('Forget this greenhouse?'),
+                content: const Text(
+                  'This phone will stop showing your greenhouse. To connect '
+                  'again you will need to scan the QR code on the hub.',
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(false),
+                    child: const Text('Cancel'),
+                  ),
+                  FilledButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(true),
+                    child: const Text('Forget'),
+                  ),
+                ],
+              ),
+            );
+            if (confirmed != true) return;
             await ref.read(pairingServiceProvider).clearConfig();
             if (context.mounted) context.go('/pair');
           },
