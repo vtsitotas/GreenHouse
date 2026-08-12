@@ -47,6 +47,13 @@ itself is spoofable (no identity guarantee):
 Smaller than the items above — captured here so the design thinking isn't
 lost before someone formalizes it properly.
 
+> **Scale limits (8-device cap, fleet-reflash to add a sensor) are analysed
+> separately in [`docs/SCALING_AND_EXPANSION_IDEAS.md`](docs/SCALING_AND_EXPANSION_IDEAS.md)**
+> — where they come from in the code, the end-to-end-encryption change that
+> lifts both, and an explicit list of what would break. Design analysis only;
+> nothing there is implemented, and the doc argues for *not* implementing it
+> until an edge node reliably delivers a reading.
+
 ### Adaptive TTL (mesh routing) — ✅ DONE
 **Discussed:** 2026-07-20, no spec file yet at the time. **Implemented:**
 shipped in PR #12 (`527c71f`, "security/reliability" pass) — confirmed still

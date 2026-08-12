@@ -1,7 +1,8 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-12 (plain-language UX overhaul; earlier the same day:
-real `last seen` timestamps, drag-to-pin fix, QR tool rewrite). Previous
+**Last updated:** 2026-08-12 (ghost retained topics + scaling analysis; earlier
+the same day: plain-language UX overhaul, real `last seen` timestamps,
+drag-to-pin fix, QR tool rewrite). Previous
 same-day-2026-08-11 sessions: history false-alert fix + mesh map bugfixes +
 git-history credential scrub. Session 2026-08-10: WiFi provisioning + UART
 bridge bring-up, full bench deploy. Camera remains **parked** since 2026-08-02
@@ -23,7 +24,69 @@ see the 2026-08-10 TL;DR for the full list.
 
 ---
 
-## TL;DR of this session (2026-08-12 — plain-language UX overhaul)
+## TL;DR of this session (2026-08-12 — ghost retained topics, scaling analysis)
+
+Two things after the UX pass, both driven by the owner using the bench system.
+
+**A retired sensor kept coming back from the dead, and the reason was not what
+I first said it was.** `zone1_test` (MAC `…75EC`) reappeared as a phantom
+device and a phantom dashboard zone after *three* separate clean-ups. First
+diagnosis — mosquitto persistence not flushed before a reboot — was **wrong**.
+
+The real mechanism: MQTT delivers a *live* message to an already-subscribed
+client with the retain flag **cleared**; it is only set when a message is
+replayed to a **new** subscription. `hivemq_bridge.py` forwards
+`retain=msg.retain`, so a retained publish crosses the bridge as an ordinary
+non-retained message and the far broker never stores it — **including the
+empty-payload publish that means "delete"**. So clearing one broker provably
+does not clear the other. Retained *state* syncs only when the bridge
+(re)connects and receives the far side's retained set with `retain=1`. That is
+what resurrected the ghosts: local was cleared, the bridge later reconnected,
+pulled the cloud's still-dirty set down, and republished it locally *with*
+retain.
+
+Verified by controlled experiment, prediction stated before the run: a topic
+planted on the cloud alone did not appear locally for minutes, then appeared
+**the instant** the bridge was restarted.
+
+New `pi/scripts/clear_retained.sh` — expands a wildcard into the concrete
+topics both brokers hold, clears **cloud first then local**, SIGUSR1s mosquitto
+so the deletion hits disk immediately (default autosave is 1800s, so a power
+cut inside that window would restore everything), and **verifies both brokers**
+instead of assuming. `DRY_RUN=1` to preview. Tested end to end against planted
+ghosts including a bridge restart afterwards — the exact action that used to
+bring them back. `docs/technical/08-cloud-bridge.md` gained the retain-flag
+caveat.
+
+**New doc: `docs/SCALING_AND_EXPANSION_IDEAS.md`.** Answers "why can't the user
+just add more sensors?" and "what would a real product need?", grounded in the
+actual code rather than generalities: the 8-device cap comes from ESP-NOW's
+7-encrypted-peer limit and `meshInit()` registering every node pairwise; the
+fleet-reflash requirement comes from `TRUSTED_NODES[]` being `static const`
+plus any node possibly becoming any other's parent at runtime.
+
+The unlock is end-to-end encryption with dumb relays — a relay only ever reads
+`magic`/`origin_mac`/`seq`/`ttl`, so it never needs to decrypt, which removes
+both the peer cap and the pairwise key distribution at once. Parent selection
+is unaffected because it runs off beacons, which are already plaintext
+broadcast. Two-tier keys (NetKey for cheap header auth, AppKey end-to-end)
+cover the resulting DoS gap — the same split Bluetooth Mesh uses.
+
+**Analysis only — nothing implemented, deliberately.** The doc is blunt about
+why: no edge node has reliably delivered a reading yet (`A1:B0` still reports
+`delivered=0`, unexplained), so changing the protocol now means debugging two
+unknowns at once. It also flags the trap that would most likely introduce a
+real vulnerability: `seq` is `uint16_t` and resets on cold boot (already
+observed on the bench with powerbanks cutting out under deep-sleep current).
+Harmless today — it only feeds de-dup — but feed it into a crypto nonce and
+that reset becomes nonce reuse, which in AES-GCM leaks the authentication key
+and lets an attacker forge readings the rules engine will act on.
+
+`pytest pi/tests`: 193 passed.
+
+---
+
+## TL;DR of the previous session (2026-08-12 — plain-language UX overhaul)
 
 The app talked to its user the way a debugger talks to its author. This pass
 fixes that, for a grower who does not know what MQTT, a MAC address, dBm or a

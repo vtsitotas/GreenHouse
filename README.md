@@ -45,6 +45,11 @@ security work (also Greek) is
 [`docs/SYSTEM_OVERVIEW_SIMPLE.md`](docs/SYSTEM_OVERVIEW_SIMPLE.md) — read
 that one first.
 
+Why the mesh caps at 8 devices, why adding a sensor needs the whole fleet
+reflashed, and what it would take to lift both:
+[`docs/SCALING_AND_EXPANSION_IDEAS.md`](docs/SCALING_AND_EXPANSION_IDEAS.md).
+Design analysis only — **nothing in it is implemented**.
+
 ## Repo layout
 
 | Path | What's there |
