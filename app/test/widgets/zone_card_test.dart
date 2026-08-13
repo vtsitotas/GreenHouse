@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/screens/dashboard/zone_card.dart';
+import 'package:greenhouse_app/services/zone_plant_store.dart';
 
 void main() {
   testWidgets('ZoneCard displays zone name and temperature', (tester) async {
@@ -30,7 +31,13 @@ void main() {
 
     // A bare triangle says "something is wrong" without saying what.
     expect(find.text('Dry — may need watering'), findsOneWidget);
-    final tooltip = tester.widget<Tooltip>(find.byType(Tooltip));
+    // find.byType(Tooltip) alone would now also match the plant-care
+    // button's tooltip -- match on content instead of relying on there
+    // being exactly one Tooltip in the tree.
+    final tooltip = tester.widget<Tooltip>(
+      find.byWidgetPredicate(
+          (w) => w is Tooltip && (w.message?.startsWith('Soil moisture is below') ?? false)),
+    );
     expect(tooltip.message, contains('30%'));
     expect(tooltip.message, contains('watering'));
   });
@@ -110,5 +117,57 @@ void main() {
     await tester.tap(find.byKey(const Key('chip_soil_moisture')));
     await tester.pumpAndSettle();
     expect(lastLocation, '/history/zone1/soil_moisture');
+  });
+
+  testWidgets('with no plant assigned, the care button invites setting one',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: {},
+    ))));
+
+    final button = tester.widget<IconButton>(find.byKey(const Key('zone_care_button')));
+    expect(button.tooltip, 'Set a plant for this zone');
+    expect(find.byIcon(Icons.eco_outlined), findsOneWidget);
+    expect(find.byKey(const Key('zone_care_advice')), findsNothing);
+  });
+
+  testWidgets('a plant within its ideal range shows a good badge and no advice line',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: {'soil/moisture': 50.0}, // inside tomato's 40-70 range
+      plantAssignment: ZonePlantAssignment(profileId: 'tomato'),
+    ))));
+
+    final button = tester.widget<IconButton>(find.byKey(const Key('zone_care_button')));
+    expect(button.tooltip, contains('Tomato'));
+    expect(find.byKey(const Key('zone_care_advice')), findsNothing);
+  });
+
+  testWidgets('soil drier than the assigned plant likes shows a named, actionable line',
+      (tester) async {
+    await tester.pumpWidget(const MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: {'soil/moisture': 10.0}, // below tomato's 40% floor
+      plantAssignment: ZonePlantAssignment(profileId: 'tomato'),
+    ))));
+
+    expect(find.byKey(const Key('zone_care_advice')), findsOneWidget);
+    final text = tester.widget<Text>(find.byKey(const Key('zone_care_advice')));
+    expect(text.data, contains('Tomato'));
+    expect(text.data, contains('drier'));
+  });
+
+  testWidgets('tapping the care button calls the supplied callback', (tester) async {
+    var tapped = false;
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: ZoneCard(
+      zone: 'zone1',
+      readings: const {},
+      onCareTap: () => tapped = true,
+    ))));
+
+    await tester.tap(find.byKey(const Key('zone_care_button')));
+    expect(tapped, isTrue);
   });
 }

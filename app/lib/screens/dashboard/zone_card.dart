@@ -1,32 +1,85 @@
 import 'package:flutter/material.dart';
 import 'package:go_router/go_router.dart';
+import 'package:greenhouse_app/services/zone_plant_store.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
 import 'package:greenhouse_app/utils/display_name.dart';
+import 'package:greenhouse_app/utils/plant_status.dart';
 
 /// Soil moisture below this (%) shows a warning on the zone card.
 ///
 /// A single named constant rather than a bare `30` in a comparison: the value
 /// is also quoted in the warning text, so the number a user reads and the
-/// number that triggered it cannot drift apart.
+/// number that triggered it cannot drift apart. This generic check runs
+/// regardless of whether a plant profile is assigned -- it is a safety net,
+/// not replaced by the richer per-plant assessment below.
 const double kLowSoilMoisturePct = 30;
 
 class ZoneCard extends StatelessWidget {
   final String zone;
   final Map<String, double> readings;
-  const ZoneCard({required this.zone, required this.readings, super.key});
+
+  /// The plant profile assigned to this zone, if any. Null means "no plant
+  /// picked yet" -- the card renders exactly as it did before this feature
+  /// existed.
+  final ZonePlantAssignment? plantAssignment;
+
+  /// Opens the plant-care sheet for this zone. Ignored when null (e.g. in
+  /// tests that don't care about the tap).
+  final VoidCallback? onCareTap;
+
+  const ZoneCard({
+    required this.zone,
+    required this.readings,
+    this.plantAssignment,
+    this.onCareTap,
+    super.key,
+  });
 
   String get _title => zoneLabel(zone);
+
+  /// Per-metric status against the assigned profile's ranges, keyed by the
+  /// rule-engine metric name. Empty when no profile is assigned.
+  Map<String, PlantConditionStatus> get _profileStatuses {
+    final assignment = plantAssignment;
+    if (assignment == null) return const {};
+    final result = <String, PlantConditionStatus>{};
+    for (final entry in assignment.ranges.entries) {
+      final readingsKey = kMetricReadingsKey[entry.key];
+      final value = readingsKey == null ? null : readings[readingsKey];
+      result[entry.key] = metricStatus(value, entry.value);
+    }
+    return result;
+  }
+
+  /// The metric responsible for the overall low/high verdict, so the one-line
+  /// advice on the card and the badge colour always describe the same thing.
+  String? _worstMetric(PlantConditionStatus overall) {
+    if (overall != PlantConditionStatus.low && overall != PlantConditionStatus.high) return null;
+    for (final entry in _profileStatuses.entries) {
+      if (entry.value == overall) return entry.key;
+    }
+    return null;
+  }
 
   @override
   Widget build(BuildContext context) {
     final soil = readings['soil/moisture'];
     final lowSoil = soil != null && soil < kLowSoilMoisturePct;
+    final hasProfile = plantAssignment != null;
+    final overall = hasProfile ? overallZoneStatus(_profileStatuses) : null;
+    final worstMetric = overall == null ? null : _worstMetric(overall);
     return Card(
       child: Padding(
         padding: const EdgeInsets.all(16),
         child: Column(crossAxisAlignment: CrossAxisAlignment.start, children: [
           Row(children: [
             Text(_title, style: Theme.of(context).textTheme.titleMedium?.copyWith(fontWeight: FontWeight.bold)),
+            const SizedBox(width: 4),
+            _PlantCareButton(
+              assignment: plantAssignment,
+              overall: overall,
+              onTap: onCareTap,
+            ),
             if (lowSoil) ...[
               const SizedBox(width: 8),
               // A bare warning triangle says "something is wrong" without
@@ -46,6 +99,19 @@ class ZoneCard extends StatelessWidget {
               padding: const EdgeInsets.only(top: 4),
               child: Text(
                 'Dry — may need watering',
+                style: Theme.of(context)
+                    .textTheme
+                    .bodySmall
+                    ?.copyWith(color: AppColors.warning),
+              ),
+            ),
+          if (worstMetric != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                '${plantAssignment!.displayName}: '
+                '${metricAdviceText(worstMetric, overall!)}',
+                key: const Key('zone_care_advice'),
                 style: Theme.of(context)
                     .textTheme
                     .bodySmall
@@ -96,6 +162,41 @@ class ZoneCard extends StatelessWidget {
           ]),
         ]),
       ),
+    );
+  }
+}
+
+/// Small leaf icon that opens the plant-care sheet. Grey/outlined when no
+/// plant is assigned yet (an invitation, not a warning); once a plant is
+/// picked, coloured by [overall] so the same icon doubles as the status
+/// badge -- no separate element needed just to show "this needs attention".
+class _PlantCareButton extends StatelessWidget {
+  final ZonePlantAssignment? assignment;
+  final PlantConditionStatus? overall;
+  final VoidCallback? onTap;
+  const _PlantCareButton({required this.assignment, required this.overall, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    final IconData icon;
+    final Color color;
+    final String tooltip;
+    if (assignment == null) {
+      icon = Icons.eco_outlined;
+      color = Theme.of(context).colorScheme.outline;
+      tooltip = 'Set a plant for this zone';
+    } else {
+      final (visualColor, visualIcon) = zoneStatusVisual(overall ?? PlantConditionStatus.unknown);
+      icon = visualIcon;
+      color = visualColor;
+      tooltip = '${assignment!.displayName} — tap for care details';
+    }
+    return IconButton(
+      key: const Key('zone_care_button'),
+      icon: Icon(icon, color: color, size: 20),
+      tooltip: tooltip,
+      visualDensity: VisualDensity.compact,
+      onPressed: onTap,
     );
   }
 }

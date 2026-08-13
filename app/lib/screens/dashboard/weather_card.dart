@@ -4,6 +4,16 @@ import 'package:go_router/go_router.dart';
 import 'package:greenhouse_app/providers/readings_provider.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
 
+/// Below this (°C), the card shows a frost badge/icon.
+const double kFrostTempC = 3;
+
+/// Above this (°C), the card shows a heat badge/icon.
+const double kHeatTempC = 35;
+
+/// Above this (mm/hour), the card shows a rain badge/icon. Small values are
+/// noise from the sensor, not weather worth flagging.
+const double kRainThresholdMm = 0.1;
+
 /// Dashboard card showing current outside weather from greenhouse/weather/* topics.
 class WeatherCard extends ConsumerWidget {
   const WeatherCard({super.key});
@@ -22,9 +32,9 @@ class WeatherCard extends ConsumerWidget {
     final hum  = weather['humidity'];
     final uv   = weather['uv_index'];
 
-    final hasRain = rain != null && rain > 0.1;
-    final isFrost = temp != null && temp < 3;
-    final isHot   = temp != null && temp > 35;
+    final hasRain = rain != null && rain > kRainThresholdMm;
+    final isFrost = temp != null && temp < kFrostTempC;
+    final isHot   = temp != null && temp > kHeatTempC;
 
     Color cardColor = AppColors.brand;
     IconData mainIcon = Icons.wb_cloudy_outlined;

@@ -7,6 +7,8 @@ import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
 import 'package:greenhouse_app/screens/dashboard/connection_banner.dart';
 import 'package:greenhouse_app/screens/dashboard/weather_card.dart';
 import 'package:greenhouse_app/screens/dashboard/zone_card.dart';
+import 'package:greenhouse_app/screens/dashboard/zone_care_sheet.dart';
+import 'package:greenhouse_app/services/zone_plant_store.dart';
 
 class DashboardScreen extends ConsumerWidget {
   const DashboardScreen({super.key});
@@ -15,6 +17,7 @@ class DashboardScreen extends ConsumerWidget {
   Widget build(BuildContext context, WidgetRef ref) {
     final statusAsync  = ref.watch(connectionStatusProvider);
     final readingsAsync = ref.watch(readingsProvider);
+    final plantAssignments = ref.watch(zonePlantProvider).valueOrNull ?? const <String, ZonePlantAssignment>{};
     return Scaffold(
       appBar: AppBar(title: const Text('Greenhouse')),
       body: Column(children: [
@@ -45,7 +48,12 @@ class DashboardScreen extends ConsumerWidget {
                   child: Center(child: Text('Waiting for sensor data…')),
                 )
               else
-                ...sensorZones.entries.map((e) => ZoneCard(zone: e.key, readings: e.value)),
+                ...sensorZones.entries.map((e) => ZoneCard(
+                      zone: e.key,
+                      readings: e.value,
+                      plantAssignment: plantAssignments[e.key],
+                      onCareTap: () => showZoneCareSheet(context, zone: e.key),
+                    )),
             ]);
           },
         )),

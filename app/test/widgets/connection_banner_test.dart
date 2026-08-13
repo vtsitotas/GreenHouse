@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:greenhouse_app/models/connection_status.dart';
 import 'package:greenhouse_app/screens/dashboard/connection_banner.dart';
+import 'package:greenhouse_app/utils/plain_language.dart';
 
 void main() {
   Future<void> pump(WidgetTester tester, ConnectionStatus status,
@@ -43,11 +44,20 @@ void main() {
   testWidgets('connected states read as plain status, not route names',
       (tester) async {
     await pump(tester, ConnectionStatus.local);
-    expect(find.text('Connected'), findsOneWidget);
+    // Matches connectionStatusLabel() in plain_language.dart exactly -- this
+    // banner used to say the shorter "Connected" here, which disagreed with
+    // Settings' Connection row for the same ConnectionStatus.local.
+    expect(find.text('Connected on your home network'), findsOneWidget);
     expect(find.text('Local'), findsNothing);
 
     await pump(tester, ConnectionStatus.remote);
     expect(find.text('Connected from away'), findsOneWidget);
     expect(find.text('Remote'), findsNothing);
+  });
+
+  testWidgets('local wording matches Settings\' Connection row -- same source of truth',
+      (tester) async {
+    await pump(tester, ConnectionStatus.local);
+    expect(find.text(connectionStatusLabel(ConnectionStatus.local)), findsOneWidget);
   });
 }
