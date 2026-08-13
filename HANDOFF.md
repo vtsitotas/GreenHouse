@@ -1,13 +1,15 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-12 (ghost retained topics + scaling analysis; earlier
-the same day: plain-language UX overhaul, real `last seen` timestamps,
-drag-to-pin fix, QR tool rewrite). Previous
-same-day-2026-08-11 sessions: history false-alert fix + mesh map bugfixes +
-git-history credential scrub. Session 2026-08-10: WiFi provisioning + UART
-bridge bring-up, full bench deploy. Camera remains **parked** since 2026-08-02
-(see that TL;DR below); the 2026-07-28 security-hardening pass is merged and
-live.
+**Last updated:** 2026-08-13 (technical report for the thesis writeup, a new
+Plant Care Profiles feature on the Dashboard, and a clean release build/install
++ live QR regeneration on the bench phone/Pi). Previous session 2026-08-12:
+ghost retained topics + scaling analysis, earlier the same day plain-language
+UX overhaul, real `last seen` timestamps, drag-to-pin fix, QR tool rewrite.
+Previous same-day-2026-08-11 sessions: history false-alert fix + mesh map
+bugfixes + git-history credential scrub. Session 2026-08-10: WiFi provisioning
++ UART bridge bring-up, full bench deploy. Camera remains **parked** since
+2026-08-02 (see that TL;DR below); the 2026-07-28 security-hardening pass is
+merged and live.
 
 > ⚠️ **Every commit hash changed on 2026-08-11.** History was rewritten to
 > remove leaked credentials. Any clone made before then must be **re-cloned**,
@@ -21,6 +23,84 @@ and is now fixed end to end. The bench Pi is fully deployed off current
 `main`, `selftest.sh` reports 45/45. Still open: no edge node has actually
 delivered a sensor *reading* yet (bridge heartbeats fine, mesh path unproven);
 see the 2026-08-10 TL;DR for the full list.
+
+---
+
+## TL;DR of this session (2026-08-13 — technical report, Plant Care Profiles, live build/QR)
+
+Three unrelated threads: a document the owner needed for the thesis writeup, a
+real user-facing feature, and getting a fresh build onto the bench phone.
+
+**New: `docs/GreenHouse_Report.docx`.** A full Greek technical report (21
+chapters, table of contents, 4 architecture diagrams, 23 tables) synthesizing
+everything already written — `docs/technical/`, `docs/superpowers/{specs,plans}`,
+this file and its archive, plus direct reads of `pi/scripts/`, `firmware/`,
+`app/lib/` for anything the existing docs didn't already cover in code-level
+detail. Built with a custom Markdown→docx pipeline (`python-docx`) rather than
+pasting into Word by hand, specifically so it stays regenerable. The table of
+contents went through two designs: the first used a Word `TOC` field, which
+only populates if the viewer actually evaluates fields (Word after an F9 or an
+explicit prompt) — silently blank in anything else, which is exactly what the
+owner hit. Replaced with a static table of contents built from real Word
+bookmarks + internal hyperlinks (168 entries, one per chapter/section heading),
+which renders immediately in any viewer with zero user action. Not committed
+until this session, by earlier request.
+
+**New feature: Plant Care Profiles, on the Dashboard.** Pick a plant per zone
+(8 built-in profiles — tomato, cucumber, pepper, eggplant, lettuce, basil,
+strawberry, succulent — or type custom min/max ranges) and get a colored
+status badge on the zone card, a plain-language advice line when a metric is
+out of range, a historical view (7d/30d average + % of time within range, via
+the already-existing `historyPointsProvider` — no new backend query), and a
+one-tap "add suggested rule" that opens the existing rule builder
+(`rule_form_dialog.dart`) pre-filled from the breached threshold. Entirely
+app-side — no Pi or firmware touched. New files: `models/plant_profile.dart`,
+`services/zone_plant_store.dart` (mirrors `DeviceNamesStore`'s local-only,
+single-JSON-blob-in-SharedPreferences shape exactly — which plant is in which
+zone is this grower's own labelling, not fleet config, same reasoning as
+device names), `utils/plant_status.dart`, `screens/dashboard/zone_care_sheet.dart`.
+
+Found and fixed two smaller inconsistencies in the same pass, both real, both
+pre-existing: `weather_card.dart`'s frost/heat/rain thresholds were bare
+numeric literals (`temp < 3`, `temp > 35`, `rain > 0.1`) with no name and no
+comment, unlike `zone_card.dart`'s own `kLowSoilMoisturePct` — now named
+constants (`kFrostTempC`/`kHeatTempC`/`kRainThresholdMm`). And
+`connection_banner.dart` had its own inline wording for `ConnectionStatus.local`
+("Connected") that disagreed with Settings' (`plain_language.dart`'s
+`connectionStatusLabel()`, "Connected on your home network") — same status,
+two different sentences depending which screen you were on. Banner now calls
+the shared function for local/remote/reconnecting, keeping only the
+offline+`lastSeen` case bespoke since that needs a parameter the shared
+function doesn't take.
+
+`flutter analyze`: clean. `flutter test`: **332 passed, 0 failed** (every new
+file has its own test; `zone_card_test.dart`/`weather_card_test.dart`/
+`connection_banner_test.dart` extended; a new `dashboard_screen_test.dart`
+added — none existed for that screen before). Two test-only bugs surfaced and
+fixed along the way, not in the app itself: an existing `find.byType(Tooltip)`
+assertion in `zone_card_test.dart` became ambiguous the moment a second
+Tooltip (the new plant-care button) existed on the card, and a `ProviderScope`
+reused across two sequential `pumpWidget` calls in one `weather_card_test.dart`
+test didn't reliably pick up the second override — split into independent
+single-pump tests instead of chasing the exact Riverpod-in-flutter_test
+semantics.
+
+**Build, install, and a live finding on the bench Pi.** Clean
+`flutter build apk --release` (68MB) installed on the bench phone (Redmi Note
+13 Pro+). First install attempt failed with `INSTALL_FAILED_USER_RESTRICTED` —
+MIUI/HyperOS blocks `adb install` unless "Install via USB" is separately
+enabled in Developer options (distinct from plain USB debugging, no prompt
+shown until that's on); worked once the owner toggled it. Regenerated the
+pairing QR against the live bench Pi over SSH (`greenhouse.local` — the
+`10.215.140.202` noted on 2026-08-10 was a stale DHCP lease, it's
+`10.47.153.202` now) by calling `show_qr.py`'s own `build_payload()` and saving
+a PNG instead of just the terminal ASCII-art (the script has no image-output
+mode of its own) — saved to the Desktop rather than only printing to a
+terminal. Confirms in practice what `TODO.md §4` already had recorded: the
+`app` MQTT password on this unit is still the literal placeholder `123`,
+i.e. `rotate_secrets.sh` still hasn't actually been run here. Not fixed this
+session (would invalidate the existing paired session on the bench phone) —
+same deferral as before, just re-verified live rather than assumed.
 
 ---
 

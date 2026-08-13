@@ -376,11 +376,19 @@ untestable-without-hardware reason as the channel discovery item above.
       dependent on external uptime). Not started.
 
 ### App feature gaps
-- [ ] Screen-by-screen UX enhancement pass for dashboard, control, devices,
-      pairing, settings — only the history screen (2026-07-08/09 sessions),
-      the weather/rules screen (2026-07-10 rule builder), and now the
-      devices screen (2026-07-26 Mesh Map entry point + screen, see
-      `docs/technical/13-mobile-app.md §11`) have had this treatment so far.
+- [ ] Screen-by-screen UX enhancement pass for control, pairing, settings —
+      still not touched. History (2026-07-08/09), weather/rules (2026-07-10
+      rule builder), devices (2026-07-26 Mesh Map, see
+      `docs/technical/13-mobile-app.md §11`), and now dashboard (2026-08-13:
+      named thresholds in `weather_card.dart`, unified `connection_banner.dart`
+      wording, plus the new Plant Care Profiles feature below) have had it.
+- [x] Plant Care Profiles (2026-08-13): per-zone plant picker (8 built-in +
+      custom ranges), status badge + advice text on the zone card, 7d/30d
+      historical compliance, one-tap suggested-rule creation through the
+      existing rule builder. `models/plant_profile.dart`,
+      `services/zone_plant_store.dart`, `utils/plant_status.dart`,
+      `screens/dashboard/zone_care_sheet.dart`. App-side only, no Pi/firmware
+      changes. See `HANDOFF.md` 2026-08-13 entry.
 - [x] Devices screen gained a live Mesh Map (hub icon in the `AppBar` →
       `MeshMapScreen`): topology, RSSI-colored links, drag-to-pin,
       battery/sleepy badges — app side is fully implemented and tested
