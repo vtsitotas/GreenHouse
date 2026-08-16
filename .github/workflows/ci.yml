@@ -26,7 +26,10 @@ jobs:
           # on the real Pi too (install.sh) — without it here, push.py's
           # `messaging` name is never bound (import is inside a
           # try/except ImportError), which breaks test_push.py's monkeypatching.
-          pip install flask paho-mqtt firebase-admin pyserial pytest
+          # qrcode/Pillow: real dependency of pi/tools/show_qr.py (pinned in
+          # pi/tools/requirements.txt) — without it, test_show_qr.py fails to
+          # import and aborts the whole collection run.
+          pip install flask paho-mqtt firebase-admin pyserial pytest "qrcode[pil]==7.4.2" "Pillow==10.3.0"
 
       - name: Run tests
         run: python -m pytest pi/tests/ -v
