@@ -1,8 +1,12 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-13 (technical report for the thesis writeup, a new
+**Last updated:** 2026-08-16 (fake sensor firmware rewritten to match
+production mesh logic exactly, a MAC-reader bench utility, fleet grown to 4
+sensor boards then back to 3 after a bad-antenna diagnosis, ghost MQTT topics
+cleared, and a real multi-hop relay confirmed working over the air).
+Previous session 2026-08-13: technical report for the thesis writeup, a new
 Plant Care Profiles feature on the Dashboard, and a clean release build/install
-+ live QR regeneration on the bench phone/Pi). Previous session 2026-08-12:
++ live QR regeneration on the bench phone/Pi. Previous session 2026-08-12:
 ghost retained topics + scaling analysis, earlier the same day plain-language
 UX overhaul, real `last seen` timestamps, drag-to-pin fix, QR tool rewrite.
 Previous same-day-2026-08-11 sessions: history false-alert fix + mesh map
@@ -16,13 +20,68 @@ merged and live.
 > not pulled — pulling would merge the literals back in. Pre-scrub hashes
 > quoted in the older session notes below no longer resolve.
 
-**Status:** UART bridge to the Pi is now **working** — the 2026-07-27 "no
-traffic on `/dev/serial0`" note below is resolved (was a diagnostic artifact,
-not the link). WiFi first-time setup (captive portal) had four stacked bugs
-and is now fixed end to end. The bench Pi is fully deployed off current
-`main`, `selftest.sh` reports 45/45. Still open: no edge node has actually
-delivered a sensor *reading* yet (bridge heartbeats fine, mesh path unproven);
-see the 2026-08-10 TL;DR for the full list.
+**Status:** The mesh path is now **proven end to end**, including real
+multi-hop relay — the 2026-08-10 note below ("no edge node has actually
+delivered a sensor reading yet") is resolved. Current fleet: bridge (`BE:80`)
++ zone2/3/4 (`9D:B0`/`6B:50`/`75:EC`), all three temporarily `sleepy=false`
+for the relay test — **revert to `sleepy=true` before any battery
+deployment**, they're drawing mains-level current right now. zone1 (`A1:B0`)
+is benched with a confirmed bad TX antenna, not retired. UART bridge to the
+Pi remains **working** (2026-07-27's "no traffic" note was a diagnostic
+artifact, not the link). WiFi first-time setup (captive portal) is fixed end
+to end. The bench Pi is fully deployed off current `main`, `selftest.sh`
+reports 45/45.
+
+---
+
+## TL;DR of this session (2026-08-16 — fake sensor firmware, MAC reconciliation, real relay test)
+
+Started from "I can't solder the sensors yet, make the mesh testable without
+them" and ended up field-verifying multi-hop relay for the first time.
+
+**`firmware/fake_edge_node_esp32_c3/` was completely stale and rewritten.**
+The existing file predated the fixed-channel rewrite, the deep-sleep spec, and
+battery telemetry — it still scanned for a WiFi SSID that no longer applies in
+the UART-bridge deployment, had no sleep cycle, and set a `light_lux` field
+`SensorPacket` no longer has (would not have compiled). New version mirrors
+`edge_node_esp32_c3.ino`'s mesh logic byte-for-byte (verified by diff) — same
+fixed channel, same sleepy wake cycle, same RTC persistence, same battery
+telemetry path — with only the DHT22/soil-ADC/battery-divider reads swapped
+for an RTC-persisted, per-MAC-seeded random walk, so a fake node is
+indistinguishable from a real one to the rest of the mesh. New
+`firmware/mac_reader/` utility (prints a board's MAC over Serial, no mesh/
+sensor code) for identifying unlabeled boards before assigning roles.
+
+**`TRUSTED_NODES[]` reconciliation.** `docs/DEVICES.md` and `mesh_config.h`
+had drifted apart and even disagreed with each other on which MAC was the
+bridge. Re-verified all 4 physical sensor boards' real MACs with
+`mac_reader.ino`, grew the fleet from 2 sensors to 4 (added zone3/zone4),
+then diagnosed zone1 (`A1:B0`) as having a bad TX antenna — strong, stable
+RSSI hearing the bridge (proves receive works) but 0/7 wake-cycle unicasts
+ever got a MAC-layer ACK, even moved to point-blank range (rules out "just
+too far", confirms a TX-path fault) — and pulled it from `TRUSTED_NODES[]`.
+Testing continues on zone2-4. Cleared two ghost entries from the app via
+`clear_retained.sh` (both brokers, verified clean): zone1's now-stale
+device/zone topics, plus a `zone1_test` ghost left over from earlier bench
+testing. Learned the hard way that `DRY_RUN=1 sudo bash script.sh` doesn't
+actually preview anything — `sudo` doesn't pass environment variables through
+by default, so the flag never reaches the script and it just runs for real.
+
+**Real multi-hop relay confirmed working, first time ever field-tested.**
+Sleepy (battery) nodes can never be adopted as a relay parent by design
+(`mesh_node.h`'s `meshHandleBeacon` rejects any `MESH_FLAG_SLEEPY` beacon
+before parent-selection even runs) — so zone2/3/4 were temporarily flipped to
+`sleepy=false` (no firmware change needed, same image, role is looked up from
+`TRUSTED_NODES[]` at boot) to make them relay-eligible. Walked a board out of
+the bridge's direct range with another in between: it adopted the nearer
+board as parent (rank 2, not unrouted), the bridge logged the relayed packet,
+and the app's mesh map redrew the link live. Also clarified for the record:
+there is no clock-synchronization algorithm in this codebase today — that's
+an explicitly deferred, not-yet-designed "Phase 2" in
+`docs/superpowers/specs/2026-07-26-mesh-deep-sleep-design.md`. Phase 1 (what's
+shipped) avoids needing sync entirely by making sleepy nodes leaf-only, which
+is exactly why they had to go always-on for this test. **Remember to revert
+zone2/3/4 to `sleepy=true` before any real battery deployment.**
 
 ---
 

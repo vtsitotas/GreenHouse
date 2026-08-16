@@ -122,8 +122,18 @@ struct TrustedNode {
 };
 
 static const TrustedNode TRUSTED_NODES[] = {
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0xBE, 0x80 }, nullptr, false },  // bridge (ESP32-C3)
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0xA1, 0xB0 }, "zone1", true  },  // ESP32-C3 edge node 1 (battery)
-  { { 0x20, 0x6E, 0xF1, 0x6C, 0x9D, 0xB0 }, "zone2", true  },  // ESP32-C3 edge node 2 (battery)
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0xBE, 0x80 }, nullptr, false },  // bridge (ESP32-C3, unchanged)
+  // zone1 (A1:B0) pulled 2026-08-16: confirmed bad TX antenna — hears the
+  // bridge fine (rssi -56..-67) but 0/7 unicasts ever got a MAC-layer ACK,
+  // even at point-blank range. Re-add once the antenna/board is fixed.
+  // sleepy=false 2026-08-16 for a real relay test (see docs/DEVICES.md) — a
+  // sleepy node can never be adopted as a parent (mesh_node.h
+  // meshHandleBeacon), so proving multi-hop relay requires at least one
+  // always-on node in the chain. All 3 flipped for now; flip back to true
+  // before any real deployment run, since always-on draws mains-level
+  // current (~86mA active, no deep-sleep floor) and won't survive on battery.
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0x9D, 0xB0 }, "zone2", false },  // ESP32-C3 edge node (mains, relay test)
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0x6B, 0x50 }, "zone3", false },  // ESP32-C3 edge node (mains, relay test)
+  { { 0x20, 0x6E, 0xF1, 0x6C, 0x75, 0xEC }, "zone4", false },  // ESP32-C3 edge node (mains, relay test)
 };
 static const int TRUSTED_NODE_COUNT = sizeof(TRUSTED_NODES) / sizeof(TRUSTED_NODES[0]);
