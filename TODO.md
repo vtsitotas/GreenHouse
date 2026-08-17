@@ -131,6 +131,18 @@ data). Phase 1 (leaf-only sleep, which sidesteps the clock-sync problem by
 keeping every possible parent always-on) is implemented — see §4 Field
 hardening below.
 
+**Update 2026-08-17:** Phase 2 now has a full design spec —
+`docs/superpowers/specs/2026-08-17-mesh-phase2-synced-wake-design.md`. Chosen
+architecture ("Cascaded Adjacent-Resync TDMA", CART) resyncs every node
+against its immediate parent's live beacon each wake (no global clock, no
+external crystal), with an adaptive per-node guard window and a staged
+`MESH_SLEEPY_RELAY_DEPTH_MAX` rollout (ship depth-1 first; `=0` reproduces
+Phase 1 exactly as a rollback lever). **Status: designed, not built.** Next
+concrete action is the real-hardware drift-measurement bench step the spec
+depends on (mains-powered, no soldering, benches both a 5-min and a 15-min
+candidate production interval) — implementation is gated on that data, not
+started yet.
+
 ---
 
 ## 3. Code exists, never validated on real hardware
