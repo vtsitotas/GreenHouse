@@ -73,6 +73,18 @@ void main() {
         tester.widget<Text>(find.byKey(const Key('current-value'))).data, '18.0°C');
   });
 
+  testWidgets('shows a CSV export button once data has loaded', (tester) async {
+    await tester.pumpWidget(ProviderScope(
+      overrides: [
+        historyWithPredictionProvider.overrideWith((ref, query) async =>
+            (actual: [_pt(0, 20.0), _pt(60, 22.0)], predicted: <HistoryPoint>[])),
+      ],
+      child: const MaterialApp(home: HistoryScreen(zone: 'zone1', metric: 'air_temperature')),
+    ));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('history-export-button')), findsOneWidget);
+  });
+
   testWidgets('shows empty-state message when there is no data', (tester) async {
     await tester.pumpWidget(ProviderScope(
       overrides: [
@@ -83,6 +95,7 @@ void main() {
     ));
     await tester.pumpAndSettle();
     expect(find.textContaining('No history yet'), findsOneWidget);
+    expect(find.byKey(const Key('history-export-button')), findsNothing);
   });
 
   testWidgets('shows a friendly error, with the raw text kept out of the headline',
