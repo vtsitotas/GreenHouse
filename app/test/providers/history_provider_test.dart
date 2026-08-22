@@ -236,6 +236,21 @@ void main() {
       expect(data.predicted, isEmpty);
     });
 
+    test('falls back to trend extrapolation when the forecast stream errors', () async {
+      final container = ProviderContainer(overrides: [
+        historyPointsProvider.overrideWith((ref, query) async => [pt(0, 20), pt(60, 22)]),
+        forecastProvider
+            .overrideWith((ref) => Stream.error(Exception('forecast unavailable'))),
+      ]);
+      addTearDown(container.dispose);
+      const query = HistoryQuery(zone: null, kind: 'weather', metric: 'temperature', hours: 24);
+      final data = await container.read(historyWithPredictionProvider(query).future);
+      // Falls through to predictTrend rather than surfacing the stream error
+      // or leaving predicted empty -- trend continues the 20->22 rise.
+      expect(data.predicted, isNotEmpty);
+      expect(data.predicted.first.avg, greaterThan(22.0));
+    });
+
     test('still predicts for a normal rolling-window query with enough points (regression check)',
         () async {
       final container = ProviderContainer(overrides: [

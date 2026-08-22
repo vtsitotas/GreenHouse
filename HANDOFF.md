@@ -1,9 +1,11 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-16 (fake sensor firmware rewritten to match
+**Last updated:** 2026-08-22 (CSV export of history data, and test coverage
+for the forecast-failure fallback path — app-only, no hardware/firmware
+touched). Previous session 2026-08-16: fake sensor firmware rewritten to match
 production mesh logic exactly, a MAC-reader bench utility, fleet grown to 4
 sensor boards then back to 3 after a bad-antenna diagnosis, ghost MQTT topics
-cleared, and a real multi-hop relay confirmed working over the air).
+cleared, and a real multi-hop relay confirmed working over the air.
 Previous session 2026-08-13: technical report for the thesis writeup, a new
 Plant Care Profiles feature on the Dashboard, and a clean release build/install
 + live QR regeneration on the bench phone/Pi. Previous session 2026-08-12:
@@ -31,6 +33,67 @@ Pi remains **working** (2026-07-27's "no traffic" note was a diagnostic
 artifact, not the link). WiFi first-time setup (captive portal) is fixed end
 to end. The bench Pi is fully deployed off current `main`, `selftest.sh`
 reports 45/45.
+
+---
+
+## TL;DR of this session (2026-08-22 — CSV history export, forecast-fallback test coverage)
+
+Ran from a sandbox with no `flutter`/`pytest` toolchain available at all (not
+just no hardware — confirmed by trying), so this session deliberately picked
+the two open `TODO.md` items that are pure Dart and don't need either:
+firmware/hardware work, credential rotation, and iOS testing were all left
+alone as out of scope for this environment.
+
+**CSV export of history.** `TODO.md`'s "App feature gaps" listed this as not
+started. Added an export button (share icon, next to the range label on the
+History screen's chart card) that shares a CSV of the currently-loaded
+`actual` points — real recorded data only, never the dashed prediction/
+forecast overlay — via the OS share sheet (email, Drive, Files, etc.). New
+`share_plus` dependency: checked pub.dev's version list directly rather than
+guessing, since this repo's `pubspec.yaml` already carries a `vector_math`
+override worked out from real SDK-constraint conflicts — picked `^10.1.2`,
+the newest release still declaring `sdk: >=3.3.0 <4.0.0` (matching this
+repo's declared environment exactly; later releases bump to `>=3.4.0`/
+`>=3.10.0`, still fine but 10.1.2 is the widest-compatible choice). Also
+pulled `share_plus`'s and `cross_file`'s actual source from pub.dev to
+confirm the real `Share.shareXFiles`/`XFile.fromData` signatures rather than
+assume — worth noting since `XFile.fromData`'s `name` parameter is silently
+*ignored* on Android/iOS (cross_file's `io.dart`, by design), so the visible
+filename actually comes from `shareXFiles`'s separate `fileNameOverrides`
+parameter; missing that would have shipped a working share sheet with the
+wrong filename on every real device while looking correct in review. New
+`app/lib/utils/history_csv.dart` (`historyToCsv`/`historyCsvFilename`, pure
+functions, unit tested) plus the button wiring in `history_screen.dart`,
+wrapped in try/catch with a `SnackBar` on failure rather than letting a
+share-sheet exception reach the user raw (matching the existing
+`friendly_error.dart` convention from the 2026-08-12 UX pass).
+
+**Forecast-failure fallback, now test-covered.** Same `TODO.md` section:
+"No direct test exercises the forecast-timeout/failure fallback path in
+`historyWithPredictionProvider`." Added a test overriding `forecastProvider`
+with `Stream.error(...)`, proving the `catch (_)` in
+`history_provider.dart`'s prediction logic falls through to `predictTrend`
+instead of leaking the exception or leaving `predicted` empty. Covers the
+*failure* half specifically, not the sibling `.timeout(Duration(seconds: 3))`
+call on the same line — both paths hit the identical `catch` block, and a
+true timeout test would need to actually block for 3 real seconds (no
+`fake_async` dependency in this repo to fast-forward it) for one branch that
+behaves identically either way, which isn't worth adding as a dependency for.
+
+**Also checked, found already fixed:** `TODO.md`'s "Housekeeping" section
+still lists `WEATHER_INTERVAL=30` as a live debug value. `git log -p` on
+`pi/systemd/greenhouse-weather.service` shows it was already changed to
+`1800` in a later commit — the tracked file is correct. That `TODO.md` entry
+was about a *deployed* Pi still running stale config, not something fixable
+in this repo's code; left as a note for whoever next redeploys the bench Pi,
+not touched here.
+
+**Not run locally — no toolchain in this sandbox.** `flutter analyze`/
+`flutter test` and `pytest` are both unavailable here (confirmed, not
+assumed); CI (`flutter-tests` job) runs both on every push. Read through
+every new/changed file by hand afterward for the compiler this sandbox
+doesn't have, including pulling the real dependency source to check exact
+API signatures rather than trusting memory.
 
 ---
 

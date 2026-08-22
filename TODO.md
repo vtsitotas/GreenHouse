@@ -412,13 +412,23 @@ untestable-without-hardware reason as the channel discovery item above.
       real hardware yet — until the fleet is reflashed (deep-sleep plan
       Task 6), the Mesh Map's degraded-data banner still shows on the real
       fleet.
-- [ ] CSV export of history data — not started.
+- [x] CSV export of history data (2026-08-22): share-sheet export of the
+      currently-loaded history chart's real (non-predicted) points, via a new
+      button on the History screen. New `share_plus` dependency,
+      `utils/history_csv.dart`. App-side only. Not run through
+      `flutter analyze`/`flutter test` locally — no Flutter toolchain in that
+      session's sandbox — relies on CI to confirm; see `HANDOFF.md` 2026-08-22
+      entry.
 - [ ] Smartwatch/widget glance view — not started.
 - [ ] iOS — completely untested (Android-only device used throughout
       development).
-- [ ] No direct test exercises the forecast-timeout/failure fallback path in
-      `historyWithPredictionProvider` (reviewed as correct by code review,
-      not test-proven).
+- [x] Forecast-*failure* fallback path in `historyWithPredictionProvider` is
+      now test-covered (2026-08-22: `forecastProvider` overridden with
+      `Stream.error(...)`, asserts the `catch` falls through to
+      `predictTrend`). The sibling `.timeout(Duration(seconds: 3))` on the
+      same line still isn't separately tested — same `catch` block either
+      way, and exercising a real timeout would mean blocking a test for 3
+      real seconds (no `fake_async` dependency here to fast-forward it).
 
 ### Housekeeping
 - [ ] `debugPrint()` calls still present in `mqtt_connection.dart` (×3),

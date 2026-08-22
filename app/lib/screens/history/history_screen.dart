@@ -1,4 +1,6 @@
+import 'dart:convert';
 import 'dart:math' as math;
+import 'dart:typed_data';
 import 'package:fl_chart/fl_chart.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -8,6 +10,8 @@ import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
 import 'package:greenhouse_app/screens/pairing/pairing_screen.dart';
 import 'package:greenhouse_app/services/history_service.dart';
 import 'package:greenhouse_app/theme/app_colors.dart';
+import 'package:greenhouse_app/utils/history_csv.dart';
+import 'package:share_plus/share_plus.dart';
 
 String _unitFor(String metric) {
   switch (metric) {
@@ -128,6 +132,36 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
     if (h <= 24) return _timeLabel(t);
     if (h <= 168) return '${_weekdayNames[t.weekday - 1]} ${_timeLabel(t)}';
     return _dateLabel(t);
+  }
+
+  Future<void> _exportCsv(List<HistoryPoint> actual) async {
+    final csv = historyToCsv(actual);
+    final filename = historyCsvFilename(
+      kind: _kind,
+      zone: _zone,
+      metric: _metric,
+      rangeLabel: _rangeLabel,
+    );
+    try {
+      await Share.shareXFiles(
+        [
+          XFile.fromData(
+            Uint8List.fromList(utf8.encode(csv)),
+            name: filename,
+            mimeType: 'text/csv',
+          ),
+        ],
+        subject: _title,
+        // XFile.fromData ignores `name` on Android/iOS -- shareXFiles's own
+        // override is what actually names the shared file there.
+        fileNameOverrides: [filename],
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text("Couldn't share the CSV file.")),
+      );
+    }
   }
 
   Future<void> _pickCustomRange() async {
@@ -265,11 +299,23 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                             style: Theme.of(context).textTheme.bodySmall,
                           ),
                           const SizedBox(height: 12),
-                          Text(_rangeLabel,
-                              style: Theme.of(context)
-                                  .textTheme
-                                  .titleSmall
-                                  ?.copyWith(fontWeight: FontWeight.bold)),
+                          Row(
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                            children: [
+                              Text(_rangeLabel,
+                                  style: Theme.of(context)
+                                      .textTheme
+                                      .titleSmall
+                                      ?.copyWith(fontWeight: FontWeight.bold)),
+                              IconButton(
+                                key: const Key('history-export-button'),
+                                icon: const Icon(Icons.ios_share),
+                                tooltip: 'Export CSV',
+                                visualDensity: VisualDensity.compact,
+                                onPressed: () => _exportCsv(actual),
+                              ),
+                            ],
+                          ),
                           const SizedBox(height: 12),
                           SizedBox(
                             height: 240,
