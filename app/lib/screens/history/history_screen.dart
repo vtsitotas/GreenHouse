@@ -272,67 +272,73 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                     elevation: 4,
                     child: Padding(
                       padding: const EdgeInsets.all(16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.baseline,
-                            textBaseline: TextBaseline.alphabetic,
-                            children: [
-                              Text('${latest.avg.toStringAsFixed(1)}$unit',
-                                  key: const Key('current-value'),
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .headlineMedium
-                                      ?.copyWith(fontWeight: FontWeight.bold)),
-                              const SizedBox(width: 8),
-                              Text(
-                                _customSelected && _until != null
-                                    ? 'on ${_dateLabel(_until!)}'
-                                    : 'now',
-                                style: Theme.of(context).textTheme.bodySmall,
-                              ),
-                            ],
-                          ),
-                          Text(
-                            'range ${minV.toStringAsFixed(1)}$unit – ${maxV.toStringAsFixed(1)}$unit',
-                            style: Theme.of(context).textTheme.bodySmall,
-                          ),
-                          const SizedBox(height: 12),
-                          Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(_rangeLabel,
-                                  style: Theme.of(context)
-                                      .textTheme
-                                      .titleSmall
-                                      ?.copyWith(fontWeight: FontWeight.bold)),
-                              IconButton(
-                                key: const Key('history-export-button'),
-                                icon: const Icon(Icons.ios_share, size: 20),
-                                tooltip: 'Export CSV',
-                                // Overrides IconButton's default 48x48
-                                // minimum tap target -- this row sits in a
-                                // tightly height-constrained card, and the
-                                // default target pushed the column past its
-                                // available height by a few pixels.
-                                padding: EdgeInsets.zero,
-                                constraints: const BoxConstraints(),
-                                onPressed: () => _exportCsv(actual),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 12),
-                          SizedBox(
-                            height: 240,
-                            child: _HistoryChart(
-                              actual: actual,
-                              predicted: data.predicted,
-                              unit: unit,
-                              axisTimeLabel: _axisTimeLabel,
+                      // The card sits in a tightly height-constrained
+                      // Expanded region (see the failing-test history for
+                      // this line: adding the export button alone pushed a
+                      // fixed-height Column a few px past its bound). Scroll
+                      // instead of relying on an exact-fit height budget --
+                      // Flutter's own overflow message recommends exactly
+                      // this. mainAxisSize.min is required here: a Column
+                      // defaults to .max, which asserts under the unbounded
+                      // height a scroll view's child is laid out with.
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              crossAxisAlignment: CrossAxisAlignment.baseline,
+                              textBaseline: TextBaseline.alphabetic,
+                              children: [
+                                Text('${latest.avg.toStringAsFixed(1)}$unit',
+                                    key: const Key('current-value'),
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .headlineMedium
+                                        ?.copyWith(fontWeight: FontWeight.bold)),
+                                const SizedBox(width: 8),
+                                Text(
+                                  _customSelected && _until != null
+                                      ? 'on ${_dateLabel(_until!)}'
+                                      : 'now',
+                                  style: Theme.of(context).textTheme.bodySmall,
+                                ),
+                              ],
                             ),
-                          ),
-                        ],
+                            Text(
+                              'range ${minV.toStringAsFixed(1)}$unit – ${maxV.toStringAsFixed(1)}$unit',
+                              style: Theme.of(context).textTheme.bodySmall,
+                            ),
+                            const SizedBox(height: 12),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Text(_rangeLabel,
+                                    style: Theme.of(context)
+                                        .textTheme
+                                        .titleSmall
+                                        ?.copyWith(fontWeight: FontWeight.bold)),
+                                IconButton(
+                                  key: const Key('history-export-button'),
+                                  icon: const Icon(Icons.ios_share),
+                                  tooltip: 'Export CSV',
+                                  visualDensity: VisualDensity.compact,
+                                  onPressed: () => _exportCsv(actual),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 12),
+                            SizedBox(
+                              height: 240,
+                              child: _HistoryChart(
+                                actual: actual,
+                                predicted: data.predicted,
+                                unit: unit,
+                                axisTimeLabel: _axisTimeLabel,
+                              ),
+                            ),
+                          ],
+                        ),
                       ),
                     ),
                   ),
