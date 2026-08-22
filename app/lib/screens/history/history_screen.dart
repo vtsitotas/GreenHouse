@@ -309,9 +309,15 @@ class _HistoryScreenState extends ConsumerState<HistoryScreen> {
                                       ?.copyWith(fontWeight: FontWeight.bold)),
                               IconButton(
                                 key: const Key('history-export-button'),
-                                icon: const Icon(Icons.ios_share),
+                                icon: const Icon(Icons.ios_share, size: 20),
                                 tooltip: 'Export CSV',
-                                visualDensity: VisualDensity.compact,
+                                // Overrides IconButton's default 48x48
+                                // minimum tap target -- this row sits in a
+                                // tightly height-constrained card, and the
+                                // default target pushed the column past its
+                                // available height by a few pixels.
+                                padding: EdgeInsets.zero,
+                                constraints: const BoxConstraints(),
                                 onPressed: () => _exportCsv(actual),
                               ),
                             ],
