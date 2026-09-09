@@ -619,4 +619,57 @@ function motif(s, ox, oy, sc = 1, col = '265444') {
   s.addNotes('Παράρτημα. Οι δύο στατιστικές πηγές είναι αυτές που στηρίζουν τα νούμερα της δεύτερης διαφάνειας.');
 }
 
-p.writeFile({ fileName: 'GreenHouse_Parousiasi.pptx' }).then(f => console.log('wrote', f));
+/* ---------------------------------------------------------------------------
+ * Repair a pptxgenjs bug before the file is handed over.
+ *
+ * For every 2D bar/column chart the library appends THREE <c:axId> children to
+ * <c:barChart> (its AXIS_ID_SERIES_PRIMARY among them) but only ever emits the
+ * matching <c:serAx> element for BAR3D charts. The result references an axis
+ * that does not exist, and CT_BarChart accepts exactly two axis ids anyway.
+ *
+ * PowerPoint refuses to open the whole presentation. LibreOffice ignores the
+ * stray id and renders fine, so a render-based QA pass never catches it.
+ *
+ * This strips any <c:axId> inside a chart group that no axis element defines.
+ * ------------------------------------------------------------------------- */
+async function dropDanglingAxisIds(file) {
+  const fs = require('fs');
+  const JSZip = require('jszip');
+  const zip = await JSZip.loadAsync(fs.readFileSync(file));
+  const AXIS = /<c:(?:catAx|valAx|serAx|dateAx)>([\s\S]*?)<\/c:(?:catAx|valAx|serAx|dateAx)>/g;
+  let removed = 0;
+
+  for (const path of Object.keys(zip.files)) {
+    if (!/^ppt\/charts\/chart\d+\.xml$/.test(path)) continue;
+    const xml = await zip.file(path).async('string');
+
+    const defined = new Set();
+    for (const m of xml.matchAll(AXIS)) {
+      const id = m[1].match(/<c:axId val="(\d+)"\s*\/>/);
+      if (id) defined.add(id[1]);
+    }
+
+    const fixed = xml.replace(/<c:(\w+Chart)>([\s\S]*?)<\/c:\1>/g, (whole, tag, inner) =>
+      `<c:${tag}>` + inner.replace(/<c:axId val="(\d+)"\s*\/>/g, (node, id) => {
+        if (defined.has(id)) return node;
+        removed++;
+        return '';
+      }) + `</c:${tag}>`);
+
+    if (fixed !== xml) zip.file(path, fixed);
+  }
+
+  if (removed) {
+    fs.writeFileSync(file, await zip.generateAsync({
+      type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 },
+    }));
+  }
+  return removed;
+}
+
+p.writeFile({ fileName: 'GreenHouse_Parousiasi.pptx' })
+  .then(async (f) => {
+    const removed = await dropDanglingAxisIds(f);
+    console.log('wrote', f, removed ? `(removed ${removed} dangling axis id(s))` : '(no chart repair needed)');
+  })
+  .catch((e) => { console.error(e); process.exit(1); });
