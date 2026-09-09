@@ -4,8 +4,8 @@
 #include <esp_wifi.h>
 #include <esp_sleep.h>
 #include <DHT.h>
-#include <mesh_config.h>
-#include <mesh_node.h>
+#include "mesh_config.h"
+#include "mesh_node.h"
 
 // ── Pin definitions ───────────────────────────────────────────────────────────
 #define SOIL_DATA_PIN  1   // ADC1_CH1 — NOT GPIO2: that's an ESP32-C3 strapping
@@ -25,8 +25,6 @@
 #define BATT_ADC_PIN  3   // GPIO3 / ADC1_CH3
 
 // ── Soil moisture calibration ─────────────────────────────────────────────────
-// Read SOIL_DATA_PIN with sensor in dry air → set DRY_VAL
-// Read SOIL_DATA_PIN with sensor submerged in water → set WET_VAL
 #define SOIL_DRY_VAL  3163
 #define SOIL_WET_VAL  1529
 
@@ -36,23 +34,13 @@
 
 DHT dht(DHT_DATA_PIN, DHT22);
 
-// Non-blocking sensor cycle: blocking delay()s would starve the beacon/timeout
-// scheduling in loop(), so the old delay(2000)+delay(5000) cycle is now a
-// two-phase state machine driven by millis(). (Always-on / non-sleepy path
-// only — the sleepy path below uses its own bounded wait loops.)
 enum SensorPhase { PHASE_IDLE, PHASE_WARMUP };
 SensorPhase phase        = PHASE_IDLE;
 uint32_t    phaseStartMs = 0;
 uint32_t    lastCycleMs  = 0;
 uint32_t    lastRescanMs = 0;
+uint32_t    lastJoinMs   = 0;
 
-// Deployments with a router used to scan for its SSID purely to pick a
-// channel to agree on. A UART-wired fleet (no router at all) has nothing to
-// scan for, so every node just locks to the fixed constant instead — see
-// MESH_FIXED_CHANNEL's comment in mesh_config.h. Kept as its own function
-// (rather than inlining the constant at each call site) so every call site
-// below is otherwise byte-for-byte unchanged — same self-heal scaffolding,
-// same signature, only the channel-acquisition primitive underneath swapped.
 int32_t getMeshChannel() {
   return MESH_FIXED_CHANNEL;
 }
@@ -64,41 +52,39 @@ float soilPercent(int raw) {
   return pct;
 }
 
-// -1 = pending (no send callback yet), 0 = last unicast failed, 1 = ok.
-// Written from the ESP-NOW send callback (interrupt/task context), read from
-// the wake cycle's poll loop — volatile keeps the compiler from caching it.
 volatile int8_t g_lastTxStatus = -1;
-
-// Consecutive sleepy wakes that ended without a single confirmed delivery.
-// Survives deep sleep so a router channel change while asleep can't strand
-// the node forever: after 2 silent wakes (~30 min) the next wake ignores the
-// cached channel and pays for a full SSID scan — the only way back onto the
-// mesh's new channel. Reset to 0 by any confirmed delivery.
 RTC_DATA_ATTR uint8_t g_unconfirmedWakes = 0;
 
 void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
   bool ok = (status == ESP_NOW_SEND_SUCCESS);
-  meshNotifyTxStatus(ok);   // shared by both roles: 3-consecutive-fail backstop
+  meshNotifyTxStatus(ok);
   g_lastTxStatus = ok ? 1 : 0;
 }
 
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   uint32_t now = millis();
   int rssi = info->rx_ctrl ? info->rx_ctrl->rssi : -127;
-  if (len == sizeof(MeshBeacon)) {
+
+  // Check for a provisioning blob (33 bytes, not a beacon or data packet)
+  if (len == MESH_PROVISION_LEN && !meshStoreIsProvisioned()) {
+    if (meshHandleProvision(data, len)) {
+      Serial.println("[edge] provisioned — will boot into normal mode");
+      delay(500);
+      ESP.restart();
+    }
+    return;
+  }
+
+  if (len == (int)sizeof(MeshBeacon)) {
     MeshBeacon b;
     memcpy(&b, data, sizeof(b));
-    if (b.magic == MESH_MAGIC) meshHandleBeacon(info->src_addr, &b, rssi, now);
-  } else if (len == sizeof(MeshDataPacket)) {
+    if (b.magic == MESH_MAGIC_V2) meshHandleBeacon(info->src_addr, &b, rssi, now);
+  } else if (len == MESH_PACKET_LEN) {
     // Some child picked us as its parent — relay its packet toward the bridge.
     meshRelayData(info->src_addr, data, len);
   }
 }
 
-// 8-sample average of analogReadMilliVolts() (factory ADC calibration,
-// default 11 dB attenuation — correct for the divided range, no
-// analogSetAttenuation() call needed), doubled for the 2×220k divider.
-// < 2000 mV ⇒ pin floating / divider not fitted ⇒ "not measured".
 uint16_t readBatteryMv() {
   uint32_t sum = 0;
   for (int i = 0; i < 8; i++) {
@@ -109,10 +95,6 @@ uint16_t readBatteryMv() {
   return (mv < 2000) ? 0 : mv;
 }
 
-// The ONLY exit from the sleepy wake cycle. Persists RTC state LAST, arms the
-// timer for whatever's left of the 15-minute interval (floored), and never
-// returns. Sensor PWR pins are forced LOW here defensively so every call site
-// doesn't have to remember to do it first.
 void goToSleep(uint8_t channel) {
   digitalWrite(SOIL_PWR_PIN, LOW);
   digitalWrite(DHT_PWR_PIN,  LOW);
@@ -129,21 +111,11 @@ void goToSleep(uint8_t channel) {
   esp_deep_sleep_start();
 }
 
-// Send the wake reading and wait (bounded by both MESH_TX_CONFIRM_WAIT_MS and
-// the overall wake deadline) for the ESP-NOW send callback to confirm it.
-// g_lastTxStatus is reset to -1 immediately before meshSendReading() so the
-// wake beacon's own (broadcast, always-success) send callback — which fires
-// within milliseconds of a call ~2s earlier — can't be mistaken for this
-// unicast's result.
-// If meshSendReading() had no parent to send to, it already buffered the
-// packet instead of handing it to the radio: no send callback will ever
-// arrive for it, so check meshHasParent() BEFORE waiting rather than idling
-// out the full window for nothing.
-bool sendWithConfirm(const SensorPacket* payload, uint32_t deadline) {
+bool sendWithConfirm(const SensorReading* r, uint32_t deadline) {
   g_lastTxStatus = -1;
-  meshSendReading(payload);
+  meshSendReading(r);
 
-  if (!meshHasParent()) return false;  // buffered, unrouted — no callback coming
+  if (!meshHasParent()) return false;
 
   uint32_t waitStart = millis();
   while (g_lastTxStatus == -1 &&
@@ -154,24 +126,18 @@ bool sendWithConfirm(const SensorPacket* payload, uint32_t deadline) {
   return (g_lastTxStatus == 1 && meshHasParent());
 }
 
-// Replaces the always-on loop() entirely for a node whose own TRUSTED_NODES[]
-// entry says sleepy=true. Single pass, hard-bounded by MESH_WAKE_MAX_AWAKE_MS,
-// never returns — the last thing it ever does is esp_deep_sleep_start().
 void runSleepyCycle() {
-  const uint32_t deadline = MESH_WAKE_MAX_AWAKE_MS;  // millis() budget from boot
+  const uint32_t deadline = MESH_WAKE_MAX_AWAKE_MS;
 
-  bool restored = meshRtcRestore();  // hint only — confirmed via TX/beacon below
+  bool restored = meshRtcRestore();
   Serial.printf("[wake] rtc restore: %s\n", restored ? "parent hint" : "none (cold/invalid)");
 
-  // Sensors on immediately — warm-up runs concurrently with radio bring-up.
   digitalWrite(SOIL_PWR_PIN, HIGH);
   digitalWrite(DHT_PWR_PIN,  HIGH);
   uint32_t warmupStart = millis();
 
   uint8_t ch = meshRtcSavedChannel();
   if (ch == 0 || g_unconfirmedWakes >= 2) {
-    Serial.printf("[wake] channel lookup (%s)\n",
-                  ch == 0 ? "no saved channel" : "2+ silent wakes — re-confirming");
     ch = (uint8_t)getMeshChannel();
   }
   esp_wifi_set_promiscuous(true);
@@ -179,46 +145,40 @@ void runSleepyCycle() {
   esp_wifi_set_promiscuous(false);
 
   if (esp_now_init() != ESP_OK) {
-    // CRITICAL: sleep, never a restart loop — a restart loop on a battery
-    // node with a persistently-failing radio would drain the pack fast.
     Serial.println("[esp-now] init failed on wake — sleeping without sending");
     goToSleep(ch);
   }
   esp_now_register_send_cb(onDataSent);
   esp_now_register_recv_cb(onDataRecv);
-  meshInit(0);  // channel 0 = follow current radio channel
+  meshInit(0);
 
-  // Announces us (sleepy-flagged); trickle-resets awake neighbors so we hear
-  // the parent's (or a new candidate's) beacon during the warm-up wait below.
   meshSendBeaconNow(meshMyRank, MESH_SLEEP_INTERVAL_MS);
 
   while (millis() - warmupStart < SENSOR_WARMUP_MS && millis() < deadline) delay(10);
 
-  SensorPacket pkt;
-  pkt.temperature   = dht.readTemperature();
-  pkt.humidity      = dht.readHumidity();
-  pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));  // read while powered
+  SensorReading r;
+  r.temperature   = dht.readTemperature();
+  r.humidity      = dht.readHumidity();
+  r.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
 
   digitalWrite(SOIL_PWR_PIN, LOW);
   digitalWrite(DHT_PWR_PIN,  LOW);
 
-  if (isnan(pkt.temperature) || isnan(pkt.humidity)) {
+  if (isnan(r.temperature) || isnan(r.humidity)) {
     Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO6");
   } else {
     Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
-                  pkt.temperature, pkt.humidity, pkt.soil_moisture);
+                  r.temperature, r.humidity, r.soil_moisture);
   }
 
   meshSetBatteryMv(readBatteryMv());
 
-  bool delivered = sendWithConfirm(&pkt, deadline);
+  bool delivered = sendWithConfirm(&r, deadline);
   Serial.printf("[wake] delivered=%d hasParent=%d\n", delivered, meshHasParent());
 
   if (!delivered && millis() < deadline) {
-    // Orphan fallback: the remembered parent (if any) is unconfirmed —
-    // rediscover, bounded by the discovery window and the overall deadline.
     if (meshHasParent()) meshDropParent("wake tx unconfirmed");
-    meshRequeueLastReading();  // no-op if meshSendReading already buffered it
+    meshRequeueLastReading();
 
     uint32_t listenStart = millis();
     while (!meshHasParent() && millis() - listenStart < MESH_WAKE_DISCOVERY_MS &&
@@ -226,8 +186,8 @@ void runSleepyCycle() {
       delay(10);
     }
     if (meshHasParent()) {
-      g_lastTxStatus = -1;  // flush result must not be judged by a stale status
-      meshFlushBuffer();    // resends same-seq packets; bridge de-dups any that arrived
+      g_lastTxStatus = -1;
+      meshFlushBuffer();
       uint32_t confirmStart = millis();
       while (g_lastTxStatus == -1 && millis() - confirmStart < MESH_TX_CONFIRM_WAIT_MS &&
              millis() < deadline) {
@@ -238,8 +198,6 @@ void runSleepyCycle() {
     }
   }
 
-  // Channel self-heal bookkeeping: a confirmed delivery proves the cached
-  // channel is still right; anything else counts toward forcing a rescan.
   bool confirmed = delivered || (meshHasParent() && g_lastTxStatus == 1);
   if (confirmed) g_unconfirmedWakes = 0;
   else if (g_unconfirmedWakes < 250) g_unconfirmedWakes++;
@@ -249,9 +207,6 @@ void runSleepyCycle() {
 
 void setup() {
   Serial.begin(115200);
-  // Skip the USB-CDC settle wait on a timer wake — nobody's watching a
-  // serial monitor in the field, and it's 1.5 s of battery every 15 min.
-  // Keep it on power-on/flash/brownout wakes for bench work.
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) delay(1500);
 
   pinMode(SOIL_PWR_PIN, OUTPUT);
@@ -264,9 +219,30 @@ void setup() {
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  // meshIsSelfSleepy() needs WiFi.mode() set (WiFi.macAddress requires the
-  // driver up) — satisfied above. Sleepy boards never reach the always-on
-  // scan/loop below; runSleepyCycle() ends in esp_deep_sleep_start().
+  meshStoreBegin();
+
+  // Cold boot only: a timer wake keeps its RTC seq, so bumping here would burn
+  // flash every 15 minutes for nothing.
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER)
+    meshStoreBumpBootCount();
+
+  if (!meshStoreIsProvisioned()) {
+    // Unenrolled: announce ourselves, never sleep (the owner is standing here
+    // with the app open), never route, never read sensors.
+    int32_t ch = getMeshChannel();
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
+    if (esp_now_init() != ESP_OK) { Serial.println("[esp-now] init failed"); return; }
+    esp_now_register_recv_cb(onDataRecv);
+    meshInit((uint8_t)ch);
+    WiFi.macAddress(meshSelfMac);
+    Serial.printf("[edge] unenrolled — join beacons every %lums\n",
+                  (unsigned long)MESH_JOIN_BEACON_INTERVAL_MS);
+    return;
+  }
+
+  // meshIsSelfSleepy() uses NVS (meshStoreBegin already called)
   if (meshIsSelfSleepy()) runSleepyCycle();  // never returns
 
   int32_t ch = getMeshChannel();
@@ -282,17 +258,26 @@ void setup() {
   }
   esp_now_register_send_cb(onDataSent);
   esp_now_register_recv_cb(onDataRecv);
-  meshInit(0);  // channel 0 = follow current radio channel (survives re-scans)
+  meshInit(0);
 
   Serial.printf("[edge] MAC: %s\n", WiFi.macAddress().c_str());
-  Serial.println("[edge] unrouted — listening for trusted beacons");
+  Serial.println("[edge] provisioned — listening for beacons");
 }
 
 void loop() {
   uint32_t now = millis();
 
-  meshBeaconTick(now);          // own beacon on the trickle schedule
-  meshCheckParentTimeout(now);  // self-heal: drop a silent parent
+  // Not yet provisioned — send join beacons, don't do anything else.
+  if (!meshStoreIsProvisioned()) {
+    if (now - lastJoinMs >= MESH_JOIN_BEACON_INTERVAL_MS) {
+      lastJoinMs = now;
+      meshSendJoinBeacon();
+    }
+    return;
+  }
+
+  meshBeaconTick(now);
+  meshCheckParentTimeout(now);
 
   switch (phase) {
     case PHASE_IDLE:
@@ -306,42 +291,29 @@ void loop() {
 
     case PHASE_WARMUP:
       if (now - phaseStartMs >= SENSOR_WARMUP_MS) {
-        SensorPacket pkt;
-        pkt.temperature   = dht.readTemperature();
-        pkt.humidity      = dht.readHumidity();
-        pkt.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));  // read while powered
+        SensorReading r;
+        r.temperature   = dht.readTemperature();
+        r.humidity      = dht.readHumidity();
+        r.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
 
         digitalWrite(SOIL_PWR_PIN, LOW);
         digitalWrite(DHT_PWR_PIN,  LOW);
         lastCycleMs = now;
         phase = PHASE_IDLE;
 
-        // Battery telemetry: always-on nodes report too when a divider is
-        // fitted (mains node on a shared board revision); an unfitted pin
-        // floats near 0 and readBatteryMv() reports "not measured" (0).
         meshSetBatteryMv(readBatteryMv());
 
-        if (isnan(pkt.temperature) || isnan(pkt.humidity)) {
+        if (isnan(r.temperature) || isnan(r.humidity)) {
           Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO6");
         } else {
           Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
-                        pkt.temperature, pkt.humidity, pkt.soil_moisture);
+                        r.temperature, r.humidity, r.soil_moisture);
         }
-        // Send even on a failed DHT read: NaN survives the wire fine
-        // (IEEE-754, same encoding both ends) and the bridge skips
-        // publishing just the NaN metric(s). Keeps lastSeenMs/nodeOnline
-        // current so a bad DHT read doesn't falsely report the whole node
-        // offline (IMPROVEMENTS.md finding B6).
-        meshSendReading(&pkt);  // to parent, or buffered while unrouted
+        meshSendReading(&r);
       }
       break;
   }
 
-  // No router to change channels on a fixed-channel fleet, so this can no
-  // longer be a real recovery action — re-applying the same constant is a
-  // harmless no-op, kept only so a continuously-unrouted node still logs
-  // something periodically for bench visibility, without adding a new
-  // "why is this node stuck" code path just for that.
   if (!meshHasParent()) {
     if (now - lastRescanMs >= MESH_RESCAN_AFTER_MS) {
       lastRescanMs = now;
@@ -355,5 +327,5 @@ void loop() {
     lastRescanMs = now;
   }
 
-  delay(10);  // yield; keeps the loop responsive without busy-spinning
+  delay(10);
 }

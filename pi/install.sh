@@ -22,6 +22,9 @@ apt-get install -y -qq \
   mosquitto mosquitto-clients \
   python3-flask \
   python3-paho-mqtt \
+  # python3-cryptography: mesh packet AES-GCM/CMAC. Installed via apt, NOT pip —
+  # this board is ARMv6 and pip would try to build it from source through Rust.
+  python3-cryptography \
   python3-pip \
   python3-serial \
   openssl \
@@ -63,6 +66,16 @@ chown pi:pi /var/lib/greenhouse
 # files inside keep their own tighter ownership (e.g. device.json stays
 # root:pi 640) -- this only grants pi the ability to create/remove entries.
 chown pi:pi /etc/greenhouse
+
+if [ ! -f /etc/greenhouse/netkey ]; then
+  openssl rand -hex 16 > /etc/greenhouse/netkey
+  echo "[install] generated a new mesh NetKey"
+fi
+chown pi:pi /etc/greenhouse/netkey
+chmod 600 /etc/greenhouse/netkey
+touch /etc/greenhouse/nodes.json
+chown pi:pi /etc/greenhouse/nodes.json
+chmod 600 /etc/greenhouse/nodes.json
 
 if [ ! -f /etc/greenhouse/firebase-service-account.json ]; then
   echo "NOTE: /etc/greenhouse/firebase-service-account.json not found."

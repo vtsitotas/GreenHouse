@@ -18,10 +18,17 @@ Same MESH_OFFLINE_AFTER-multiplier convention the firmware already uses for
 edge-node liveness (firmware/libraries/GreenhouseMesh/mesh_config.h).
 """
 import json
+import os as _os
+import sys as _sys
 import time
 
 import serial
 import paho.mqtt.client as mqtt
+
+_sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', 'shared'))
+import mesh_crypto
+import mesh_packet
+import nodes as node_store
 
 SERIAL_PORT = '/dev/serial0'
 BAUD = 115200
@@ -88,6 +95,10 @@ def new_state() -> dict:
         # (see BRIDGE_MESH_REFRESH_S).
         'bridge_mesh': None,
         'bridge_mesh_pub': None,   # time.monotonic() of that last republish
+        'nodes_path': node_store.NODES_PATH,
+        'net_key': None,
+        'seen': {},
+        'unenrolled': {},
     }
 
 
@@ -178,6 +189,83 @@ def _handle_heartbeat(client, msg: dict, state: dict) -> None:
         state['bridge_mesh_pub'] = now
 
 
+
+_METRICS = ('temperature', 'humidity', 'soil_moisture')
+
+
+def accept_replay(state, mac: str, boot_count: int, seq: int) -> bool:
+    """Reject replays without a clock: no node in this system has one.
+
+    A higher boot_count always wins and resets the window, because a cold boot
+    legitimately restarts seq at 0. A lower one is a rollback attempt.
+    """
+    last_boot, seen = state['seen'].get(mac, (-1, set()))
+    if boot_count < last_boot:
+        return False
+    if boot_count > last_boot:
+        state['seen'][mac] = (boot_count, {seq})
+        return True
+    if seq in seen:
+        return False
+    seen.add(seq)
+    return True
+
+
+def handle_frame(client, msg: dict, state: dict) -> None:
+    try:
+        raw = bytes.fromhex(msg['data'])
+        header = mesh_packet.parse_header(raw)
+    except (KeyError, ValueError) as exc:
+        print(f'[mesh] malformed frame dropped: {exc}', flush=True)
+        return
+
+    mac = header.origin_mac.hex().upper()
+    node = node_store.load(state['nodes_path']).get(mac)
+    if node is None:
+        state['unenrolled'][mac] = time.time()
+        print(f'[mesh] frame from unenrolled {mac} — ignored', flush=True)
+        return
+
+    if not accept_replay(state, mac, header.boot_count, header.seq):
+        print(f'[mesh] replay from {mac} dropped', flush=True)
+        return
+
+    try:
+        body = mesh_crypto.open_packet(raw, node.app_key)
+    except (mesh_crypto.MeshAuthError, mesh_crypto.MeshFormatError) as exc:
+        print(f'[mesh] {mac} failed authentication: {exc}', flush=True)
+        return
+
+    for metric in _METRICS:
+        client.publish(_reading_topic(node.zone, 'sensors', metric),
+                       f'{float(getattr(body, metric)):.1f}', retain=True)
+    if body.battery_mv:
+        client.publish(_battery_topic(mac), f'{body.battery_mv / 1000:.2f}', retain=True)
+    client.publish(_status_topic(mac), 'online', retain=True)
+
+
+def handle_unenrolled(msg: dict, state: dict) -> None:
+    state['unenrolled'][node_store.normalise_mac(msg['mac'])] = time.time()
+
+
+def unenrolled_macs(state: dict, max_age_s: float = 300.0) -> list:
+    now = time.time()
+    return [m for m, seen in state['unenrolled'].items() if now - seen <= max_age_s]
+
+
+def _send_command(ser, payload: dict) -> None:
+    ser.write((json.dumps(payload, separators=(',', ':')) + '\n').encode())
+
+
+def send_netkey(ser, net_key: bytes) -> None:
+    _send_command(ser, {'type': 'netkey', 'key': net_key.hex()})
+
+
+def send_provision(ser, mac: str, blob: bytes) -> None:
+    _send_command(ser, {'type': 'provision', 'mac': node_store.normalise_mac(mac),
+                        'blob': blob.hex()})
+
+
 # Handlers that need no run-state. `heartbeat` and `mesh` are dispatched
 # separately below because both read/write `state`.
 _HANDLERS = {
@@ -206,6 +294,10 @@ def handle_line(client, line: bytes, state: dict) -> None:
             _handle_heartbeat(client, msg, state)
         elif msg_type == 'mesh':
             _handle_mesh(client, msg, state)
+        elif msg_type == 'frame':
+            handle_frame(client, msg, state)
+        elif msg_type == 'unenrolled':
+            handle_unenrolled(msg, state)
         else:
             handler = _HANDLERS.get(msg_type)
             if handler is not None:
@@ -274,16 +366,30 @@ def run() -> None:
     # then the subscribe below never happens at all. Bench-observed as a sweep
     # that silently never ran while the same code worked when driven by hand.
     state = new_state()
-    client.on_message = lambda _c, _u, msg: note_retained_status(state, msg.topic, msg.payload)
-    # Subscribe from on_connect rather than inline, so it also re-subscribes
-    # after a broker reconnect -- and so the SUBSCRIBE is only sent once the
-    # session is actually established.
-    client.on_connect = lambda c, _u, _f, _rc: c.subscribe('greenhouse/nodes/+/status', qos=0)
+    def on_connect(c, _u, _f, _rc):
+        c.subscribe('greenhouse/nodes/+/status', qos=0)
+        c.subscribe('greenhouse/provision/+', qos=0)
+    
+    client.on_connect = on_connect
 
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
 
     ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
+    
+    # Store the serial connection so the MQTT callback can use it
+    def on_message(_c, _u, msg):
+        topic = msg.topic
+        payload = msg.payload
+        if topic.startswith('greenhouse/provision/'):
+            if payload:
+                mac = topic.split('/')[-1]
+                send_provision(ser, mac, payload)
+                _c.publish(topic, '', retain=True)  # clear it
+        else:
+            note_retained_status(state, topic, payload)
+            
+    client.on_message = on_message
     print(f'[serial-bridge] listening on {SERIAL_PORT} @ {BAUD}', flush=True)
 
     last_offline_check = time.monotonic()
@@ -296,6 +402,7 @@ def run() -> None:
             last_offline_check = now
             check_heartbeat_offline(client, state)
             sweep_stale_online(client, state)
+            client.publish('greenhouse/unenrolled', json.dumps(unenrolled_macs(state)), retain=True)
 
 
 if __name__ == '__main__':

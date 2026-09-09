@@ -29,6 +29,10 @@ from flask import Flask, abort, g, jsonify, redirect, render_template, request
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 from history_query import query_points
+from nodes import NODES_PATH, Node, NodeStoreError, load, normalise_mac, remove
+from nodes import add as add_node
+import paho.mqtt.client as mqtt
+
 try:
     from security_log import log_security_event
 except Exception:  # pragma: no cover - logging must never break the portal
@@ -603,6 +607,83 @@ def history():
 # the same here. Serving those endpoints over TLS on 8443 removes passive
 # eavesdropping — the PIN, the MQTT credentials and the API/cam tokens no
 # longer cross the LAN in the clear during pairing.
+APP_KEY_HEX_LEN = 32
+
+def queue_provision(node: Node) -> None:
+    import mesh_crypto
+    try:
+        with open('/etc/greenhouse/netkey', 'r') as f:
+            net_key = bytes.fromhex(f.read().strip())
+    except Exception as e:
+        print(f"Failed to read netkey: {e}", file=sys.stderr)
+        return
+    blob = mesh_crypto.seal_provision(node.app_key, bytes.fromhex(node.mac), net_key, node.sleepy)
+    client = mqtt.Client()
+    try:
+        client.connect("127.0.0.1", 1883, 5)
+        client.publish(f"greenhouse/provision/{node.mac}", blob, retain=True)
+        client.disconnect()
+    except Exception as e:
+        print(f"MQTT Error: {e}", file=sys.stderr)
+
+def read_unenrolled() -> list:
+    import paho.mqtt.subscribe as subscribe
+    try:
+        msg = subscribe.simple("greenhouse/unenrolled", hostname="127.0.0.1", msg_count=1, timeout=0.5)
+        if msg and msg.payload:
+            return json.loads(msg.payload.decode('utf-8'))
+    except Exception:
+        pass
+    return []
+
+@app.route('/api/nodes', methods=['GET'])
+def api_nodes_list():
+    if not _require_api_token():
+        return jsonify({"error": "unauthorized"}), 401
+    store = load(NODES_PATH)
+    return jsonify({
+        # AppKeys are deliberately absent: this endpoint is reachable from the
+        # LAN and a key here would undo the whole per-device key model.
+        'nodes': [{'mac': n.mac, 'zone': n.zone, 'name': n.name, 'sleepy': n.sleepy}
+                  for n in store.values()],
+        'unenrolled': read_unenrolled(),
+    })
+
+@app.route('/api/nodes', methods=['POST'])
+def api_nodes_add():
+    if not _require_api_token():
+        return jsonify({"error": "unauthorized"}), 401
+    body = request.get_json(silent=True) or {}
+    try:
+        mac = normalise_mac(body.get('mac', ''))
+        key = bytes.fromhex(body.get('key', ''))
+    except ValueError:
+        return jsonify({'error': 'bad mac or key'}), 400
+    if len(key) != 16:
+        return jsonify({'error': 'key must be 16 bytes'}), 400
+    zone = (body.get('zone') or '').strip()
+    if not zone:
+        return jsonify({'error': 'zone is required'}), 400
+
+    node = Node(mac, key, zone, (body.get('name') or zone).strip(),
+                bool(body.get('sleepy', True)))
+    try:
+        add_node(node, NODES_PATH)
+    except NodeStoreError as exc:
+        return jsonify({'error': str(exc)}), 500
+    queue_provision(node)      # serial_bridge picks this up and seals the NetKey
+    return jsonify({'mac': mac}), 201
+
+@app.route('/api/nodes/<mac>', methods=['DELETE'])
+def api_nodes_delete(mac):
+    if not _require_api_token():
+        return jsonify({"error": "unauthorized"}), 401
+    try:
+        removed = remove(mac, NODES_PATH)
+    except ValueError:
+        return jsonify({'error': 'bad mac'}), 400
+    return ('', 204) if removed else (jsonify({'error': 'unknown mac'}), 404)
+
 HTTPS_PORT = 8443
 PORTAL_CERT = "/etc/greenhouse/portal.crt"
 PORTAL_KEY = "/etc/greenhouse/portal.key"

@@ -2,255 +2,145 @@
 #include <esp_now.h>
 #include <esp_wifi.h>
 #include <WiFi.h>
-#include <mesh_config.h>
-#include <mesh_node.h>
+#include "mesh_config.h"
+#include "mesh_node.h"
 
-// ── UART link to the Pi (replaces WiFi/MQTT/TLS — spec:
-// docs/superpowers/specs/2026-07-20-uart-bridge-design.md) ────────────────────
-// ESP32-C3 has only two hardware UART controllers: Serial (aliased to native
-// USB-CDC on this board, used below purely for human-readable debug logging
-// over the USB cable) and Serial1 (freely routable to any GPIO pair, used
-// here for the actual Pi link). There is no Serial2 on this chip.
-//
-// HardwareSerial::begin() takes (baud, config, RX_PIN, TX_PIN) — RX BEFORE
-// TX. Wiring (both sides 3.3V logic, no level shifter):
+// ── UART link to the Pi ────────────────────────────────────────────────────────
+// HardwareSerial::begin() takes (baud, config, RX_PIN, TX_PIN) — RX BEFORE TX.
+// Wiring (both sides 3.3V logic, no level shifter):
 //   ESP32 GPIO4 (TX) ──────────► Pi physical pin 10 = GPIO15 (RXD)
 //   ESP32 GPIO5 (RX) ◄────────── Pi physical pin  8 = GPIO14 (TXD)
-//   ESP32 GND        ─────────── Pi GND (any GND pin)
-// Avoid GPIO2/8/9 for this link — C3 SuperMini boot-strapping pins / onboard
-// LED. Pi-side one-time OS step (raspi-config, disable login-shell-over-
-// serial, keep hardware enabled) documented in INSTRUCTIONS.md.
 #define UART_RX_PIN  5
 #define UART_TX_PIN  4
 #define UART_BAUD    115200
 
-// ── Liveness: heartbeat over UART replaces the old MQTT LWT ───────────────────
-// The bridge used to BE the MQTT client, so a dead bridge meant a dropped TCP
-// connection and the broker fired the LWT automatically. Now the Pi-side
-// serial_bridge.py is the only MQTT client — a UART link has no "connection"
-// state of its own (spec §Fault Handling: "Bridge keeps trying Serial.print()
-// regardless"), so bridge liveness needs an explicit signal instead. This
-// heartbeat line, sent on the same cadence as the rank-0 anchor beacon, is
-// that signal; serial_bridge.py flips the bridge's own retained /status
-// offline if MESH_OFFLINE_AFTER heartbeats are missed (same multiplier
-// pattern already used for every edge node — see checkOfflineNodes() below).
+// ── Bridge key store (RAM only, never NVS) ────────────────────────────────────
+// NetKey: received from the Pi on every serial connect; never written to flash.
+// A bridge stolen while powered off yields nothing useful.
+// The bridge is DELIBERATELY KEYLESS on disk — it cannot decrypt sensor data,
+// only forward sealed frames and relay provisioning blobs.
+static uint8_t bridgeNetKey[16];
+static bool    bridgeHasNetKey = false;
 
-char bridgeMac[13];  // own 12-hex MAC, stamped into every self-referential line
+// ── UART command parser ────────────────────────────────────────────────────────
+static char  uartLine[256];
+static int   uartLineLen = 0;
 
-void sendLine(const char* json) {
-  Serial1.println(json);
-  Serial.printf("  → %s\n", json);  // USB debug echo, bench visibility only
+char bridgeMac[13];
+
+void uartPrintf(const char* fmt, ...) {
+  char buf[256];
+  va_list ap;
+  va_start(ap, fmt);
+  vsnprintf(buf, sizeof(buf), fmt, ap);
+  va_end(ap);
+  Serial1.println(buf);
+  Serial.printf("  → %s\n", buf);  // USB debug echo
 }
 
 void sendHeartbeat() {
   char json[48];
   snprintf(json, sizeof(json), "{\"type\":\"heartbeat\",\"mac\":\"%s\"}", bridgeMac);
-  sendLine(json);
+  uartPrintf("%s", json);
 }
 
-// zone/group/metric are always internal C-string literals or TRUSTED_NODES[]
-// entries in this codebase, never externally-influenced — no escaping needed,
-// matching the trust assumptions the old mqtt-publishing code already made.
-void sendReading(const char* zone, const char* group, const char* metric, float value) {
-  char json[128];
-  snprintf(json, sizeof(json),
-           "{\"type\":\"reading\",\"zone\":\"%s\",\"group\":\"%s\",\"metric\":\"%s\",\"value\":%.1f}",
-           zone, group, metric, value);
-  sendLine(json);
+// ── Command parser ─────────────────────────────────────────────────────────────
+static bool hexToBytes(const char* hex, uint8_t* out, int outLen) {
+  for (int i = 0; i < outLen; i++) {
+    unsigned v;
+    if (sscanf(hex + i * 2, "%2x", &v) != 1) return false;
+    out[i] = (uint8_t)v;
+  }
+  return true;
 }
 
-void sendStatus(const char* mac, const char* status) {
-  char json[64];
-  snprintf(json, sizeof(json), "{\"type\":\"status\",\"mac\":\"%s\",\"status\":\"%s\"}", mac, status);
-  sendLine(json);
-}
-
-void sendBattery(const char* mac, float pct) {
-  // 51 content bytes worst case (12-char mac + "100.0") + NUL — sized with
-  // margin, not tight against the exact worst case.
-  char json[64];
-  snprintf(json, sizeof(json), "{\"type\":\"battery\",\"mac\":\"%s\",\"pct\":%.1f}", mac, pct);
-  sendLine(json);
-}
-
-// LiFePO4 discharge curve is very flat -- piecewise-linear interpolation
-// over a handful of measured points (spec §Wire format changes) is plenty
-// accurate; a chain of if/else would encode the same table far less
-// legibly, so use a real table + loop instead. Descending by mv on purpose
-// (table walk below relies on it). Clamped outside the table's ends.
-static float batteryPctFromMv(uint16_t mv) {
-  static const struct { uint16_t mv; float pct; } kTable[] = {
-    { 3400, 100.0f }, { 3350, 90.0f }, { 3320, 80.0f }, { 3300, 70.0f },
-    { 3280,  60.0f }, { 3260, 50.0f }, { 3250, 40.0f }, { 3220, 30.0f },
-    { 3200,  20.0f }, { 3000, 10.0f }, { 2800,  0.0f },
-  };
-  const int n = sizeof(kTable) / sizeof(kTable[0]);
-  if (mv >= kTable[0].mv)     return kTable[0].pct;
-  if (mv <= kTable[n - 1].mv) return kTable[n - 1].pct;
-  for (int i = 0; i < n - 1; i++) {
-    if (mv <= kTable[i].mv && mv >= kTable[i + 1].mv) {
-      float frac = (float)(mv - kTable[i + 1].mv) / (float)(kTable[i].mv - kTable[i + 1].mv);
-      return kTable[i + 1].pct + frac * (kTable[i].pct - kTable[i + 1].pct);
+static void handleUartLine(const char* line) {
+  // {"type":"netkey","key":"<32 hex>"}
+  const char* key = strstr(line, "\"netkey\"");
+  if (key) {
+    const char* k = strstr(line, "\"key\":\"");
+    if (k && hexToBytes(k + 7, bridgeNetKey, 16)) {
+      bridgeHasNetKey = true;
+      // Also push the key into mesh_node so beacon-sending works
+      memcpy(meshNetKey, bridgeNetKey, 16);
+      meshKeysLoaded = true;
+      Serial.println("[bridge] netkey installed (RAM only)");
     }
+    return;
   }
-  return 0.0f;  // unreachable — table covers [2800, 3400] with no gaps
+  // {"type":"provision","mac":"<12 hex>","blob":"<66 hex>"}
+  if (strstr(line, "\"provision\"")) {
+    const char* m = strstr(line, "\"mac\":\"");
+    const char* b = strstr(line, "\"blob\":\"");
+    uint8_t mac[6], blob[MESH_PROVISION_LEN];
+    if (!m || !b || !hexToBytes(m + 7, mac, 6) ||
+        !hexToBytes(b + 8, blob, MESH_PROVISION_LEN)) return;
+    // Transient peer: added only to transmit, removed immediately. This is the
+    // only time the bridge registers anything but broadcast.
+    esp_now_peer_info_t p = {};
+    memcpy(p.peer_addr, mac, 6);
+    p.channel = MESH_FIXED_CHANNEL;
+    p.encrypt = false;
+    esp_now_add_peer(&p);
+    esp_now_send(mac, blob, MESH_PROVISION_LEN);
+    esp_now_del_peer(mac);
+    Serial.println("[bridge] provision blob transmitted");
+  }
 }
 
-// Mesh topology line (spec §Telemetry) — origin's own view of its uplink:
-// parent MAC + RSSI it measured for that parent, its rank, sleepy flag, raw
-// battery mv, and its zone. mac == null-parent sentinel means "this is the
-// bridge's own root record" (rank 0, no parent) — used once at boot below.
-void sendMesh(const char* mac, const uint8_t* parentMacBytes, int rank,
-              int8_t parentRssi, bool sleepy, uint16_t batteryMv, const char* zone) {
-  static const uint8_t kZeroMac[6] = { 0, 0, 0, 0, 0, 0 };
-  bool hasParent = parentMacBytes != nullptr && !meshMacEqual(parentMacBytes, kZeroMac);
-  char parentMac[13];
-  if (hasParent) meshFormatMac(parentMacBytes, parentMac);
-
-  char json[192];
-  int off = 0;
-  off += snprintf(json + off, sizeof(json) - off, "{\"type\":\"mesh\",\"mac\":\"%s\",\"parent\":", mac);
-  if (hasParent) {
-    off += snprintf(json + off, sizeof(json) - off, "\"%s\",", parentMac);
-  } else {
-    off += snprintf(json + off, sizeof(json) - off, "null,");
+static void pumpUart() {
+  while (Serial1.available()) {
+    char c = (char)Serial1.read();
+    if (c == '\n') { uartLine[uartLineLen] = 0; handleUartLine(uartLine); uartLineLen = 0; }
+    else if (uartLineLen < (int)sizeof(uartLine) - 1) uartLine[uartLineLen++] = c;
+    else uartLineLen = 0;   // overlong line, discard
   }
-  off += snprintf(json + off, sizeof(json) - off, "\"rank\":%d,", rank);
-  if (parentRssi == -128) {
-    off += snprintf(json + off, sizeof(json) - off, "\"rssi\":null,");
-  } else {
-    off += snprintf(json + off, sizeof(json) - off, "\"rssi\":%d,", parentRssi);
-  }
-  off += snprintf(json + off, sizeof(json) - off, "\"sleepy\":%s,", sleepy ? "true" : "false");
-  if (batteryMv == 0) {
-    off += snprintf(json + off, sizeof(json) - off, "\"battery_mv\":null,");
-  } else {
-    off += snprintf(json + off, sizeof(json) - off, "\"battery_mv\":%u,", batteryMv);
-  }
-  if (zone != nullptr) {
-    snprintf(json + off, sizeof(json) - off, "\"zone\":\"%s\"}", zone);
-  } else {
-    snprintf(json + off, sizeof(json) - off, "\"zone\":null}");
-  }
-  sendLine(json);
 }
-
-// ── Node liveness (spec: Bridge Changes — offline detection) ──────────────────
-uint32_t lastSeenMs[TRUSTED_NODE_COUNT];
-bool     nodeOnline[TRUSTED_NODE_COUNT];
-uint32_t lastBeaconMs       = 0;
-uint32_t lastOfflineCheckMs = 0;
 
 // ── ESP-NOW receive callback ──────────────────────────────────────────────────
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
-  if (len == sizeof(MeshBeacon)) return;  // neighbor beacons: bridge doesn't route
-  if (len != sizeof(MeshDataPacket)) {
-    Serial.printf("[esp-now] bad packet size %d\n", len);
+  // Handle join beacons from unenrolled sensors
+  if (len == (int)sizeof(MeshJoinBeacon) && data[1] == MESH_JOIN_MARKER) {
+    char mac[13]; meshFormatMac(data + 2, mac);
+    uartPrintf("{\"type\":\"unenrolled\",\"mac\":\"%s\"}", mac);
     return;
   }
 
-  MeshDataPacket pkt;
-  memcpy(&pkt, data, sizeof(pkt));
-  if (pkt.magic != MESH_MAGIC) { Serial.println("[esp-now] bad magic, dropped"); return; }
+  // Sealed sensor data
+  if (len != MESH_PACKET_LEN) { Serial.printf("[esp-now] bad size %d\n", len); return; }
+  if (data[0] != MESH_MAGIC_V2) return;
 
-  // Zone lookup by ORIGIN, not the immediate sender — with relaying, the
-  // ESP-NOW src_addr may be an intermediate hop, not the node that measured.
-  char mac[13];
-  meshFormatMac(pkt.origin_mac, mac);
-
-  // Logged, not silent: a node that loses its RTC state across sleep restarts
-  // seq at 0 every wake, so every packet after its first looks like a route-flap
-  // duplicate. Dropping that silently is indistinguishable from a dead link.
-  if (meshDedupSeen(pkt.origin_mac, pkt.seq)) {
-    Serial.printf("[esp-now] %s seq=%u dropped as duplicate\n", mac, pkt.seq);
+  // Cheap nettag check — drop garbage without involving the Pi
+  if (!bridgeHasNetKey) { Serial.println("[esp-now] no netkey yet, frame dropped"); return; }
+  if (!meshVerifyNettag(data, bridgeNetKey)) {
+    Serial.println("[esp-now] nettag failed, frame dropped");
     return;
   }
 
-  int idx = meshTrustedIndex(pkt.origin_mac);
-  if (idx < 0 || TRUSTED_NODES[idx].zone == nullptr) {
-    Serial.printf("[esp-now] unknown origin %s — add to TRUSTED_NODES[]\n", mac);
+  // De-dup by (origin_mac, seq)
+  const uint8_t* originMac = data + 1;
+  uint16_t seq = (uint16_t)(data[7] | ((uint16_t)data[8] << 8));
+  if (meshDedupSeen(originMac, seq)) {
+    Serial.println("[esp-now] duplicate, dropped");
     return;
   }
-  const char* zone = TRUSTED_NODES[idx].zone;
-  // Liveness tracking is data-only, not beacon-based -- but edge nodes now
-  // send a reading even on a failed DHT read (NaN payload) instead of
-  // skipping the send entirely, so this stays current across a run of
-  // consecutive DHT failures too, not just successful reads
-  // (IMPROVEMENTS.md finding B6).
-  lastSeenMs[idx] = millis();
-  nodeOnline[idx] = true;
 
-  Serial.printf("[esp-now] %s (zone=%s rank=%d ttl=%d battery_mv=%u sleepy=%d) "
-                "T=%.1f H=%.1f Soil=%.1f\n",
-                mac, zone, pkt.origin_rank, pkt.ttl, pkt.battery_mv,
-                (pkt.flags & MESH_FLAG_SLEEPY) ? 1 : 0,
-                pkt.payload.temperature, pkt.payload.humidity,
-                pkt.payload.soil_moisture);
-
-  // No "is the link up" gate here — unlike the old MQTT path, UART has no
-  // connection state to check. sendLine() always fires; if serial_bridge.py
-  // isn't there to read it, the OS just drops it (spec §Fault Handling),
-  // same as any UART write with nothing listening on the other end.
-
-  // NaN (failed DHT read on the origin) skips sending that one metric rather
-  // than propagating a NaN into a field the Pi parses as a float -- the rest
-  // of the packet (and node liveness above) is still valid and sent normally.
-  if (!isnan(pkt.payload.temperature)) {
-    sendReading(zone, "air", "temperature", pkt.payload.temperature);
-  }
-  if (!isnan(pkt.payload.humidity)) {
-    sendReading(zone, "air", "humidity", pkt.payload.humidity);
-  }
-  sendReading(zone, "soil", "moisture", pkt.payload.soil_moisture);
-
-  sendStatus(mac, "online");
-
-  // Battery % (bridge does the mv→% mapping — spec: "single tunable place").
-  // Sent only when the origin actually has a divider fitted; an unmeasured
-  // mains node sends battery_mv=0 and gets no battery line at all (not a
-  // zero reading, just absent — matches the simulator contract).
-  if (pkt.battery_mv > 0) {
-    sendBattery(mac, batteryPctFromMv(pkt.battery_mv));
-  }
-
-  sendMesh(mac, pkt.parent_mac, pkt.origin_rank, pkt.parent_rssi,
-           (pkt.flags & MESH_FLAG_SLEEPY) != 0, pkt.battery_mv, zone);
+  // Forward the sealed frame verbatim — the Pi decrypts and publishes
+  char hex[MESH_PACKET_LEN * 2 + 1];
+  for (int i = 0; i < MESH_PACKET_LEN; i++) sprintf(hex + i * 2, "%02x", data[i]);
+  uartPrintf("{\"type\":\"frame\",\"data\":\"%s\"}", hex);
 }
 
-// Publish "offline" once a node misses MESH_OFFLINE_AFTER expected reports —
-// distinguishes "node is dead" from "data arriving via a longer path" (which
-// still refreshes lastSeenMs through the relay chain).
-void checkOfflineNodes(uint32_t now) {
-  if (now - lastOfflineCheckMs < 1000) return;
-  lastOfflineCheckMs = now;
-  for (int i = 0; i < TRUSTED_NODE_COUNT; i++) {
-    if (TRUSTED_NODES[i].zone == nullptr) continue;  // skip the bridge entry
-    if (!nodeOnline[i]) continue;                    // already reported offline
-    // Per-role expected cadence (spec §Bridge-side liveness): a sleepy leaf
-    // only reports once per MESH_SLEEP_INTERVAL_MS, so judging it by the
-    // always-on 5 s window would flag it offline between every wake.
-    uint32_t expectedMs = TRUSTED_NODES[i].sleepy ? MESH_SLEEP_INTERVAL_MS
-                                                   : MESH_EXPECTED_REPORT_INTERVAL_MS;
-    if (now - lastSeenMs[i] > (uint32_t)MESH_OFFLINE_AFTER * expectedMs) {
-      nodeOnline[i] = false;
-      char mac[13];
-      meshFormatMac(TRUSTED_NODES[i].mac, mac);
-      sendStatus(mac, "offline");
-      Serial.printf("[bridge] node %s (%s) → offline\n", mac, TRUSTED_NODES[i].zone);
-    }
-  }
-}
+// ── liveness tracking ─────────────────────────────────────────────────────────
+uint32_t lastBeaconMs       = 0;
 
 void setup() {
   Serial.begin(115200);
-  delay(1500);  // wait for USB CDC to connect on C3
+  delay(1500);
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
 
-  // Own 12-hex MAC, used for the heartbeat line and the bridge's own root
-  // /mesh record — WiFi.macAddress() is valid as soon as the driver is up,
-  // no actual WiFi connection ever made (no router in this deployment mode).
   {
     uint8_t ownMac[6];
     WiFi.macAddress(ownMac);
@@ -258,10 +148,6 @@ void setup() {
   }
   Serial.printf("\n[bridge] MAC: %s\n", bridgeMac);
 
-  // No router to scan for a channel to agree on — every node in a UART-wired
-  // fleet locks to the same fixed constant instead (mesh_config.h). Same
-  // promiscuous-mode-toggle pattern the edge sketches use to set the channel
-  // outside of an actual AP connection.
   esp_wifi_set_promiscuous(true);
   esp_wifi_set_channel(MESH_FIXED_CHANNEL, WIFI_SECOND_CHAN_NONE);
   esp_wifi_set_promiscuous(false);
@@ -270,7 +156,6 @@ void setup() {
   Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
   Serial.printf("[uart] Serial1 up: rx=%d tx=%d baud=%d\n", UART_RX_PIN, UART_TX_PIN, UART_BAUD);
 
-  // ESP-NOW + mesh
   if (esp_now_init() != ESP_OK) {
     Serial.println("[esp-now] init failed");
     return;
@@ -278,35 +163,27 @@ void setup() {
   esp_now_register_recv_cb(onDataRecv);
   meshInit(MESH_FIXED_CHANNEL);
 
-  // Baseline liveness at boot: a node that never reports goes offline after
-  // the missed-report threshold instead of staying "unknown" forever.
-  uint32_t now = millis();
-  for (int i = 0; i < TRUSTED_NODE_COUNT; i++) {
-    lastSeenMs[i] = now;
-    nodeOnline[i] = true;
-  }
+  // Own status at boot (Pi's serial_bridge.py publishes retained)
+  uartPrintf("{\"type\":\"mesh\",\"mac\":\"%s\",\"parent\":null,\"rank\":0,"
+             "\"rssi\":null,\"sleepy\":false,\"battery_mv\":null,\"zone\":null}",
+             bridgeMac);
+  uartPrintf("{\"type\":\"status\",\"mac\":\"%s\",\"status\":\"online\"}", bridgeMac);
 
-  // Own root /mesh record (parent null, rank 0) and own "online" — sent once
-  // at boot; serial_bridge.py republishes both retained on the Pi side, and
-  // will re-flip online on the next heartbeat after any offline period, so
-  // this boot-time send doesn't need to repeat periodically.
-  sendMesh(bridgeMac, nullptr, 0, -128, false, 0, nullptr);
-  sendStatus(bridgeMac, "online");
-
-  Serial.println("[bridge] ready — beaconing at rank 0");
+  Serial.println("[bridge] ready — waiting for netkey from Pi before beaconing");
 }
 
 void loop() {
+  pumpUart();
+
   uint32_t now = millis();
 
-  // Rank-0 anchor beacon: fixed short interval, no trickle — mains-powered,
-  // so there is no cost pressure (spec: Architecture). Heartbeat piggybacks
-  // the same cadence — it's the UART-link equivalent of the old MQTT LWT.
-  if (now - lastBeaconMs >= MESH_BRIDGE_BEACON_INTERVAL_MS) {
+  // Rank-0 anchor beacon + heartbeat, only once the Pi has sent us the NetKey.
+  // An unsigned beacon (bridgeHasNetKey == false) would be rejected by every
+  // provisioned node anyway.
+  if (bridgeHasNetKey &&
+      now - lastBeaconMs >= MESH_BRIDGE_BEACON_INTERVAL_MS) {
     lastBeaconMs = now;
     meshSendBeaconNow(0, MESH_BRIDGE_BEACON_INTERVAL_MS);
     sendHeartbeat();
   }
-
-  checkOfflineNodes(now);
 }
