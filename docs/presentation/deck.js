@@ -193,18 +193,48 @@ function motif(s, ox, oy, sc = 1, col = '265444') {
   s.addText(pts.map((t, i) => ({ text:t, options:{ bullet:true, breakLine: i < pts.length - 1 } })), {
     x:M, y:3.6, w:5.6, h:2.0, fontSize:13, color:MUT, fontFace:BF, isTextBox:true,
     margin:0, lineSpacing:18, paraSpaceAfter:9 });
-  s.addChart(p.ChartType.bar, [{
-      name: 'Ημέρες λειτουργίας', labels: ['Συνεχώς ξύπνιος', 'Ξυπνά μόνο όταν χρειάζεται'],
-      values: [0.6, 205] }], {
-    x:6.62, y:2.28, w:6.0, h:3.35, barDir:'bar', chartColors:[RUST, LEAF], barGapWidthPct:60,
-    showTitle:true, title:'Αυτονομία με την ίδια μπαταρία (ημέρες)', titleFontSize:13,
-    titleColor:INK, titleFontFace:BF, showLegend:false,
-    showValue:true, dataLabelPosition:'outEnd', dataLabelFontSize:13, dataLabelColor:INK,
-    dataLabelFontFace:BF, dataLabelFormatCode:'0.#',
-    catAxisLabelColor:MUT, catAxisLabelFontSize:12, catAxisLabelFontFace:BF,
-    valAxisLabelColor:MUT, valAxisLabelFontSize:10, valAxisLabelFontFace:BF,
-    valGridLine:{ color:'DCE5D8', size:1 }, catGridLine:{ style:'none' },
-    valAxisMinVal:0, valAxisMaxVal:220, chartArea:{ fill:{ color:WHT } } });
+  /* Bars drawn as plain shapes rather than a native chart.
+   * pptxgenjs' chart writer emits XML PowerPoint rejects (a dangling axis id,
+   * and <c:dLbls> ahead of <c:dPt> against CT_BarSer's required order), which
+   * makes it refuse the entire file. Two bars do not need a chart part. */
+  {
+    const cx = 6.62, cy = 2.28, cw = 6.0;                 // chart block
+    const lblW = 2.32, barX = cx + lblW + 0.16;           // label column, bar origin
+    const barMax = cw - lblW - 0.16 - 0.72;               // room left for the value
+    const rows = [
+      { name: 'Συνεχώς ξύπνιος',            days: 0.6, text: '0,6', color: RUST },
+      { name: 'Ξυπνά μόνο όταν χρειάζεται', days: 205,  text: '205', color: LEAF },
+    ];
+    const top = 205;
+
+    s.addText('Αυτονομία με την ίδια μπαταρία (ημέρες)', {
+      x:cx, y:cy, w:cw, h:0.32, fontSize:13, color:INK, fontFace:BF,
+      align:'center', isTextBox:true, margin:0 });
+
+    // axis ticks, so the bar lengths stay readable as quantities
+    [0, 50, 100, 150, 200].forEach((v) => {
+      const gx = barX + (v / top) * barMax;
+      s.addShape(p.ShapeType.line, { x:gx, y:cy+0.62, w:0, h:2.05,
+        line:{ color:'DCE5D8', width:1 } });
+      s.addText(String(v), { x:gx-0.3, y:cy+2.72, w:0.6, h:0.26, fontSize:10,
+        color:MUT, fontFace:BF, align:'center', isTextBox:true, margin:0 });
+    });
+
+    rows.forEach((r, k) => {
+      const y = cy + 0.86 + k * 1.06;
+      const w = Math.max((r.days / top) * barMax, 0.035);  // keep a sliver visible
+      s.addText(r.name, { x:cx, y:y-0.04, w:lblW, h:0.62, fontSize:12, color:MUT,
+        fontFace:BF, align:'right', valign:'middle', isTextBox:true, margin:0 });
+      s.addShape(p.ShapeType.rect, { x:barX, y, w, h:0.55,
+        fill:{ color:r.color }, line:{ color:r.color, width:0 } });
+      s.addText(r.text, { x:barX+w+0.1, y:y-0.04, w:0.66, h:0.62, fontSize:13,
+        bold:true, color:INK, fontFace:BF, valign:'middle', isTextBox:true, margin:0 });
+    });
+
+    // baseline
+    s.addShape(p.ShapeType.line, { x:barX, y:cy+0.62, w:0, h:2.05,
+      line:{ color:'9FB0A2', width:1.25 } });
+  }
   footnote(s, 'Υπολογισμοί από τις σταθερές λειτουργίας του ίδιου του κόμβου: κύκλος 15 λεπτών, ~2,5 δευτ. ξύπνιος, μπαταρία 1500 mAh.', 6.9);
   s.addNotes('~55 δευτ. Η δυνατή ατάκα: «η μπαταρία δεν είναι λεπτομέρεια — είναι το προϊόν». Ένα σύστημα που θέλει αλλαγή μπαταριών κάθε βδομάδα δεν το χρησιμοποιεί κανείς τη δεύτερη σεζόν.');
 }
@@ -630,9 +660,14 @@ function motif(s, ox, oy, sc = 1, col = '265444') {
  * PowerPoint refuses to open the whole presentation. LibreOffice ignores the
  * stray id and renders fine, so a render-based QA pass never catches it.
  *
- * This strips any <c:axId> inside a chart group that no axis element defines.
+ * The same writer also emits <c:dLbls> ahead of <c:dPt> inside <c:ser>, which
+ * violates CT_BarSer's required child order and is refused just as hard.
+ *
+ * The deck draws its bars as shapes and ships no chart part, so this is a
+ * guard for any chart added later: it strips <c:axId> values that no axis
+ * element defines, and moves <c:dPt> ahead of <c:dLbls>.
  * ------------------------------------------------------------------------- */
-async function dropDanglingAxisIds(file) {
+async function normalizePackage(file) {
   const fs = require('fs');
   const JSZip = require('jszip');
   const zip = await JSZip.loadAsync(fs.readFileSync(file));
@@ -656,20 +691,41 @@ async function dropDanglingAxisIds(file) {
         return '';
       }) + `</c:${tag}>`);
 
-    if (fixed !== xml) zip.file(path, fixed);
+    // CT_BarSer: dPt* must precede dLbls
+    const reordered = fixed.replace(/<c:ser>[\s\S]*?<\/c:ser>/g, (ser) => {
+      const dLbls = ser.match(/<c:dLbls>[\s\S]*?<\/c:dLbls>/);
+      const dPts = [...ser.matchAll(/<c:dPt>[\s\S]*?<\/c:dPt>/g)].map((m) => m[0]);
+      if (!dLbls || !dPts.length) return ser;
+      if (ser.indexOf(dLbls[0]) > ser.indexOf(dPts[0])) return ser;   // already correct
+      removed++;
+      let out = ser.replace(dLbls[0], '');
+      out = out.replace(dPts[dPts.length - 1], dPts[dPts.length - 1] + dLbls[0]);
+      return out;
+    });
+
+    if (reordered !== xml) zip.file(path, reordered);
   }
 
-  if (removed) {
-    fs.writeFileSync(file, await zip.generateAsync({
-      type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 },
-    }));
-  }
-  return removed;
+  // pptxgenjs always creates ppt/charts/ and ppt/embeddings/ folder entries even
+  // with no chart in the deck. They are inert, but an empty directory entry in an
+  // OPC package is noise nothing references -- rebuild from file entries only.
+  const out = new JSZip();
+  let folders = 0;
+  zip.forEach((path, entry) => {
+    if (entry.dir) { folders++; return; }
+    out.file(path, entry.async('nodebuffer'), { binary: true });
+  });
+
+  fs.writeFileSync(file, await out.generateAsync({
+    type: 'nodebuffer', compression: 'DEFLATE', compressionOptions: { level: 6 },
+  }));
+  return { removed, folders };
 }
 
 p.writeFile({ fileName: 'GreenHouse_Parousiasi.pptx' })
   .then(async (f) => {
-    const removed = await dropDanglingAxisIds(f);
-    console.log('wrote', f, removed ? `(removed ${removed} dangling axis id(s))` : '(no chart repair needed)');
+    const { removed, folders } = await normalizePackage(f);
+    console.log('wrote', f,
+      `(chart fixes: ${removed || 'none needed'}; dropped ${folders} empty folder entries)`);
   })
   .catch((e) => { console.error(e); process.exit(1); });
