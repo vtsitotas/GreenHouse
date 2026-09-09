@@ -1,0 +1,1 @@
+# Paste the packet= line printed by firmware/crypto_selftest here.
