@@ -9,3 +9,7 @@ pi/**        text eol=lf
 *.dart       text
 *.yaml       text
 *.md         text
+
+# Presentation assets — binary, never text-converted
+*.pptx      binary
+*.png       binary
