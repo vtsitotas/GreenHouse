@@ -6,6 +6,7 @@
 #include <DHT.h>
 #include "mesh_config.h"
 #include "mesh_node.h"
+#include "node_key.h"   // this board's AppKey -- see node_key.h.example
 
 // ── Pin definitions (ESP32 WROOM-32) ─────────────────────────────────────────
 #define DHT_DATA_PIN   4   // GPIO4
@@ -126,9 +127,6 @@ bool sendWithConfirm(const SensorReading* r, uint32_t deadline) {
 void runSleepyCycle() {
   const uint32_t deadline = MESH_WAKE_MAX_AWAKE_MS;
 
-  bool restored = meshRtcRestore();
-  Serial.printf("[wake] rtc restore: %s\n", restored ? "parent hint" : "none (cold/invalid)");
-
   digitalWrite(SOIL_PWR_PIN, HIGH);
   digitalWrite(DHT_PWR_PIN,  HIGH);
   uint32_t warmupStart = millis();
@@ -148,6 +146,15 @@ void runSleepyCycle() {
   esp_now_register_send_cb(onDataSent);
   esp_now_register_recv_cb(onDataRecv);
   meshInit(0);
+
+  // Restored only now, AFTER esp_now_init()/meshInit(): a restored parent
+  // hint is re-armed via meshSetParent(), which calls esp_now_add_peer() --
+  // that fails silently (ESP_ERR_ESPNOW_NOT_INIT) before ESP-NOW is up, which
+  // would discard the cached parent on every single wake and force full
+  // rediscovery each cycle instead of the immediate-send fast path this
+  // exists for.
+  bool restored = meshRtcRestore();
+  Serial.printf("[wake] rtc restore: %s\n", restored ? "parent hint" : "none (cold/invalid)");
 
   meshSendBeaconNow(meshMyRank, MESH_SLEEP_INTERVAL_MS);
 
@@ -217,6 +224,19 @@ void setup() {
   WiFi.disconnect();
 
   meshStoreBegin();
+
+  // First boot after flashing: seed NVS from the key provision_sensor.py
+  // baked into node_key.h. Guarded on "not already stored" so a later
+  // firmware update (reflash of the same sketch) never clobbers a board's
+  // real in-NVS key with whatever node_key.h happens to be checked out --
+  // that file is per-board and gitignored, not tied to the sketch version.
+  {
+    uint8_t existingAppKey[16];
+    if (!meshStoreAppKey(existingAppKey)) {
+      meshStoreSetAppKey(NODE_APP_KEY);
+      Serial.println("[mesh] AppKey seeded into NVS from node_key.h");
+    }
+  }
 
   // Cold boot only: bump boot counter for nonce freshness
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER)

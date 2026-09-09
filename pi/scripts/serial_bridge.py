@@ -35,6 +35,12 @@ BAUD = 115200
 MQTT_HOST = '127.0.0.1'
 MQTT_PORT = 1883
 
+# Generated once by install.sh (openssl rand -hex 16), read fresh on every
+# process start rather than cached anywhere -- this file is the network's
+# only copy of record, and re-reading it means a rotated key takes effect on
+# the next service restart with no other code path to keep in sync.
+NETKEY_PATH = '/etc/greenhouse/netkey'
+
 # Matches MESH_BRIDGE_BEACON_INTERVAL_MS (2000UL) in mesh_config.h -- the
 # bridge sends one heartbeat line per beacon.
 HEARTBEAT_INTERVAL_S = 2.0
@@ -253,6 +259,21 @@ def unenrolled_macs(state: dict, max_age_s: float = 300.0) -> list:
     return [m for m, seen in state['unenrolled'].items() if now - seen <= max_age_s]
 
 
+def load_net_key(path: str = NETKEY_PATH) -> bytes:
+    """Read the network's shared NetKey from disk.
+
+    Raises on anything wrong (missing file, bad hex, wrong length) rather than
+    returning a sentinel -- a bridge that never gets a real key must never
+    silently authenticate beacons with a wrong one; the caller should fail
+    loudly instead.
+    """
+    with open(path) as fh:
+        key = bytes.fromhex(fh.read().strip())
+    if len(key) != 16:
+        raise ValueError(f'{path} does not hold a 16-byte key ({len(key)} bytes)')
+    return key
+
+
 def _send_command(ser, payload: dict) -> None:
     ser.write((json.dumps(payload, separators=(',', ':')) + '\n').encode())
 
@@ -376,7 +397,21 @@ def run() -> None:
     client.loop_start()
 
     ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
-    
+
+    # The bridge holds the NetKey in RAM only (never its own flash), so it
+    # must be re-sent here on every process start -- this is the only place
+    # that ever happens. Without it the bridge never signs a beacon and no
+    # sensor can ever adopt it as a parent; fail loudly rather than run a
+    # bridge that will silently never route anything.
+    try:
+        state['net_key'] = load_net_key()
+        send_netkey(ser, state['net_key'])
+        print('[serial-bridge] netkey sent to bridge', flush=True)
+    except (OSError, ValueError) as exc:
+        print(f'[serial-bridge] FATAL: could not load NetKey from {NETKEY_PATH}: {exc}',
+              flush=True)
+        raise
+
     # Store the serial connection so the MQTT callback can use it
     def on_message(_c, _u, msg):
         topic = msg.topic

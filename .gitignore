@@ -6,6 +6,12 @@ __pycache__/
 # is the tracked template; each deployment fills in its own secrets.h here.
 firmware/libraries/GreenhouseSecrets/secrets.h
 
+# Real per-sensor AppKeys -- node_key.h.example in each edge sketch folder is
+# the tracked placeholder; pi/tools/provision_sensor.py's output replaces it
+# here, one board at a time, and must never be committed.
+firmware/edge_node_esp32/node_key.h
+firmware/edge_node_esp32_c3/node_key.h
+
 # Scratch / staging
 _dart_staging/
 deleted/

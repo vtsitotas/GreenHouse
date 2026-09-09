@@ -618,8 +618,14 @@ def queue_provision(node: Node) -> None:
         print(f"Failed to read netkey: {e}", file=sys.stderr)
         return
     blob = mesh_crypto.seal_provision(node.app_key, bytes.fromhex(node.mac), net_key, node.sleepy)
-    client = mqtt.Client()
     try:
+        # callback_api_version pinned explicitly, matching every other MQTT
+        # client in this codebase (hivemq_bridge.py, recorder.py,
+        # serial_bridge.py, simulator.py) -- omitting it can raise depending
+        # on the installed paho-mqtt version, and this call sits on the
+        # request path for POST /api/nodes.
+        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1,
+                             client_id='greenhouse-provisioner')
         client.connect("127.0.0.1", 1883, 5)
         client.publish(f"greenhouse/provision/{node.mac}", blob, retain=True)
         client.disconnect()

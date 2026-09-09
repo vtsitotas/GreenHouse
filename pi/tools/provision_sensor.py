@@ -47,7 +47,12 @@ def main():
 
     print(f'MAC     : {mac}')
     print(f'QR      : {qr_path}   \u2190 print and stick on the sensor')
-    print(f'Header  : {header_path}   \u2190 copy next to the sketch, then flash')
+    print(f'Header  : {header_path}')
+    print(f'  Copy/rename this to "node_key.h" inside whichever sketch folder')
+    print(f'  matches this board (firmware/edge_node_esp32_c3/ or')
+    print(f'  firmware/edge_node_esp32/), overwriting the placeholder there,')
+    print(f'  then compile and flash. node_key.h is gitignored -- it never gets')
+    print(f'  committed.')
     print('This key exists nowhere else. Losing both the QR and the sensor means '
           'the sensor can never be re-enrolled.')
 

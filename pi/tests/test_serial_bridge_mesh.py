@@ -94,3 +94,21 @@ def test_send_netkey_writes_one_json_line():
     sb.send_netkey(type('S', (), {'write': lambda _s, b: written.append(b)})(), NET)
     assert written[0].endswith(b'\n')
     assert b'"netkey"' in written[0] and NET.hex().encode() in written[0]
+
+
+def test_load_net_key_reads_hex_from_disk(tmp_path):
+    path = tmp_path / 'netkey'
+    path.write_text(NET.hex() + '\n')
+    assert sb.load_net_key(str(path)) == NET
+
+
+def test_load_net_key_rejects_a_key_that_is_not_16_bytes(tmp_path):
+    path = tmp_path / 'netkey'
+    path.write_text('aabb')
+    with pytest.raises(ValueError):
+        sb.load_net_key(str(path))
+
+
+def test_load_net_key_raises_when_the_file_is_missing(tmp_path):
+    with pytest.raises(OSError):
+        sb.load_net_key(str(tmp_path / 'does-not-exist'))
