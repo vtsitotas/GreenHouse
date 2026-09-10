@@ -20,7 +20,7 @@ void main() {
   testWidgets('will not submit without a zone name', (t) async {
     var submitted = false;
     await t.pumpWidget(host(onSubmit: (_, __, ___) async { submitted = true; }));
-    await t.tap(find.text('Add sensor'));
+    await t.tap(find.widgetWithText(FilledButton, 'Add sensor'));
     await t.pump();
     expect(submitted, isFalse);
     expect(find.textContaining('Give this sensor a place'), findsOneWidget);
@@ -33,7 +33,7 @@ void main() {
     await t.enterText(find.byKey(const Key('zoneField')), 'Basil bed');
     await t.tap(find.byKey(const Key('batteryToggle')));
     await t.pump();
-    await t.tap(find.text('Add sensor'));
+    await t.tap(find.widgetWithText(FilledButton, 'Add sensor'));
     await t.pumpAndSettle();
     expect(zone, 'Basil bed');
     expect(sleepy, isFalse);
@@ -44,7 +44,7 @@ void main() {
       throw Exception('boom');
     }));
     await t.enterText(find.byKey(const Key('zoneField')), 'Basil bed');
-    await t.tap(find.text('Add sensor'));
+    await t.tap(find.widgetWithText(FilledButton, 'Add sensor'));
     await t.pumpAndSettle();
     expect(find.textContaining("couldn't add"), findsOneWidget);
   });

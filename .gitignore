@@ -32,3 +32,4 @@ app/.flutter-plugins-dependencies
 # Git worktrees (scratch, not tracked)
 .worktrees/
 firmware/test/host/layout_vectors
+firmware/test/host/layout_vectors.exe

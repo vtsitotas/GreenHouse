@@ -1,7 +1,7 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../models/connection_config.dart';
 import '../providers/connection_provider.dart';
-import 'sensor_provisioning_service.dart';
+import '../services/sensor_provisioning_service.dart';
 
 final sensorProvisioningServiceProvider = Provider<SensorProvisioningService?>((ref) {
   final config = ref.watch(savedConfigProvider).valueOrNull;
