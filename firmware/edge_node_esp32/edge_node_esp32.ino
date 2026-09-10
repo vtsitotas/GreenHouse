@@ -53,7 +53,7 @@ float soilPercent(int raw) {
 volatile int8_t g_lastTxStatus = -1;
 RTC_DATA_ATTR uint8_t g_unconfirmedWakes = 0;
 
-void onDataSent(const uint8_t* mac, esp_now_send_status_t status) {
+void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
   bool ok = (status == ESP_NOW_SEND_SUCCESS);
   meshNotifyTxStatus(ok);
   g_lastTxStatus = ok ? 1 : 0;

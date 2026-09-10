@@ -3,6 +3,7 @@
 // AES-GCM (body, AppKey) + AES-CMAC (header, NetKey) over mbedTLS, which ships
 // with the ESP32 Arduino core and uses the C3's hardware AES.
 #include <mbedtls/cipher.h>
+#include <mbedtls/cmac.h>
 #include <mbedtls/gcm.h>
 #include <string.h>
 
