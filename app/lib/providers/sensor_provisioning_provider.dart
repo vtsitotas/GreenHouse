@@ -1,5 +1,4 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import '../models/connection_config.dart';
 import '../providers/connection_provider.dart';
 import '../services/sensor_provisioning_service.dart';
 
