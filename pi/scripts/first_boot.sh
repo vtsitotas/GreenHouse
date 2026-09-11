@@ -66,6 +66,22 @@ if [ ! -f "$CONFIG_DIR/cam_token.txt" ]; then
   chmod 640 "$CONFIG_DIR/cam_token.txt"
 fi
 
+# Mesh NetKey: authenticates every ESP-NOW beacon/header network-wide (see
+# pi/shared/mesh_crypto.py, pi/scripts/serial_bridge.py). Generated here, not
+# copied from a golden image, for the same reason as cam_token above -- a
+# NetKey baked into a cloned image would let one customer's sensors
+# authenticate on every other clone's mesh. prep_image.sh wipes both this
+# file and nodes.json before imaging so each clone gets its own on its real
+# first boot.
+if [ ! -f "$CONFIG_DIR/netkey" ]; then
+  openssl rand -hex 16 > "$CONFIG_DIR/netkey"
+  chown pi:pi "$CONFIG_DIR/netkey"
+  chmod 600 "$CONFIG_DIR/netkey"
+fi
+[ -f "$CONFIG_DIR/nodes.json" ] || : > "$CONFIG_DIR/nodes.json"
+chown pi:pi "$CONFIG_DIR/nodes.json"
+chmod 600 "$CONFIG_DIR/nodes.json"
+
 # Device ID = last 4-5 hex chars of MAC (tail -c 5 accounts for sysfs newline) (uppercase)
 DEVICE_ID=$(cat /sys/class/net/wlan0/address | tr -d ':' | tail -c 5 | tr '[:lower:]' '[:upper:]')
 

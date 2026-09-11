@@ -28,6 +28,11 @@ rm -f /etc/mosquitto/certs/ca.key /etc/mosquitto/certs/ca.crt /etc/mosquitto/cer
 # the master's token in the image would ship one shared camera credential
 # across the whole fleet; first_boot.sh generates a fresh one per clone.
 rm -f /etc/greenhouse/cam_token.txt
+# Mesh NetKey + enrolled-sensor trust store are per-unit too (first_boot.sh
+# regenerates the key fresh; nodes.json starts empty). Leaving these in the
+# image would ship one shared mesh key -- and one customer's already-enrolled
+# sensors -- across the whole cloned fleet.
+rm -f /etc/greenhouse/netkey /etc/greenhouse/nodes.json
 
 # The admin SSH key is a FLEET-WIDE credential: one private key on the
 # developer's machine unlocks every unit that carries it. Keeping it in a
