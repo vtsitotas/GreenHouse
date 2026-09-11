@@ -18,12 +18,12 @@ echo "==> Installing packages..."
 apt-get update -qq
 # NB: dnsmasq-base (not dnsmasq) — NetworkManager's 'shared' AP mode uses it for
 # DHCP/NAT. The full dnsmasq package would run a conflicting system service.
+# python3-cryptography: mesh packet AES-GCM/CMAC. Installed via apt, NOT pip —
+# this board is ARMv6 and pip would try to build it from source through Rust.
 apt-get install -y -qq \
   mosquitto mosquitto-clients \
   python3-flask \
   python3-paho-mqtt \
-  # python3-cryptography: mesh packet AES-GCM/CMAC. Installed via apt, NOT pip —
-  # this board is ARMv6 and pip would try to build it from source through Rust.
   python3-cryptography \
   python3-pip \
   python3-serial \
