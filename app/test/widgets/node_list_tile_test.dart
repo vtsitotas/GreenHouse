@@ -55,6 +55,25 @@ void main() {
     expect(renamed, isTrue);
   });
 
+  testWidgets('remove icon is hidden without a handler', (tester) async {
+    final node = NodeStatus(nodeId: 'node1', isOnline: true, lastSeen: DateTime(2026, 6, 25));
+    await tester.pumpWidget(MaterialApp(home: Scaffold(body: NodeListTile(node: node))));
+    expect(find.byIcon(Icons.delete_outline), findsNothing);
+  });
+
+  testWidgets('tapping the remove icon triggers the handler when given', (tester) async {
+    var removed = false;
+    final node = NodeStatus(nodeId: 'node1', isOnline: true, lastSeen: DateTime(2026, 6, 25));
+
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(body: NodeListTile(node: node, onRemove: () => removed = true)),
+    ));
+
+    expect(find.byIcon(Icons.delete_outline), findsOneWidget);
+    await tester.tap(find.byIcon(Icons.delete_outline));
+    expect(removed, isTrue);
+  });
+
   testWidgets('NodeListTile shows Offline badge for offline node', (tester) async {
     final node = NodeStatus(nodeId: 'node2', isOnline: false, lastSeen: DateTime(2026, 6, 25, 9, 0));
     await tester.pumpWidget(MaterialApp(home: Scaffold(body: NodeListTile(node: node))));

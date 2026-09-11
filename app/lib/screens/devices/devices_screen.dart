@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:greenhouse_app/models/node_status.dart';
 import 'package:greenhouse_app/providers/nodes_provider.dart';
 import 'package:greenhouse_app/screens/common/friendly_error_view.dart';
 import 'package:greenhouse_app/screens/common/rename_device_dialog.dart';
@@ -12,6 +13,52 @@ import 'package:greenhouse_app/providers/sensor_provisioning_provider.dart';
 import 'package:greenhouse_app/screens/pairing/qr_scan_screen.dart';
 import 'package:greenhouse_app/screens/devices/add_sensor_screen.dart';
 import 'package:greenhouse_app/models/sensor_enrolment.dart';
+
+/// True for the bridge's own entry, never a real sensor: `zone == null` and
+/// `meshRank == 0` is the bridge's definition of itself, per the payload
+/// bridge_esp32.ino sends at boot (see node_status.dart's fromMqttMesh doc).
+/// The bridge was never enrolled via /api/nodes, so it has nothing to remove.
+bool _isBridge(NodeStatus node) => node.zone == null && node.meshRank == 0;
+
+Future<void> _confirmAndRemove(
+    BuildContext context, WidgetRef ref, NodeStatus node) async {
+  final confirmed = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => AlertDialog(
+      icon: const Icon(Icons.warning_amber_rounded),
+      title: const Text('Remove this sensor?'),
+      content: const Text(
+        "The Pi will stop trusting this sensor's readings. To add it back "
+        'later you will need to scan the QR code on it again.',
+      ),
+      actions: [
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('Cancel'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: const Text('Remove'),
+        ),
+      ],
+    ),
+  );
+  if (confirmed != true) return;
+
+  final svc = ref.read(sensorProvisioningServiceProvider);
+  if (svc == null) return;
+  try {
+    await svc.remove(node.nodeId);
+    ref.invalidate(nodesProvider);
+    ref.invalidate(unenrolledMacsProvider);
+  } catch (_) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Couldn't remove this sensor. Check the connection and try again."),
+      ));
+    }
+  }
+}
 
 class DevicesScreen extends ConsumerWidget {
   const DevicesScreen({super.key});
@@ -118,6 +165,9 @@ class DevicesScreen extends ConsumerWidget {
                     currentAutoLabel:
                         displayNameFor(node.nodeId, const {}, zone: node.zone),
                   ),
+                  onRemove: _isBridge(node)
+                      ? null
+                      : () => _confirmAndRemove(context, ref, node),
                 )),
           ],
         ),

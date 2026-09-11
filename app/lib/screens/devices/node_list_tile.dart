@@ -16,10 +16,16 @@ class NodeListTile extends StatelessWidget {
   /// Long-press to rename. Null disables the affordance.
   final VoidCallback? onRename;
 
+  /// De-enrol this sensor (revokes its key on the Pi). Null disables the
+  /// affordance — the caller omits it for the bridge, which isn't a sensor
+  /// and was never enrolled via /api/nodes.
+  final VoidCallback? onRemove;
+
   const NodeListTile({
     required this.node,
     this.names = const {},
     this.onRename,
+    this.onRemove,
     super.key,
   });
 
@@ -56,6 +62,12 @@ class NodeListTile extends StatelessWidget {
           child: Text(node.isOnline ? 'Online' : 'Offline',
               style: const TextStyle(color: Colors.white, fontSize: 12)),
         ),
+        if (onRemove != null)
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: 'Remove sensor',
+            onPressed: onRemove,
+          ),
       ]),
     );
   }
