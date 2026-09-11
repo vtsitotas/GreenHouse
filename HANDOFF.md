@@ -1,6 +1,9 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-08-22 (CSV export of history data, and test coverage
+**Last updated:** 2026-09-11 (unlimited sensors + in-app onboarding —
+designed, implemented, bench-tested in progress, **not finished**: see
+"Next step" below before starting new work). Previous session 2026-08-22:
+CSV export of history data, and test coverage
 for the forecast-failure fallback path — app-only, no hardware/firmware
 touched). Previous session 2026-08-16: fake sensor firmware rewritten to match
 production mesh logic exactly, a MAC-reader bench utility, fleet grown to 4
@@ -33,6 +36,111 @@ Pi remains **working** (2026-07-27's "no traffic" note was a diagnostic
 artifact, not the link). WiFi first-time setup (captive portal) is fixed end
 to end. The bench Pi is fully deployed off current `main`, `selftest.sh`
 reports 45/45.
+
+---
+
+## TL;DR of this session (2026-09-11 — unlimited sensors + in-app onboarding, IN PROGRESS)
+
+The 8-device ceiling (`TRUSTED_NODES[]` + ESP-NOW's 7-encrypted-peer limit,
+see `SCALING_AND_EXPANSION_IDEAS.md`) is gone. Sensors are now added from the
+app (Devices → Add sensor → scan QR), no reflash of already-deployed nodes,
+per-device AES-GCM keys instead of one shared PMK/LMK. Full design:
+`docs/superpowers/specs/2026-09-09-unlimited-sensors-app-onboarding-design.md`,
+plan: `docs/superpowers/plans/2026-09-09-unlimited-sensors-app-onboarding.md`.
+
+**Not finished.** Tasks 1-15 of the plan are implemented and merged (v2 mesh
+packet format, Pi-side crypto/trust-store/decrypt path, `/api/nodes` API,
+app Add/Remove Sensor UI). Task 16 (the hardware flag day) is **partway
+through**: the crypto is proven end-to-end on real hardware (see below), the
+Pi is deployed with a real per-unit NetKey, but **no sensor has actually been
+enrolled via the app yet** — zone2 (`9D:B0`) has its real AppKey generated
+and staged (`firmware/edge_node_esp32_c3/node_key.h`) but has **not been
+reflashed**; zone3 (`6B:50`)/zone4 (`75:EC`) haven't been touched at all.
+**Next step for whoever picks this up:** flash zone2 with
+`edge_node_esp32_c3.ino` (node_key.h already staged), enrol it from the
+app's Add Sensor flow (hold it near the hub), confirm it reports, then
+repeat for zone3/zone4, then add a 5th/6th sensor to actually demonstrate
+the ceiling is gone. After that: finish the plan's Task 16 Step 6 doc
+updates (`SCALING_AND_EXPANSION_IDEAS.md` §7's "don't implement" call is now
+superseded, `SECURITY.md`'s shared-PMK gap is closed, `docs/DEVICES.md`
+stops describing `TRUSTED_NODES[]`) — **not done yet**, this entry is a
+placeholder for that.
+
+**A code review pass — not just reading, actually building and deploying —
+found and fixed real bugs the plan's own tests didn't catch:**
+- `mesh_crypto.h` used `mbedtls_cipher_cmac()` without including `cmac.h`
+  (declared there, not in `cipher.h`) — nothing that includes `mesh_node.h`
+  compiled until this was added. Only caught by actually building for real
+  hardware with `arduino-cli` (no Arduino toolchain in the dev sandbox).
+- `edge_node_esp32.ino`'s (non-C3) `onDataSent` still used the pre-refactor
+  ESP-NOW callback signature; only the C3 variant had been updated. Same
+  discovery method.
+- `serial_bridge.py` defined `send_netkey()` but never called it and never
+  read `/etc/greenhouse/netkey` — the bridge would never receive its key and
+  never beacon. Confirmed on the bench via `journalctl -u
+  greenhouse-serial-bridge` showing `[serial-bridge] netkey sent to bridge`
+  only after the fix.
+- `meshStoreSetAppKey()` was dead code — nothing wired `node_key.h`'s
+  compiled-in key into NVS on first boot, so a freshly-flashed sensor could
+  never complete enrolment. Fixed in both edge sketches' `setup()`.
+- `runSleepyCycle()` called `meshRtcRestore()` (which now registers an
+  ESP-NOW peer) *before* `esp_now_init()` — silently discarded the RTC-cached
+  parent on every wake, forcing full rediscovery each cycle instead of the
+  fast-reconnect path Phase 1 exists for. Reordered.
+- **The NetKey and `nodes.json` were never made per-unit.** Generation lived
+  only in `install.sh` (a dev tool a real customer never runs), and
+  `prep_image.sh` never wiped either file before cloning — every Pi cloned
+  from one golden image would have shipped the *identical* mesh NetKey, and
+  any sensors enrolled on the master would ship pre-trusted on every clone.
+  Moved generation into `first_boot.sh` (the real per-customer-unit script,
+  same sentinel-gated pattern as `cam_token.txt`) and added both files to
+  `prep_image.sh`'s wipe list.
+- `nodes.py`'s `load()` crashed (`json.JSONDecodeError` → uncaught
+  `NodeStoreError` → Flask 500) on the **empty** `nodes.json` that
+  `install.sh`/`first_boot.sh` create — meaning every `/api/nodes` call on a
+  freshly deployed Pi with zero sensors enrolled would fail. Hit for real on
+  the bench: `DELETE /api/nodes/<mac>` from the app surfaced as "Couldn't
+  remove this sensor" with no hint the real cause was server-side. Fixed
+  `load()` to treat empty/whitespace-only content as "no nodes".
+- Removing a legacy (pre-v2, MQTT-only) sensor 404'd correctly but the app
+  showed "check the connection" — wrong and confusing when it happened live
+  on zone2/3/4. New `SensorNotManagedException` carries the real message.
+- `flutter build apk --release` failed outright on a fresh Flutter 3.47.3
+  install: Gradle 8.12 (project) below Flutter's floor of 8.14, which then
+  surfaced AGP 8.7.3 below its floor of 8.11.1, which then surfaced Kotlin
+  2.1.0 below its floor of 2.2.20. Bumped all three; confirmed by actually
+  building and installing a release APK on the bench phone.
+
+**Still open, not fixed this session:** `deploy.ps1`'s `PiHost` resolution
+(`ping` + a bracketed-IP regex) fails when `ping` returns an IPv6 link-local
+address or a bare numeric IP with no `[x.x.x.x]` in its output — hit for
+real when the Pi moved to a new WiFi network. Worked around by passing the
+Pi's IP straight to the underlying `ssh`/`scp` calls instead of through the
+script's resolver; the script itself still needs a real fix.
+
+**Bench-verified real crypto agreement, not just unit tests.** Flashed
+`firmware/crypto_selftest` to a real ESP32-C3, captured its printed packet
+into `firmware/test/vectors/device_vectors.txt`, and confirmed the Pi's
+`cryptography`-based decrypt opens it byte-for-byte identically to what the
+device's own mbedTLS sealed — `pytest pi/tests/test_firmware_vectors.py`
+3/3, the single highest-risk unknown in the whole design. `selftest.sh`:
+44/45 (only fail is the pre-existing, deliberately-deferred leaked `"123"`
+MQTT password, unrelated to this feature).
+
+**Also cleared this session** (unrelated ghosts surfaced by using the app
+live): the old `zone1`/`A1:B0` board's last retained MQTT status topic
+(never cleared when it was pulled 2026-08-16), and — after re-deploying —
+zone2/3/4's stale pre-v2 retained topics (`greenhouse/nodes/<mac>/#` and
+`greenhouse/zone{2,3,4}/#`), both via `pi/scripts/clear_retained.sh`, so the
+Devices screen and Dashboard start clean for the actual v2 enrolment.
+
+**App distribution note:** built and installed a release APK on the bench
+phone from a completely fresh `adb uninstall` + `adb install` (different
+keystore — debug, since no release signing is configured — than whatever
+built the previously-installed copy; same known gotcha as the 2026-08-13
+session). MIUI/HyperOS needed "Install via USB" re-enabled in Developer
+options, and re-disables itself between sessions — expect to redo this step
+next time.
 
 ---
 

@@ -12,6 +12,10 @@ firmware/libraries/GreenhouseSecrets/secrets.h
 firmware/edge_node_esp32/node_key.h
 firmware/edge_node_esp32_c3/node_key.h
 
+# provision_sensor.py's own output directory (QR PNGs + node_key-<mac>.h
+# headers) -- real per-sensor keys, same reasoning as node_key.h above.
+provisioning/
+
 # Scratch / staging
 _dart_staging/
 deleted/

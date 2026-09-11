@@ -1,1 +1,1 @@
-# Paste the packet= line printed by firmware/crypto_selftest here.
+packet=48206ef16c9db00700030000000001048bf4d03014d814c4cb0c6dcb60e67024ed5ef80b33c63b439e57655563cbf7e9b2f18bd73410534d7c1b6ddd89
