@@ -29,6 +29,11 @@ app/.dart_tool/
 app/.flutter-plugins
 app/.flutter-plugins-dependencies
 
+# Android Gradle build output (separate tree from Flutter's own app/build/)
+app/android/build/
+app/android/app/build/
+app/android/.gradle/
+
 # Git worktrees (scratch, not tracked)
 .worktrees/
 firmware/test/host/layout_vectors
