@@ -41,7 +41,14 @@ def load(path: str = NODES_PATH) -> dict:
         return {}
     try:
         with open(path) as fh:
-            raw = json.load(fh)
+            content = fh.read()
+        # install.sh/first_boot.sh create this file as an empty 0-byte
+        # placeholder (same touch-then-fill pattern as every other per-unit
+        # config) -- a fresh Pi that has never had a sensor enrolled must
+        # load as "no nodes", not crash every /api/nodes call.
+        if not content.strip():
+            return {}
+        raw = json.loads(content)
         out = {}
         for entry in raw['nodes']:
             key = bytes.fromhex(entry['app_key'])

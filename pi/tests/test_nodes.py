@@ -36,6 +36,22 @@ def test_missing_file_loads_as_empty_not_an_error(store):
     assert nodes.load(store) == {}
 
 
+def test_an_empty_but_existing_file_loads_as_empty_not_an_error(store):
+    # install.sh/first_boot.sh touch this file empty on a fresh Pi that has
+    # never had a sensor enrolled -- that state must load fine, not crash
+    # every /api/nodes call. Bench-hit for real: DELETE /api/nodes/<mac>
+    # 500'd on a freshly deployed Pi because of exactly this.
+    with open(store, 'w'):
+        pass
+    assert nodes.load(store) == {}
+
+
+def test_whitespace_only_file_loads_as_empty_not_an_error(store):
+    with open(store, 'w') as fh:
+        fh.write('\n')
+    assert nodes.load(store) == {}
+
+
 def test_add_then_load_round_trips_including_the_key(store):
     nodes.add(_node(), store)
     loaded = nodes.load(store)
