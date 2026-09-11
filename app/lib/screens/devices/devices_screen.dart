@@ -13,6 +13,8 @@ import 'package:greenhouse_app/providers/sensor_provisioning_provider.dart';
 import 'package:greenhouse_app/screens/pairing/qr_scan_screen.dart';
 import 'package:greenhouse_app/screens/devices/add_sensor_screen.dart';
 import 'package:greenhouse_app/models/sensor_enrolment.dart';
+import 'package:greenhouse_app/services/sensor_provisioning_service.dart'
+    show SensorNotManagedException;
 
 /// True for the bridge's own entry, never a real sensor: `zone == null` and
 /// `meshRank == 0` is the bridge's definition of itself, per the payload
@@ -51,6 +53,11 @@ Future<void> _confirmAndRemove(
     await svc.remove(node.nodeId);
     ref.invalidate(nodesProvider);
     ref.invalidate(unenrolledMacsProvider);
+  } on SensorNotManagedException catch (e) {
+    if (context.mounted) {
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text(e.toString())));
+    }
   } catch (_) {
     if (context.mounted) {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(

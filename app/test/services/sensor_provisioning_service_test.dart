@@ -81,9 +81,18 @@ void main() {
   test('remove throws when the Pi rejects the request', () async {
     final svc = SensorProvisioningService(
       config: _config,
-      client: MockClient((_) async => http.Response('{"error":"bad"}', 404)),
+      client: MockClient((_) async => http.Response('{"error":"bad"}', 500)),
     );
     expect(() => svc.remove('112233445566'),
         throwsA(isA<http.ClientException>()));
+  });
+
+  test('remove throws SensorNotManagedException on a 404', () async {
+    final svc = SensorProvisioningService(
+      config: _config,
+      client: MockClient((_) async => http.Response('{"error":"unknown mac"}', 404)),
+    );
+    expect(() => svc.remove('112233445566'),
+        throwsA(isA<SensorNotManagedException>()));
   });
 }

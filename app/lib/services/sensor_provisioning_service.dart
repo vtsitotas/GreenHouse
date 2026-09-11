@@ -9,6 +9,18 @@ import '../models/sensor_enrolment.dart';
 import '../utils/cert_pinning.dart';
 import 'history_service.dart' show kPortalHttpsPort;
 
+/// Thrown by [SensorProvisioningService.remove] when the Pi has never heard
+/// of this MAC -- e.g. a sensor still running pre-enrolment firmware, only
+/// ever seen via old-style MQTT status topics rather than /api/nodes. Not a
+/// connection problem, so the UI shouldn't say "check the connection".
+class SensorNotManagedException implements Exception {
+  const SensorNotManagedException();
+  @override
+  String toString() =>
+      "This sensor isn't managed by this hub yet -- it hasn't been added "
+      'through the app.';
+}
+
 /// Talks to the Pi's `/api/nodes` (add/list/remove a sensor). Mirrors
 /// [HistoryService]'s transport exactly -- pinned HTTPS first, falling back
 /// to plaintext only on failure -- since this hits the same portal over the
@@ -96,6 +108,9 @@ class SensorProvisioningService {
   Future<void> remove(String mac) async {
     final res = await _request(
         '/api/nodes/$mac', (c, uri) => c.delete(uri, headers: _headers));
+    if (res.statusCode == 404) {
+      throw const SensorNotManagedException();
+    }
     if (res.statusCode != 204) {
       throw http.ClientException('Removal failed (${res.statusCode})');
     }
