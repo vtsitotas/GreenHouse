@@ -136,6 +136,8 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
               key: const Key('rule-form-zone-dropdown'),
+              // ignore: deprecated_member_use -- see zone_care_sheet.dart's
+              // note; 'value' required on this project's 3.32.4 local toolchain.
               value: _zone,
               decoration: const InputDecoration(labelText: 'Zone', border: OutlineInputBorder()),
               items: [
@@ -149,6 +151,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               key: const Key('rule-form-metric-dropdown'),
+              // ignore: deprecated_member_use -- see zone_care_sheet.dart's note.
               value: _metricOptions.containsKey(_metric) ? _metric : _metricOptions.keys.first,
               decoration: const InputDecoration(labelText: 'Metric', border: OutlineInputBorder()),
               items: [
@@ -161,6 +164,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             Row(children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
+                  // ignore: deprecated_member_use -- see zone_care_sheet.dart's note.
                   value: _op,
                   decoration: const InputDecoration(labelText: 'Operator', border: OutlineInputBorder()),
                   items: [for (final o in _operators) DropdownMenuItem(value: o, child: Text(o))],
@@ -196,6 +200,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             ),
             if (_hasAction) ...[
               DropdownButtonFormField<String>(
+                // ignore: deprecated_member_use -- see zone_care_sheet.dart's note.
                 value: _actuatorId,
                 decoration: const InputDecoration(labelText: 'Actuator', border: OutlineInputBorder()),
                 items: [
@@ -205,6 +210,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
+                // ignore: deprecated_member_use -- see zone_care_sheet.dart's note.
                 value: _command,
                 decoration: const InputDecoration(labelText: 'Command', border: OutlineInputBorder()),
                 items: const [

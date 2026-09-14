@@ -173,6 +173,11 @@ class _ZoneCareSheetState extends ConsumerState<ZoneCareSheet> {
             const SizedBox(height: 16),
             DropdownButtonFormField<String?>(
               key: const Key('zone-care-plant-dropdown'),
+              // ignore: deprecated_member_use -- 'value' is required on the
+              // Flutter 3.32.4 toolchain this project builds with locally
+              // (no 'initialValue' param exists yet on DropdownButtonFormField
+              // there); CI runs a newer stable where it's deprecated but still
+              // functional. Keep 'value' until the local toolchain is upgraded.
               value: _profileId,
               decoration: const InputDecoration(labelText: 'Plant', border: OutlineInputBorder()),
               items: [

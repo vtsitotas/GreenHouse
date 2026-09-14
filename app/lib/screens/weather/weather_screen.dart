@@ -121,6 +121,7 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<int>(
+                // ignore: deprecated_member_use -- see zone_care_sheet.dart's note.
                 value: intervalSeconds,
                 decoration: const InputDecoration(labelText: 'Fetch interval', border: OutlineInputBorder()),
                 items: intervalOptions.map((o) => DropdownMenuItem(
@@ -792,6 +793,11 @@ class _RuleCard extends StatelessWidget {
             Switch(
               value: rule.enabled,
               onChanged: onToggle,
+              // ignore: deprecated_member_use -- 'activeThumbColor' doesn't
+              // exist yet on this project's 3.32.4 local Flutter toolchain;
+              // CI runs a newer stable where 'activeColor' is deprecated but
+              // still functional. Keep 'activeColor' until the local
+              // toolchain is upgraded.
               activeColor: AppColors.brand,
             ),
           ],
