@@ -793,11 +793,9 @@ class _RuleCard extends StatelessWidget {
             Switch(
               value: rule.enabled,
               onChanged: onToggle,
-              // ignore: deprecated_member_use -- 'activeThumbColor' doesn't
-              // exist yet on this project's 3.32.4 local Flutter toolchain;
-              // CI runs a newer stable where 'activeColor' is deprecated but
-              // still functional. Keep 'activeColor' until the local
-              // toolchain is upgraded.
+              // 'activeThumbColor' doesn't exist yet on this project's 3.32.4
+              // local Flutter toolchain; keep 'activeColor' until upgraded.
+              // ignore: deprecated_member_use
               activeColor: AppColors.brand,
             ),
           ],

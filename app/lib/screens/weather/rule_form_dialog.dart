@@ -136,8 +136,8 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
               key: const Key('rule-form-zone-dropdown'),
-              // ignore: deprecated_member_use -- see zone_care_sheet.dart's
-              // note; 'value' required on this project's 3.32.4 local toolchain.
+              // see zone_care_sheet.dart's note.
+              // ignore: deprecated_member_use
               value: _zone,
               decoration: const InputDecoration(labelText: 'Zone', border: OutlineInputBorder()),
               items: [
