@@ -1,8 +1,10 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-09-11 (unlimited sensors + in-app onboarding —
-designed, implemented, bench-tested in progress, **not finished**: see
-"Next step" below before starting new work). Previous session 2026-08-22:
+**Last updated:** 2026-09-14 (multi-site LoRaWAN + cellular gateway —
+design-only, see "TL;DR of this session" below; previous session
+2026-09-12 finished the unlimited-sensors bench work this handoff used
+to point at as unfinished — zone2/zone4 now live-verified end to end,
+zone3 still needs a physical erase+reflash). Previous session 2026-09-11:
 CSV export of history data, and test coverage
 for the forecast-failure fallback path — app-only, no hardware/firmware
 touched). Previous session 2026-08-16: fake sensor firmware rewritten to match
@@ -36,6 +38,114 @@ Pi remains **working** (2026-07-27's "no traffic" note was a diagnostic
 artifact, not the link). WiFi first-time setup (captive portal) is fixed end
 to end. The bench Pi is fully deployed off current `main`, `selftest.sh`
 reports 45/45.
+
+---
+
+## TL;DR of this session (2026-09-14 — multi-site LoRaWAN + cellular gateway design)
+
+**Design only, nothing built.** Two needs raised this session, decomposed
+into one design: a greenhouse site with no local internet at all, and
+multiple greenhouses (kilometers apart) controllable from one app without
+paying for a cellular data plan at every single site. Full spec:
+`docs/superpowers/specs/2026-09-14-multi-site-lorawan-cellular-design.md`.
+
+**Shape of the design:** one shared central gateway (co-located with one
+greenhouse or standalone) carries a LoRaWAN concentrator (RAK2287, SPI to
+its Pi) + self-hosted ChirpStack + a SIM7600 LTE HAT for its own internet
+uplink. Every *other* remote greenhouse gets only a LoRaWAN end-node module
+(RAK811/RAK3172, UART to its Pi) + an 868MHz antenna — **no SIM card, no
+subscription** at the remote sites, which was the entire point of choosing
+this shape over "give every site its own cellular modem." GSM/LTE was
+picked for the gateway's own uplink (not NB-IoT/Sigfox) because it needs a
+continuous, moderate-bandwidth, low-latency session and is mains-powered
+so LPWAN's power-saving properties buy nothing there; NB-IoT/Sigfox were
+also rejected *for the greenhouse<->gateway hop* specifically because
+using them there would silently reintroduce the per-site-subscription cost
+the shared-gateway shape exists to avoid.
+
+**Validated against real numbers, not assumed:** EU868's 1% duty cycle
+(36s/hour, since this is a private self-hosted network, not bound by
+public-network fair-use limits like TTN's) supports roughly 25
+messages/hour even at worst-case range (SF12) — nowhere near a binding
+constraint at this project's 5-15 min reporting interval. The real
+constraint is SF12's 51-byte payload cap, addressed with compact ~8-10
+byte encoding (int16-scaled values, no raw floats) plus sending a locally-
+computed average over the reporting window rather than every raw reading,
+plus locally-triggered alert uplinks (the remote Pi already has every raw
+reading and can run the same kind of rule evaluation `weather.py`'s rules
+feature already does) instead of relying on a downlink round-trip.
+
+**Explicitly still open:** static-IP-direct-to-gateway (reusing the
+existing LAN TLS-pinning pattern, `cert_pinning.dart`) vs. keeping the
+existing HiveMQ Cloud broker — blocked on confirming with an actual
+carrier that their M2M/IoT SIM plan gives a genuinely public, inbound-
+reachable IP, not just "doesn't change" behind carrier NAT. Default to
+the already-proven cloud-broker path until that's confirmed. The Flutter
+app's multi-site UI (today it pairs with exactly one greenhouse) is
+flagged as necessary but not designed — separate brainstorm.
+
+**Next step for whoever picks this up:** if the carrier question gets
+answered, or if you're ready to commit to cloud-broker-first regardless,
+the next move is `superpowers:writing-plans` off the spec above to break
+this into an implementation plan — nothing here has been scoped into
+tasks yet.
+
+---
+
+## TL;DR of this session (2026-09-12 — unlimited-sensors bench bugfixes, real hardware live-verified)
+
+**The core unlimited-sensors feature (2026-09-09/11) now works end to end
+on real hardware** — zone2 and zone4 both enrolled live via the app's Add
+Sensor flow and report real (fake) readings through the full mesh → bridge
+→ Pi → MQTT → Dashboard/Mesh-Map path. zone3 (`6B:50`) still needs a
+physical erase-flash + reflash (never got a clean first enrollment this
+session — bring it to USB to finish). Full bug list and fix status:
+`docs/superpowers/plans/2026-09-12-onboarding-bench-bugfixes.md`.
+
+**Four real bugs found and fixed, code committed:**
+1. Bridge NetKey lives in RAM only and was never re-sent after a bridge
+   reset/reflash — silently broke routing fleet-wide until a manual
+   `systemctl restart greenhouse-serial-bridge`. Fixed: bridge sends a
+   `hello` on boot, Pi auto-resends the NetKey. Live-verified.
+2. A board's stale NVS AppKey (from *any* prior firmware, not just this
+   project's) silently defeats re-enrollment — `meshStoreSetAppKey()` only
+   seeds NVS if nothing is already stored. Bit twice (zone2, zone4); fix is
+   procedural (`esptool erase-flash` before a board's first enrollment),
+   not yet written into the actual runbook docs.
+3. Ghost retained MQTT topics accumulated from every zone-name a sensor
+   was ever enrolled under — Dashboard showed phantom zones. Fixed:
+   `api_nodes_delete()` now clears a removed node's own retained topics.
+4. **The big one:** `handle_frame()` (the real v2 encrypted-packet path)
+   published sensor readings to `greenhouse/<zone>/sensors/<metric>` — a
+   topic *nothing* subscribes to. Both the Dashboard
+   (`SensorReading.fromMqtt`) and the history recorder
+   (`recorder.py`'s `SUBSCRIBE_TOPICS`) only ever listened for
+   `greenhouse/<zone>/air/{temperature,humidity}` and
+   `greenhouse/<zone>/soil/moisture`. Real sensor data reached the Pi and
+   decrypted fine this whole time, just on a topic nobody read — meaning
+   history charts have likely never recorded a single real mesh-sourced
+   data point since the v2 crypto refactor. Fixed; live-verified the
+   Dashboard now renders real Temp/Humidity/Soil chips.
+
+**Also:** `fake_edge_node_esp32_c3.ino` brought back in sync with the v2
+provisioning protocol (was silently still on the pre-unlimited-sensors
+`MESH_MAGIC`); two Flutter SDK-compat fixes needed for a clean
+`flutter build apk --release` on this box's Flutter 3.32.4 toolchain
+(`activeThumbColor`→`activeColor`, `DropdownButtonFormField`
+`initialValue`→`value`); an accidental full wipe of `/etc/greenhouse/nodes.json`
+mid-session (likely another agent bench-testing the DELETE endpoint
+against live data instead of a disposable fixture) was recovered without
+any board needing re-flashing, since the trust store is Pi-side only.
+
+**Physical bridge board is an ESP32-C3** (confirmed via `esptool`), not a
+classic ESP32, despite living in `firmware/bridge_esp32/` — flash it with
+`--fqbn esp32:esp32:esp32c3`.
+
+**Not yet done:** `test_serial_bridge.py` has zero coverage of
+`handle_frame()`'s exact published topics — the class of bug in #4 above
+could silently reappear; the erase-flash-before-first-enrollment lesson
+from #2 isn't written into `docs/DEVICES.md`/`INSTRUCTIONS.md` yet; zone3
+still needs its physical reflash.
 
 ---
 
