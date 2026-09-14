@@ -195,8 +195,39 @@ def _handle_heartbeat(client, msg: dict, state: dict) -> None:
         state['bridge_mesh_pub'] = now
 
 
+def _handle_hello(ser, state: dict) -> None:
+    """Re-send the NetKey to the bridge after it announces a fresh boot.
 
-_METRICS = ('temperature', 'humidity', 'soil_moisture')
+    The bridge holds the NetKey in RAM only, so any reset or reflash wipes it.
+    Rather than requiring a manual service restart, the firmware emits a
+    ``{"type":"hello","mac":"..."}`` line on boot and this handler re-delivers
+    the key automatically -- same path as the initial send in run().
+
+    No-op if the key was never loaded (shouldn't happen in normal operation,
+    but we must not crash if called before run() has finished its setup).
+    """
+    net_key = state.get('net_key')
+    if net_key is None:
+        print('[serial-bridge] hello received but no NetKey in state — skipping re-send',
+              flush=True)
+        return
+    send_netkey(ser, net_key)
+    print('[serial-bridge] netkey re-sent on hello from bridge', flush=True)
+
+
+# (group, topic metric name) per decrypted-body field. Must match both
+# recorder.py's SUBSCRIBE_TOPICS (greenhouse/+/air/temperature,
+# greenhouse/+/air/humidity, greenhouse/+/soil/moisture -- history charts
+# read exactly these) and the app's SensorReading.fromMqtt/ZoneCard, which
+# key the live readings map the same way. A bare 'sensors/<field>' group
+# here previously matched neither consumer, so real mesh sensor readings
+# reached the Pi and decrypted fine but were invisible on the Dashboard and
+# never recorded to history.
+_METRICS = {
+    'temperature':   ('air', 'temperature'),
+    'humidity':      ('air', 'humidity'),
+    'soil_moisture': ('soil', 'moisture'),
+}
 
 
 def accept_replay(state, mac: str, boot_count: int, seq: int) -> bool:
@@ -242,12 +273,31 @@ def handle_frame(client, msg: dict, state: dict) -> None:
         print(f'[mesh] {mac} failed authentication: {exc}', flush=True)
         return
 
-    for metric in _METRICS:
-        client.publish(_reading_topic(node.zone, 'sensors', metric),
+    for metric, (group, topic_metric) in _METRICS.items():
+        client.publish(_reading_topic(node.zone, group, topic_metric),
                        f'{float(getattr(body, metric)):.1f}', retain=True)
     if body.battery_mv:
         client.publish(_battery_topic(mac), f'{body.battery_mv / 1000:.2f}', retain=True)
     client.publish(_status_topic(mac), 'online', retain=True)
+
+    # The Mesh Map screen (app/lib/screens/devices/mesh_map_screen.dart)
+    # places a node by `meshRank`/`parentId` from its retained `/mesh` topic
+    # -- present for the bridge's own boot record (see _handle_mesh) but,
+    # until now, never published for a real edge node's decrypted packet,
+    # even though the packet body already carries parent_mac/parent_rssi and
+    # the header carries rank. Every edge node therefore always landed in
+    # the map's "unplaced" row regardless of real routing state. Matches the
+    # shape pi/tools/simulator.py's build_mesh_payload() already used to
+    # exercise this same screen against fake data.
+    parent_mac = body.parent_mac.hex().upper()
+    _publish_mesh(client, mac, {
+        'parent':     parent_mac if any(body.parent_mac) else None,
+        'rank':       header.rank,
+        'rssi':       body.parent_rssi,
+        'sleepy':     node.sleepy,
+        'battery_mv': body.battery_mv or None,
+        'zone':       node.zone,
+    })
 
 
 def handle_unenrolled(msg: dict, state: dict) -> None:
@@ -296,10 +346,14 @@ _HANDLERS = {
 }
 
 
-def handle_line(client, line: bytes, state: dict) -> None:
+def handle_line(client, line: bytes, state: dict, ser=None) -> None:
     """Parse and republish one UART line. Never raises -- malformed JSON,
     unknown/missing type, wrong-shape-for-its-type, and empty/timeout lines
     are all silently dropped so the caller's read loop can just keep going.
+
+    ``ser`` is the serial.Serial instance; required only for the ``hello``
+    message type (which needs to write back to the bridge). Callers that
+    never produce ``hello`` lines (e.g. unit tests) may omit it.
     """
     if not line:
         return  # read timeout (pyserial returns b'' on timeout) -- no-op
@@ -311,7 +365,10 @@ def handle_line(client, line: bytes, state: dict) -> None:
         return
     msg_type = msg.get('type')
     try:
-        if msg_type == 'heartbeat':
+        if msg_type == 'hello':
+            if ser is not None:
+                _handle_hello(ser, state)
+        elif msg_type == 'heartbeat':
             _handle_heartbeat(client, msg, state)
         elif msg_type == 'mesh':
             _handle_mesh(client, msg, state)
@@ -430,7 +487,7 @@ def run() -> None:
     last_offline_check = time.monotonic()
     while True:
         line = ser.readline()
-        handle_line(client, line, state)
+        handle_line(client, line, state, ser)
 
         now = time.monotonic()
         if now - last_offline_check >= OFFLINE_CHECK_INTERVAL_S:

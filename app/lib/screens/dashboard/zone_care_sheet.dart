@@ -173,7 +173,7 @@ class _ZoneCareSheetState extends ConsumerState<ZoneCareSheet> {
             const SizedBox(height: 16),
             DropdownButtonFormField<String?>(
               key: const Key('zone-care-plant-dropdown'),
-              initialValue: _profileId,
+              value: _profileId,
               decoration: const InputDecoration(labelText: 'Plant', border: OutlineInputBorder()),
               items: [
                 const DropdownMenuItem<String?>(value: null, child: Text('Not set')),

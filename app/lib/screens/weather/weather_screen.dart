@@ -121,7 +121,7 @@ class _WeatherScreenState extends ConsumerState<WeatherScreen>
               ),
               const SizedBox(height: 16),
               DropdownButtonFormField<int>(
-                initialValue: intervalSeconds,
+                value: intervalSeconds,
                 decoration: const InputDecoration(labelText: 'Fetch interval', border: OutlineInputBorder()),
                 items: intervalOptions.map((o) => DropdownMenuItem(
                   value: o.$1,
@@ -792,7 +792,7 @@ class _RuleCard extends StatelessWidget {
             Switch(
               value: rule.enabled,
               onChanged: onToggle,
-              activeThumbColor: AppColors.brand,
+              activeColor: AppColors.brand,
             ),
           ],
         ),

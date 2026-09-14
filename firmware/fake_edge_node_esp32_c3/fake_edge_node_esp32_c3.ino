@@ -5,17 +5,22 @@
 #include <esp_sleep.h>
 #include <mesh_config.h>
 #include <mesh_node.h>
+#include "node_key.h"   // this board's AppKey -- see node_key.h.example
 
 // ── FAKE SENSOR FIRMWARE ─────────────────────────────────────────────────────
-// Same mesh core, same sleepy wake cycle, same timing constants as
-// edge_node_esp32_c3.ino — only the DHT22/soil-ADC/battery-divider reads are
-// swapped for a per-node random walk. For bench-testing the mesh (routing,
-// relay, self-heal, deep sleep, MQTT delivery) on a board whose sensors
-// aren't wired up yet (docs/DEVICES.md "Pending": DHT22 pull-up on GPIO6 not
-// soldered). Flash to a MAC already listed in TRUSTED_NODES[] (mesh_config.h)
-// — a fake image on an untrusted MAC is invisible to the mesh, same as the
-// real firmware would be. Reflash edge_node_esp32_c3.ino once real sensors
-// are wired; keep the two files' mesh logic in sync if you change one.
+// Same mesh core, same v2 app-onboarding flow (provisioning gate, per-board
+// AppKey, MESH_MAGIC_V2/MESH_PACKET_LEN), same sleepy wake cycle and timing
+// constants as edge_node_esp32_c3.ino — only the DHT22/soil-ADC/battery-
+// divider reads are swapped for a per-node random walk. For bench-testing the
+// mesh (routing, relay, self-heal, deep sleep, MQTT delivery) *and* the
+// app's Add/Remove Sensor flow on a board whose real sensors aren't wired up
+// yet (docs/DEVICES.md "Pending": DHT22 pull-up on GPIO6 not soldered).
+// Provision it exactly like a real board: run
+// `pi/tools/provision_sensor.py --mac <this board's MAC>`, copy the printed
+// node_key-<mac>.h to node_key.h in this folder, flash, then Add sensor from
+// the app like any other. Reflash edge_node_esp32_c3.ino once real sensors
+// are wired; keep the two files' mesh/provisioning logic in sync if you
+// change one.
 
 // ── Pin definitions ───────────────────────────────────────────────────────────
 // Sensor power pins only — kept and toggled on the same schedule as the real
@@ -36,6 +41,7 @@ SensorPhase phase        = PHASE_IDLE;
 uint32_t    phaseStartMs = 0;
 uint32_t    lastCycleMs  = 0;
 uint32_t    lastRescanMs = 0;
+uint32_t    lastJoinMs   = 0;
 
 int32_t getMeshChannel() {
   return MESH_FIXED_CHANNEL;
@@ -88,13 +94,13 @@ void ensureFakeSeeded() {
   g_fakeBattMv = (uint16_t)(4100 + macOffset(200.0f));
 }
 
-void readFakeSensors(SensorPacket* pkt) {
+void readFakeSensors(SensorReading* r) {
   g_fakeTemp  = randomWalk(g_fakeTemp,  18.0f, 38.0f, 0.3f);
   g_fakeHumid = randomWalk(g_fakeHumid, 40.0f, 95.0f, 1.0f);
   g_fakeSoil  = randomWalk(g_fakeSoil,  10.0f, 80.0f, 2.0f);
-  pkt->temperature   = g_fakeTemp;
-  pkt->humidity      = g_fakeHumid;
-  pkt->soil_moisture = g_fakeSoil;
+  r->temperature   = g_fakeTemp;
+  r->humidity      = g_fakeHumid;
+  r->soil_moisture = g_fakeSoil;
 }
 
 // One-way drift (discharge) rather than a random walk both ways — a real
@@ -121,11 +127,23 @@ void onDataSent(const wifi_tx_info_t* info, esp_now_send_status_t status) {
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   uint32_t now = millis();
   int rssi = info->rx_ctrl ? info->rx_ctrl->rssi : -127;
-  if (len == sizeof(MeshBeacon)) {
+
+  // Check for a provisioning blob (33 bytes, not a beacon or data packet)
+  if (len == MESH_PROVISION_LEN && !meshStoreIsProvisioned()) {
+    if (meshHandleProvision(data, len)) {
+      Serial.println("[edge] provisioned — will boot into normal mode (FAKE)");
+      delay(500);
+      ESP.restart();
+    }
+    return;
+  }
+
+  if (len == (int)sizeof(MeshBeacon)) {
     MeshBeacon b;
     memcpy(&b, data, sizeof(b));
-    if (b.magic == MESH_MAGIC) meshHandleBeacon(info->src_addr, &b, rssi, now);
-  } else if (len == sizeof(MeshDataPacket)) {
+    if (b.magic == MESH_MAGIC_V2) meshHandleBeacon(info->src_addr, &b, rssi, now);
+  } else if (len == MESH_PACKET_LEN) {
+    // Some child picked us as its parent — relay its packet toward the bridge.
     meshRelayData(info->src_addr, data, len);
   }
 }
@@ -146,9 +164,9 @@ void goToSleep(uint8_t channel) {
   esp_deep_sleep_start();
 }
 
-bool sendWithConfirm(const SensorPacket* payload, uint32_t deadline) {
+bool sendWithConfirm(const SensorReading* r, uint32_t deadline) {
   g_lastTxStatus = -1;
-  meshSendReading(payload);
+  meshSendReading(r);
 
   if (!meshHasParent()) return false;  // buffered, unrouted — no callback coming
 
@@ -161,14 +179,11 @@ bool sendWithConfirm(const SensorPacket* payload, uint32_t deadline) {
   return (g_lastTxStatus == 1 && meshHasParent());
 }
 
-// Replaces the always-on loop() entirely for a node whose own TRUSTED_NODES[]
-// entry says sleepy=true. Single pass, hard-bounded by MESH_WAKE_MAX_AWAKE_MS,
-// never returns — the last thing it ever does is esp_deep_sleep_start().
+// Replaces the always-on loop() entirely for a node whose own enrolment says
+// sleepy=true. Single pass, hard-bounded by MESH_WAKE_MAX_AWAKE_MS, never
+// returns — the last thing it ever does is esp_deep_sleep_start().
 void runSleepyCycle() {
   const uint32_t deadline = MESH_WAKE_MAX_AWAKE_MS;
-
-  bool restored = meshRtcRestore();
-  Serial.printf("[wake] rtc restore: %s\n", restored ? "parent hint" : "none (cold/invalid)");
 
   digitalWrite(SOIL_PWR_PIN, HIGH);
   digitalWrite(DHT_PWR_PIN,  HIGH);
@@ -176,8 +191,6 @@ void runSleepyCycle() {
 
   uint8_t ch = meshRtcSavedChannel();
   if (ch == 0 || g_unconfirmedWakes >= 2) {
-    Serial.printf("[wake] channel lookup (%s)\n",
-                  ch == 0 ? "no saved channel" : "2+ silent wakes — re-confirming");
     ch = (uint8_t)getMeshChannel();
   }
   esp_wifi_set_promiscuous(true);
@@ -190,24 +203,33 @@ void runSleepyCycle() {
   }
   esp_now_register_send_cb(onDataSent);
   esp_now_register_recv_cb(onDataRecv);
-  meshInit(0);  // channel 0 = follow current radio channel
+  meshInit(0);
+
+  // Restored only now, AFTER esp_now_init()/meshInit(): a restored parent
+  // hint is re-armed via meshSetParent(), which calls esp_now_add_peer() --
+  // that fails silently (ESP_ERR_ESPNOW_NOT_INIT) before ESP-NOW is up, which
+  // would discard the cached parent on every single wake and force full
+  // rediscovery each cycle instead of the immediate-send fast path this
+  // exists for.
+  bool restored = meshRtcRestore();
+  Serial.printf("[wake] rtc restore: %s\n", restored ? "parent hint" : "none (cold/invalid)");
 
   meshSendBeaconNow(meshMyRank, MESH_SLEEP_INTERVAL_MS);
 
   while (millis() - warmupStart < SENSOR_WARMUP_MS && millis() < deadline) delay(10);
 
-  SensorPacket pkt;
-  readFakeSensors(&pkt);
+  SensorReading r;
+  readFakeSensors(&r);
 
   digitalWrite(SOIL_PWR_PIN, LOW);
   digitalWrite(DHT_PWR_PIN,  LOW);
 
   Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%% (FAKE)\n",
-                pkt.temperature, pkt.humidity, pkt.soil_moisture);
+                r.temperature, r.humidity, r.soil_moisture);
 
   meshSetBatteryMv(readFakeBatteryMv());
 
-  bool delivered = sendWithConfirm(&pkt, deadline);
+  bool delivered = sendWithConfirm(&r, deadline);
   Serial.printf("[wake] delivered=%d hasParent=%d\n", delivered, meshHasParent());
 
   if (!delivered && millis() < deadline) {
@@ -254,6 +276,43 @@ void setup() {
   WiFi.disconnect();
   ensureFakeSeeded();  // needs WiFi.mode() up for WiFi.macAddress()
 
+  meshStoreBegin();
+
+  // First boot after flashing: seed NVS from the key provision_sensor.py
+  // baked into node_key.h. Guarded on "not already stored" so a later
+  // firmware update (reflash of the same sketch) never clobbers a board's
+  // real in-NVS key with whatever node_key.h happens to be checked out --
+  // that file is per-board and gitignored, not tied to the sketch version.
+  {
+    uint8_t existingAppKey[16];
+    if (!meshStoreAppKey(existingAppKey)) {
+      meshStoreSetAppKey(NODE_APP_KEY);
+      Serial.println("[mesh] AppKey seeded into NVS from node_key.h (FAKE)");
+    }
+  }
+
+  // Cold boot only: a timer wake keeps its RTC seq, so bumping here would burn
+  // flash every 15 minutes for nothing.
+  if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER)
+    meshStoreBumpBootCount();
+
+  if (!meshStoreIsProvisioned()) {
+    // Unenrolled: announce ourselves, never sleep (the owner is standing here
+    // with the app open), never route, never read sensors.
+    int32_t ch = getMeshChannel();
+    esp_wifi_set_promiscuous(true);
+    esp_wifi_set_channel(ch, WIFI_SECOND_CHAN_NONE);
+    esp_wifi_set_promiscuous(false);
+    if (esp_now_init() != ESP_OK) { Serial.println("[esp-now] init failed"); return; }
+    esp_now_register_recv_cb(onDataRecv);
+    meshInit((uint8_t)ch);
+    WiFi.macAddress(meshSelfMac);
+    Serial.printf("[edge] unenrolled — join beacons every %lums (FAKE)\n",
+                  (unsigned long)MESH_JOIN_BEACON_INTERVAL_MS);
+    return;
+  }
+
+  // meshIsSelfSleepy() uses NVS (meshStoreBegin already called)
   if (meshIsSelfSleepy()) runSleepyCycle();  // never returns
 
   int32_t ch = getMeshChannel();
@@ -272,11 +331,20 @@ void setup() {
   meshInit(0);
 
   Serial.printf("[edge] MAC: %s (FAKE SENSOR MODE)\n", WiFi.macAddress().c_str());
-  Serial.println("[edge] unrouted — listening for trusted beacons");
+  Serial.println("[edge] provisioned — listening for beacons");
 }
 
 void loop() {
   uint32_t now = millis();
+
+  // Not yet provisioned — send join beacons, don't do anything else.
+  if (!meshStoreIsProvisioned()) {
+    if (now - lastJoinMs >= MESH_JOIN_BEACON_INTERVAL_MS) {
+      lastJoinMs = now;
+      meshSendJoinBeacon();
+    }
+    return;
+  }
 
   meshBeaconTick(now);
   meshCheckParentTimeout(now);
@@ -293,8 +361,8 @@ void loop() {
 
     case PHASE_WARMUP:
       if (now - phaseStartMs >= SENSOR_WARMUP_MS) {
-        SensorPacket pkt;
-        readFakeSensors(&pkt);
+        SensorReading r;
+        readFakeSensors(&r);
 
         digitalWrite(SOIL_PWR_PIN, LOW);
         digitalWrite(DHT_PWR_PIN,  LOW);
@@ -304,8 +372,8 @@ void loop() {
         meshSetBatteryMv(readFakeBatteryMv());
 
         Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%% (FAKE)\n",
-                      pkt.temperature, pkt.humidity, pkt.soil_moisture);
-        meshSendReading(&pkt);
+                      r.temperature, r.humidity, r.soil_moisture);
+        meshSendReading(&r);
       }
       break;
   }

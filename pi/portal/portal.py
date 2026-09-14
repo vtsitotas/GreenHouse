@@ -680,6 +680,41 @@ def api_nodes_add():
     queue_provision(node)      # serial_bridge picks this up and seals the NetKey
     return jsonify({'mac': mac}), 201
 
+def clear_node_retained(mac: str) -> None:
+    """Publish an empty retained payload to every known per-node MQTT topic.
+
+    This removes ghost entries from the broker after a node is deleted or
+    renamed (rename = DELETE old MAC + POST new MAC). Without this, the old
+    MAC's retained topics (status/battery/mesh) persist indefinitely and show
+    up as phantom devices in the app and dashboards.
+
+    Reading/zone-level topics (greenhouse/<zone>/sensors/<metric>) are NOT
+    cleared here: a zone may have several nodes and it is not safe to wipe a
+    shared metric topic when only one of them is being removed. Use
+    clear_retained.sh for zone-level cleanup when a whole zone is retired.
+
+    The two-broker caveat documented in clear_retained.sh (§1) applies: this
+    call targets the local broker only. If a HiveMQ Cloud bridge is configured,
+    the operator should additionally run clear_retained.sh for the same MAC
+    to clean the cloud side (the bridge only forwards retained as non-retained,
+    so the cloud copy is not cleaned automatically).
+    """
+    _NODE_TOPICS = ('status', 'battery', 'mesh')
+    try:
+        cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1,
+                         client_id='greenhouse-retained-cleaner')
+        cl.connect('127.0.0.1', 1883, keepalive=5)
+        for subtopic in _NODE_TOPICS:
+            cl.publish(f'greenhouse/nodes/{mac}/{subtopic}', '', retain=True)
+        cl.disconnect()
+        print(f'[portal] cleared retained topics for {mac}', file=sys.stderr)
+    except Exception as exc:
+        # Non-fatal: the node is already removed from nodes.json; a failure
+        # here only means ghost topics survive until the next manual clear.
+        print(f'[portal] WARNING: could not clear retained topics for {mac}: {exc}',
+              file=sys.stderr)
+
+
 @app.route('/api/nodes/<mac>', methods=['DELETE'])
 def api_nodes_delete(mac):
     if not _require_api_token():
@@ -688,6 +723,11 @@ def api_nodes_delete(mac):
         removed = remove(mac, NODES_PATH)
     except ValueError:
         return jsonify({'error': 'bad mac'}), 400
+    if removed:
+        try:
+            clear_node_retained(normalise_mac(mac))
+        except Exception:
+            pass  # already logged inside clear_node_retained
     return ('', 204) if removed else (jsonify({'error': 'unknown mac'}), 404)
 
 HTTPS_PORT = 8443

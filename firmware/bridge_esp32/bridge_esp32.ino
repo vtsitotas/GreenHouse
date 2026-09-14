@@ -156,6 +156,13 @@ void setup() {
   Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
   Serial.printf("[uart] Serial1 up: rx=%d tx=%d baud=%d\n", UART_RX_PIN, UART_TX_PIN, UART_BAUD);
 
+  // Announce boot to the Pi — it will re-send the NetKey automatically so
+  // this bridge is usable again without a manual service restart on the Pi.
+  // Sent before esp_now_init() so the Pi can reply and have the key in place
+  // before any sensor frame arrives.
+  uartPrintf("{\"type\":\"hello\",\"mac\":\"%s\"}", bridgeMac);
+  Serial.println("[bridge] hello sent — waiting for netkey from Pi");
+
   if (esp_now_init() != ESP_OK) {
     Serial.println("[esp-now] init failed");
     return;

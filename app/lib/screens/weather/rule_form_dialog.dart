@@ -136,7 +136,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String?>(
               key: const Key('rule-form-zone-dropdown'),
-              initialValue: _zone,
+              value: _zone,
               decoration: const InputDecoration(labelText: 'Zone', border: OutlineInputBorder()),
               items: [
                 const DropdownMenuItem<String?>(value: null, child: Text('Weather')),
@@ -149,7 +149,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             const SizedBox(height: 12),
             DropdownButtonFormField<String>(
               key: const Key('rule-form-metric-dropdown'),
-              initialValue: _metricOptions.containsKey(_metric) ? _metric : _metricOptions.keys.first,
+              value: _metricOptions.containsKey(_metric) ? _metric : _metricOptions.keys.first,
               decoration: const InputDecoration(labelText: 'Metric', border: OutlineInputBorder()),
               items: [
                 for (final entry in _metricOptions.entries)
@@ -161,7 +161,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             Row(children: [
               Expanded(
                 child: DropdownButtonFormField<String>(
-                  initialValue: _op,
+                  value: _op,
                   decoration: const InputDecoration(labelText: 'Operator', border: OutlineInputBorder()),
                   items: [for (final o in _operators) DropdownMenuItem(value: o, child: Text(o))],
                   onChanged: (v) => setState(() => _op = v!),
@@ -196,7 +196,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
             ),
             if (_hasAction) ...[
               DropdownButtonFormField<String>(
-                initialValue: _actuatorId,
+                value: _actuatorId,
                 decoration: const InputDecoration(labelText: 'Actuator', border: OutlineInputBorder()),
                 items: [
                   for (final a in widget.actuatorIds) DropdownMenuItem(value: a, child: Text(a)),
@@ -205,7 +205,7 @@ class _RuleFormDialogState extends State<_RuleFormDialog> {
               ),
               const SizedBox(height: 12),
               DropdownButtonFormField<String>(
-                initialValue: _command,
+                value: _command,
                 decoration: const InputDecoration(labelText: 'Command', border: OutlineInputBorder()),
                 items: const [
                   DropdownMenuItem(value: 'ON', child: Text('ON')),
