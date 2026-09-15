@@ -101,6 +101,19 @@ def test_different_event_kinds_have_independent_cooldowns(tmp_path, monkeypatch)
     assert len(sent) == 2
 
 
+def test_mesh_auth_failure_is_alertable(tmp_path, monkeypatch):
+    """An enrolled node's packet failing decrypt/auth means a stale AppKey or
+    a spoofing attempt -- either way the owner should be told, not just
+    silently logged like a routine dropped frame."""
+    _fresh(tmp_path, monkeypatch)
+    sent = []
+    sys.modules['push'] = type(sys)('push')
+    sys.modules['push'].send_push = lambda t, b: sent.append((t, b))
+    security_log.log_security_event('mesh_auth_failure', 'bad tag', source='206EF16C9DB0')
+    assert len(sent) == 1
+    assert '206EF16C9DB0' in sent[0][1]
+
+
 def test_push_failure_does_not_break_the_caller(tmp_path, monkeypatch, capsys):
     _fresh(tmp_path, monkeypatch)
     def boom(*_a):

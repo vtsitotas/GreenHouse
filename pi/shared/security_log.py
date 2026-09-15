@@ -46,6 +46,8 @@ ALERTABLE = {
     'cam_auth_failure',    # something tried to impersonate the camera
     'history_auth_failure',
     'cert_mismatch',       # a client rejected our cert, or we rejected theirs
+    'mesh_auth_failure',   # an enrolled node's packet failed decrypt/auth --
+                            # stale AppKey or spoofing, either way worth a push
 }
 
 _last_alert: dict = {}   # kind -> monotonic timestamp of last push
