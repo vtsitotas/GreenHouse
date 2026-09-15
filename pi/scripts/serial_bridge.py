@@ -30,6 +30,12 @@ import mesh_crypto
 import mesh_packet
 import nodes as node_store
 
+try:
+    from security_log import log_security_event
+except Exception:  # pragma: no cover - logging must never break mesh ingestion
+    def log_security_event(*_a, **_kw):
+        return {}
+
 SERIAL_PORT = '/dev/serial0'
 BAUD = 115200
 MQTT_HOST = '127.0.0.1'
@@ -260,16 +266,19 @@ def handle_frame(client, msg: dict, state: dict) -> None:
     node = node_store.load(state['nodes_path']).get(mac)
     if node is None:
         state['unenrolled'][mac] = time.time()
+        log_security_event('mesh_unenrolled_frame', source=mac)
         print(f'[mesh] frame from unenrolled {mac} — ignored', flush=True)
         return
 
     if not accept_replay(state, mac, header.boot_count, header.seq):
+        log_security_event('mesh_replay_dropped', source=mac)
         print(f'[mesh] replay from {mac} dropped', flush=True)
         return
 
     try:
         body = mesh_crypto.open_packet(raw, node.app_key)
     except (mesh_crypto.MeshAuthError, mesh_crypto.MeshFormatError) as exc:
+        log_security_event('mesh_auth_failure', detail=str(exc), source=mac)
         print(f'[mesh] {mac} failed authentication: {exc}', flush=True)
         return
 

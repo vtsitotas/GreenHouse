@@ -69,6 +69,42 @@ def test_a_frame_that_fails_authentication_is_dropped(state):
     assert c.published == []
 
 
+def test_unenrolled_frame_logs_a_security_event(state, monkeypatch):
+    logged = []
+    monkeypatch.setattr(sb, 'log_security_event', lambda *a, **kw: logged.append((a, kw)))
+    other = mc.seal_packet(bytes(16), NET, bytes.fromhex('AABBCCDDEEFF'),
+                           seq=1, boot_count=1, flags=0, rank=1, ttl=4,
+                           body=mp.pack_body(1, 1, 1, 0, PARENT, 0))
+    c = FakeClient()
+    sb.handle_frame(c, {'type': 'frame', 'data': other.hex()}, state)
+    assert logged == [(('mesh_unenrolled_frame',), {'source': 'AABBCCDDEEFF'})]
+
+
+def test_replay_drop_logs_a_security_event(state, monkeypatch):
+    logged = []
+    monkeypatch.setattr(sb, 'log_security_event', lambda *a, **kw: logged.append((a, kw)))
+    c = FakeClient()
+    sb.handle_frame(c, _frame(), state)   # first delivery: accepted, not logged
+    logged.clear()
+    sb.handle_frame(c, _frame(), state)   # same (boot_count, seq): replay
+    assert logged == [(('mesh_replay_dropped',), {'source': MAC_S})]
+
+
+def test_auth_failure_logs_a_security_event(state, monkeypatch):
+    logged = []
+    monkeypatch.setattr(sb, 'log_security_event', lambda *a, **kw: logged.append((a, kw)))
+    f = _frame()
+    raw = bytearray(bytes.fromhex(f['data']))
+    raw[30] ^= 0x01
+    c = FakeClient()
+    sb.handle_frame(c, {'type': 'frame', 'data': bytes(raw).hex()}, state)
+    assert len(logged) == 1
+    args, kwargs = logged[0]
+    assert args == ('mesh_auth_failure',)
+    assert kwargs['source'] == MAC_S
+    assert 'detail' in kwargs and kwargs['detail']
+
+
 def test_replayed_seq_under_the_same_boot_count_is_rejected(state):
     assert sb.accept_replay(state, MAC_S, boot_count=1, seq=5) is True
     assert sb.accept_replay(state, MAC_S, boot_count=1, seq=5) is False
