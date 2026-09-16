@@ -278,6 +278,13 @@ static void meshHandleBeacon(const uint8_t* srcMac, const MeshBeacon* b,
   if (!meshNeighbors[0].used) meshTrickleReset();  // first neighbor seen
   meshNoteNeighbor(srcMac, now);
 
+  // Phase 1 (current, shipped) restriction, NOT a permanent design choice:
+  // every field-deployed node other than the Pi/bridge is meant to run on
+  // battery+solar and relay for its neighbors when needed -- this hard
+  // rejection is what's currently in the way of that for a sleepy node.
+  // The fix is already fully designed (CART, docs/superpowers/specs/
+  // 2026-08-17-mesh-phase2-synced-wake-design.md) but blocked on a mandatory
+  // real-hardware drift-measurement bench step that hasn't been run yet.
   if (b->flags & MESH_FLAG_SLEEPY) {
     if (meshHasParent_ && meshMacEqual(meshParentMac, srcMac))
       meshDropParent("parent became sleepy");

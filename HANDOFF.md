@@ -39,6 +39,20 @@ artifact, not the link). WiFi first-time setup (captive portal) is fixed end
 to end. The bench Pi is fully deployed off current `main`, `selftest.sh`
 reports 45/45.
 
+> ⚠️ **Multi-hop relay and real deep-sleep are currently mutually
+> exclusive.** Every field node other than the Pi/bridge is meant to run on
+> battery+solar and relay for neighbors when needed — that's the target
+> architecture, not just today's bench convenience. But the *shipped*
+> firmware (Phase 1, `MESH_FLAG_SLEEPY` hard-rejected as a parent candidate
+> in `meshHandleBeacon()`) makes a sleepy node leaf-only: the 2026-08-16
+> relay test above only worked by temporarily flipping `sleepy=false` on
+> zone2/3/4. Once reverted to real `sleepy=true` for battery deployment,
+> those nodes go back to single-hop-to-bridge only. The real fix (every node
+> sleeps AND relays) is fully designed as CART —
+> `docs/superpowers/specs/2026-08-17-mesh-phase2-synced-wake-design.md` —
+> but not implemented; it's gated on a real-hardware drift-measurement bench
+> step (§Drift-measurement bench plan in that spec) that hasn't been run.
+
 ---
 
 ## TL;DR of this session (2026-09-14 — multi-site LoRaWAN + cellular gateway design)
