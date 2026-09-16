@@ -83,6 +83,8 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   } else if (len == MESH_PACKET_LEN) {
     // Some child picked us as its parent — relay its packet toward the bridge.
     meshRelayData(info->src_addr, data, len);
+  } else if (len == (int)sizeof(MeshAck)) {
+    meshHandleAck(data, len);
   }
 }
 
@@ -183,6 +185,29 @@ void runSleepyCycle() {
   bool delivered = sendWithConfirm(&r, deadline);
   Serial.printf("[wake] delivered=%d hasParent=%d\n", delivered, meshHasParent());
 
+  // Only the direct-send path (not the requeue/rediscovery retry below) waits
+  // for the app-level ack: this is specifically the "L2 delivered, but did
+  // the Pi actually accept it" question, and the retry path below already
+  // has its own, unchanged, L2-only confirm dance for "is there a route at
+  // all" -- a different failure class with a different existing answer.
+  int appAckStatus = -1;
+  if (delivered) {
+    uint32_t ackWaitStart = millis();
+    while (meshAckResult() == -1 &&
+           millis() - ackWaitStart < MESH_APP_ACK_WAIT_MS &&
+           millis() < deadline) {
+      delay(5);
+    }
+    appAckStatus = meshAckResult();
+    if (appAckStatus == MESH_ACK_OK) {
+      Serial.println("[wake] Pi confirmed reading accepted");
+    } else if (appAckStatus == MESH_ACK_REJECTED) {
+      Serial.println("[wake] Pi rejected reading — check AppKey");
+    } else {
+      Serial.println("[wake] no app-level ack within wait window");
+    }
+  }
+
   if (!delivered && millis() < deadline) {
     if (meshHasParent()) meshDropParent("wake tx unconfirmed");
     meshRequeueLastReading();
@@ -205,7 +230,10 @@ void runSleepyCycle() {
     }
   }
 
-  bool confirmed = delivered || (meshHasParent() && g_lastTxStatus == 1);
+  // Direct-send path: only a real app-level MESH_ACK_OK counts as confirmed
+  // now. Retry path: unchanged, L2-only -- it never got an app-ack wait.
+  bool confirmed = delivered ? (appAckStatus == MESH_ACK_OK)
+                             : (meshHasParent() && g_lastTxStatus == 1);
   if (confirmed) g_unconfirmedWakes = 0;
   else if (g_unconfirmedWakes < 250) g_unconfirmedWakes++;
 
