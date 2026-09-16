@@ -132,6 +132,59 @@ def test_send_netkey_writes_one_json_line():
     assert b'"netkey"' in written[0] and NET.hex().encode() in written[0]
 
 
+def test_send_ack_writes_one_json_line():
+    written = []
+    sb.send_ack(type('S', (), {'write': lambda _s, b: written.append(b)})(), MAC_S, 7, True)
+    assert written[0].endswith(b'\n')
+    assert b'"ack"' in written[0]
+    assert b'"seq":7' in written[0]
+    assert b'"ok":true' in written[0]
+
+
+def test_a_valid_frame_sends_a_positive_ack(state, monkeypatch):
+    acked = []
+    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
+    sentinel_ser = object()
+    c = FakeClient()
+    sb.handle_frame(c, _frame(), state, sentinel_ser)
+    assert acked == [((sentinel_ser, MAC_S, 1), {'ok': True})]
+
+
+def test_an_auth_failure_sends_a_negative_ack(state, monkeypatch):
+    acked = []
+    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
+    f = _frame()
+    raw = bytearray(bytes.fromhex(f['data']))
+    raw[30] ^= 0x01
+    sentinel_ser = object()
+    c = FakeClient()
+    sb.handle_frame(c, {'type': 'frame', 'data': bytes(raw).hex()}, state, sentinel_ser)
+    assert acked == [((sentinel_ser, MAC_S, 1), {'ok': False})]
+
+
+def test_handle_frame_without_a_serial_connection_does_not_crash(state):
+    # Backward compatibility: every pre-existing call site/test omits ser.
+    c = FakeClient()
+    sb.handle_frame(c, _frame(), state)
+    topics = [t for t, _, _ in c.published]
+    assert any('temperature' in t for t in topics)
+
+
+def test_unenrolled_and_replay_drops_do_not_send_an_ack(state, monkeypatch):
+    acked = []
+    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
+    sentinel_ser = object()
+    c = FakeClient()
+    other = mc.seal_packet(bytes(16), NET, bytes.fromhex('AABBCCDDEEFF'),
+                           seq=1, boot_count=1, flags=0, rank=1, ttl=4,
+                           body=mp.pack_body(1, 1, 1, 0, PARENT, 0))
+    sb.handle_frame(c, {'type': 'frame', 'data': other.hex()}, state, sentinel_ser)
+    sb.handle_frame(c, _frame(), state, sentinel_ser)   # first: accepted
+    acked.clear()
+    sb.handle_frame(c, _frame(), state, sentinel_ser)   # same seq again: replay
+    assert acked == []
+
+
 def test_load_net_key_reads_hex_from_disk(tmp_path):
     path = tmp_path / 'netkey'
     path.write_text(NET.hex() + '\n')

@@ -254,7 +254,7 @@ def accept_replay(state, mac: str, boot_count: int, seq: int) -> bool:
     return True
 
 
-def handle_frame(client, msg: dict, state: dict) -> None:
+def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
     try:
         raw = bytes.fromhex(msg['data'])
         header = mesh_packet.parse_header(raw)
@@ -279,6 +279,8 @@ def handle_frame(client, msg: dict, state: dict) -> None:
         body = mesh_crypto.open_packet(raw, node.app_key)
     except (mesh_crypto.MeshAuthError, mesh_crypto.MeshFormatError) as exc:
         log_security_event('mesh_auth_failure', detail=str(exc), source=mac)
+        if ser is not None:
+            send_ack(ser, mac, header.seq, ok=False)
         print(f'[mesh] {mac} failed authentication: {exc}', flush=True)
         return
 
@@ -288,6 +290,8 @@ def handle_frame(client, msg: dict, state: dict) -> None:
     if body.battery_mv:
         client.publish(_battery_topic(mac), f'{body.battery_mv / 1000:.2f}', retain=True)
     client.publish(_status_topic(mac), 'online', retain=True)
+    if ser is not None:
+        send_ack(ser, mac, header.seq, ok=True)
 
     # The Mesh Map screen (app/lib/screens/devices/mesh_map_screen.dart)
     # places a node by `meshRank`/`parentId` from its retained `/mesh` topic
@@ -346,6 +350,10 @@ def send_provision(ser, mac: str, blob: bytes) -> None:
                         'blob': blob.hex()})
 
 
+def send_ack(ser, mac: str, seq: int, ok: bool) -> None:
+    _send_command(ser, {'type': 'ack', 'mac': mac, 'seq': seq, 'ok': ok})
+
+
 # Handlers that need no run-state. `heartbeat` and `mesh` are dispatched
 # separately below because both read/write `state`.
 _HANDLERS = {
@@ -382,7 +390,7 @@ def handle_line(client, line: bytes, state: dict, ser=None) -> None:
         elif msg_type == 'mesh':
             _handle_mesh(client, msg, state)
         elif msg_type == 'frame':
-            handle_frame(client, msg, state)
+            handle_frame(client, msg, state, ser)
         elif msg_type == 'unenrolled':
             handle_unenrolled(msg, state)
         else:
