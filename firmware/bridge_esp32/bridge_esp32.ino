@@ -85,6 +85,22 @@ static void handleUartLine(const char* line) {
     esp_now_send(mac, blob, MESH_PROVISION_LEN);
     esp_now_del_peer(mac);
     Serial.println("[bridge] provision blob transmitted");
+    return;
+  }
+  // {"type":"ack","mac":"<12 hex>","seq":<int>,"ok":true|false}
+  if (strstr(line, "\"ack\"")) {
+    const char* m = strstr(line, "\"mac\":\"");
+    const char* s = strstr(line, "\"seq\":");
+    const char* o = strstr(line, "\"ok\":");
+    uint8_t mac[6];
+    if (!m || !s || !o || !hexToBytes(m + 7, mac, 6)) return;
+    uint16_t seq = (uint16_t)atoi(s + 6);
+    bool ok = (strncmp(o + 5, "true", 4) == 0);
+    uint8_t ackPkt[sizeof(MeshAck)];
+    if (meshBuildAck(ackPkt, mac, seq, ok ? MESH_ACK_OK : MESH_ACK_REJECTED)) {
+      esp_now_send(MESH_BCAST, ackPkt, sizeof(ackPkt));
+      Serial.printf("[bridge] ack broadcast: seq=%u ok=%d\n", seq, ok);
+    }
   }
 }
 
