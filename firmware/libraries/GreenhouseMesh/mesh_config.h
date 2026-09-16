@@ -58,6 +58,11 @@
                                             // giving up and buffering the reading
 #define MESH_TX_CONFIRM_WAIT_MS   500UL     // wait for the ESP-NOW send callback
                                             // before judging a unicast delivered
+#define MESH_APP_ACK_WAIT_MS      2000UL    // wait for the Pi's real accept/reject
+                                            // ack after L2 delivery succeeds —
+                                            // covers one UART round trip plus a
+                                            // few mesh hops each way, comfortably
+                                            // under MESH_WAKE_MAX_AWAKE_MS
 #define MESH_WAKE_MAX_AWAKE_MS    10000UL   // hard backstop: persist state and
                                             // sleep no matter what path we're on
 #define MESH_MIN_SLEEP_MS         1000UL    // floor after subtracting awake time

@@ -63,6 +63,33 @@ typedef struct __attribute__((packed)) {
   uint8_t mac[6];
 } MeshJoinBeacon;   // 8 bytes
 
+// ── Application-layer ACK/NACK (flood, not routed) ────────────────────────────
+// A fourth broadcast message shape, distinguished purely by length like the
+// other three (8 / 20 / 27 / 61 bytes) — no type byte needed inside the
+// payload. Originates only at the bridge (the Pi is the only thing that knows
+// whether a reading was actually accepted); every other node either consumes
+// it (if it's the addressed target) or floods it one hop further (if it's
+// not sleepy) — see meshHandleAck() below.
+#define MESH_ACK_MARKER    0x41   // 'A' — distinct from MESH_JOIN_MARKER (0x4A)
+#define MESH_ACK_OK        1      // 0 is deliberately unused: an all-zero or
+#define MESH_ACK_REJECTED  2      // uninitialized status is never mistaken
+                                  // for a valid outcome
+#define MESH_ACK_TTL       6      // flood hop budget; generous relative to
+                                  // this fleet's field-observed 1-2 hops
+
+typedef struct __attribute__((packed)) {
+  uint8_t  magic;                 // byte 0:      MESH_MAGIC_V2
+  uint8_t  marker;                // byte 1:      MESH_ACK_MARKER
+  uint8_t  target_mac[6];         // bytes 2-7:   which origin node this concerns
+  uint16_t seq;                   // bytes 8-9:   which reading (origin's own seq)
+  uint8_t  status;                // byte 10:     MESH_ACK_OK or MESH_ACK_REJECTED
+  uint8_t  ttl;                   // byte 11:     decremented per hop, NOT covered
+                                  //              by the tag (mutates every hop,
+                                  //              same reason the data packet's
+                                  //              ttl is excluded from its AAD)
+  uint8_t  tag[MESH_NETTAG_LEN];  // bytes 12-19: CMAC-AES(NetKey) over bytes 0-10
+} MeshAck;                        // 20 bytes — unique length among all 4 shapes
+
 static const uint8_t MESH_BCAST[6] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
 
 // ── Keys (cached from NVS once per session) ───────────────────────────────────
@@ -101,6 +128,20 @@ static MeshNeighbor meshNeighbors[MESH_NEIGHBOR_SLOTS];
 typedef struct { uint8_t mac[6]; uint16_t seq; uint32_t ms; bool used; } MeshDedupEntry;
 static MeshDedupEntry meshDedup[MESH_DEDUP_CACHE_SIZE];
 static int meshDedupNext = 0;
+
+// Separate from meshDedup above on purpose — see the comment on MeshAck.
+#define MESH_ACK_DEDUP_CACHE_SIZE 8
+typedef struct { uint8_t mac[6]; uint16_t seq; uint32_t ms; bool used; } MeshAckDedupEntry;
+static MeshAckDedupEntry meshAckDedup[MESH_ACK_DEDUP_CACHE_SIZE];
+static int meshAckDedupNext = 0;
+
+// Set by meshSendReading() right before it unicasts to the parent; polled by
+// the wake-cycle loop in each edge sketch. -1 (via meshAckResult()) means "no
+// answer yet". Only one outstanding wait at a time — a sleepy node only ever
+// has one reading in flight.
+static uint16_t meshWaitingAckSeq    = 0;
+static bool     meshWaitingAckSeen   = false;
+static uint8_t  meshWaitingAckStatus = 0;
 
 // Data buffer: now holds sealed 61-byte packets (MESH_PACKET_LEN) instead of
 // the old plaintext MeshDataPacket struct. A buffered packet keeps its original
@@ -350,6 +391,84 @@ static bool meshDedupSeen(const uint8_t* originMac, uint16_t seq) {
   return false;
 }
 
+static bool meshAckDedupSeen(const uint8_t* targetMac, uint16_t seq) {
+  uint32_t now = millis();
+  for (int i = 0; i < MESH_ACK_DEDUP_CACHE_SIZE; i++) {
+    if (!meshAckDedup[i].used) continue;
+    if (now - meshAckDedup[i].ms >= MESH_DEDUP_WINDOW_MS) continue;
+    if (meshAckDedup[i].seq == seq &&
+        meshMacEqual(meshAckDedup[i].mac, targetMac)) return true;
+  }
+  memcpy(meshAckDedup[meshAckDedupNext].mac, targetMac, 6);
+  meshAckDedup[meshAckDedupNext].seq  = seq;
+  meshAckDedup[meshAckDedupNext].ms   = now;
+  meshAckDedup[meshAckDedupNext].used = true;
+  meshAckDedupNext = (meshAckDedupNext + 1) % MESH_ACK_DEDUP_CACHE_SIZE;
+  return false;
+}
+
+static void meshArmAckWait(uint16_t seq) {
+  meshWaitingAckSeq  = seq;
+  meshWaitingAckSeen = false;
+}
+
+// -1 = no answer yet, else MESH_ACK_OK or MESH_ACK_REJECTED.
+static int meshAckResult() {
+  return meshWaitingAckSeen ? (int)meshWaitingAckStatus : -1;
+}
+
+// Builds and signs a fresh MeshAck into out (must point at >= sizeof(MeshAck)
+// bytes). Only ever called by the bridge, which always originates an ack —
+// nothing is upstream of it to relay one to it.
+static bool meshBuildAck(uint8_t* out, const uint8_t* targetMac, uint16_t seq,
+                         uint8_t status) {
+  if (!meshLoadKeys()) return false;
+  MeshAck a;
+  a.magic  = MESH_MAGIC_V2;
+  a.marker = MESH_ACK_MARKER;
+  memcpy(a.target_mac, targetMac, 6);
+  a.seq    = seq;
+  a.status = status;
+  a.ttl    = MESH_ACK_TTL;
+  if (!meshCmacTruncated(meshNetKey, (const uint8_t*)&a, sizeof(a) - MESH_NETTAG_LEN,
+                         a.tag)) return false;
+  memcpy(out, &a, sizeof(a));
+  return true;
+}
+
+// Receive-side: verify, dedup, consume if it's mine, relay one hop further if
+// I'm not sleepy. Mirrors meshRelayData()'s shape for the uplink data path.
+static void meshHandleAck(const uint8_t* data, int len) {
+  if (len != (int)sizeof(MeshAck)) return;
+  if (!meshLoadKeys()) return;
+
+  MeshAck a;
+  memcpy(&a, data, sizeof(a));
+
+  uint8_t expect[MESH_NETTAG_LEN];
+  if (!meshCmacTruncated(meshNetKey, data, sizeof(a) - MESH_NETTAG_LEN, expect)) return;
+  uint8_t diff = 0;
+  for (int i = 0; i < MESH_NETTAG_LEN; i++) diff |= expect[i] ^ a.tag[i];
+  if (diff != 0) return;   // forged/corrupt — same silent-drop posture as a bad beacon tag
+
+  if (meshAckDedupSeen(a.target_mac, a.seq)) return;
+
+  if (meshMacEqual(a.target_mac, meshSelfMac) && a.seq == meshWaitingAckSeq) {
+    // Idempotent overwrite — this ack can legitimately arrive more than once
+    // (the same broadcast heard via two different relays), and a second
+    // identical write here must be harmless, never a counter/toggle.
+    meshWaitingAckStatus = a.status;
+    meshWaitingAckSeen   = true;
+  }
+
+  if (!meshIsSelfSleepy() && a.ttl > 0) {
+    uint8_t fwd[sizeof(MeshAck)];
+    memcpy(fwd, data, sizeof(fwd));
+    fwd[11] = a.ttl - 1;   // ttl is byte offset 11 — see the MeshAck layout above
+    esp_now_send(MESH_BCAST, fwd, sizeof(fwd));
+  }
+}
+
 // ── Data path ─────────────────────────────────────────────────────────────────
 static bool meshUnicastToParent(const uint8_t* pkt) {
   if (!meshHasParent_) return false;
@@ -410,6 +529,9 @@ static void meshSendReading(const SensorReading* r) {
     Serial.printf("[mesh] routed again — flushing %d buffered readings\n", meshBufCount);
     meshFlushBuffer();
   }
+  meshArmAckWait((uint16_t)(meshDataSeq - 1));  // meshDataSeq++ above already
+                                                // advanced past the seq this
+                                                // packet actually used
   meshUnicastToParent(packet);
 }
 
