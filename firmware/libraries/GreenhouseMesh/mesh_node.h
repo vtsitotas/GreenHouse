@@ -430,7 +430,11 @@ static bool meshBuildAck(uint8_t* out, const uint8_t* targetMac, uint16_t seq,
   a.seq    = seq;
   a.status = status;
   a.ttl    = MESH_ACK_TTL;
-  if (!meshCmacTruncated(meshNetKey, (const uint8_t*)&a, sizeof(a) - MESH_NETTAG_LEN,
+  // -1: ttl (the last byte before the tag) is excluded from coverage because
+  // it mutates every hop -- same reason MESH_AAD_LEN excludes the data
+  // packet's own last header byte. Without this, verification would fail at
+  // every hop past the first, since a relay decrements ttl in place.
+  if (!meshCmacTruncated(meshNetKey, (const uint8_t*)&a, sizeof(a) - MESH_NETTAG_LEN - 1,
                          a.tag)) return false;
   memcpy(out, &a, sizeof(a));
   return true;
@@ -446,7 +450,9 @@ static void meshHandleAck(const uint8_t* data, int len) {
   memcpy(&a, data, sizeof(a));
 
   uint8_t expect[MESH_NETTAG_LEN];
-  if (!meshCmacTruncated(meshNetKey, data, sizeof(a) - MESH_NETTAG_LEN, expect)) return;
+  // -1: same ttl exclusion as meshBuildAck() above -- must match exactly or
+  // no ack ever verifies past the first hop.
+  if (!meshCmacTruncated(meshNetKey, data, sizeof(a) - MESH_NETTAG_LEN - 1, expect)) return;
   uint8_t diff = 0;
   for (int i = 0; i < MESH_NETTAG_LEN; i++) diff |= expect[i] ^ a.tag[i];
   if (diff != 0) return;   // forged/corrupt — same silent-drop posture as a bad beacon tag
