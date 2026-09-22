@@ -78,3 +78,19 @@ def test_provision_blob_rejects_a_wrong_app_key():
     blob = mc.seal_provision(APP, MAC, NET, sleepy=False)
     with pytest.raises(mc.MeshAuthError):
         mc.open_provision(bytes(16), MAC, blob)
+
+
+def test_provision_flags_round_trip_with_leaf_only():
+    blob = mc.seal_provision(APP, MAC, NET, sleepy=True, leaf_only=True)
+    net, sleepy, leaf_only = mc.open_provision_flags(APP, MAC, blob)
+    assert (net, sleepy, leaf_only) == (NET, True, True)
+
+
+def test_default_blob_is_byte_identical_to_the_old_format():
+    # Old firmware compares the flags byte with == 1, so a default blob must
+    # still carry exactly 0x01 / 0x00.
+    for sleepy in (True, False):
+        blob = mc.seal_provision(APP, MAC, NET, sleepy=sleepy)
+        _net, s, leaf = mc.open_provision_flags(APP, MAC, blob)
+        assert (s, leaf) == (sleepy, False)
+        assert mc.open_provision(APP, MAC, blob) == (NET, sleepy)

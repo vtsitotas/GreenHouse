@@ -13,6 +13,9 @@
 #define MESH_PROVISION_AAD_LEN 23
 #define MESH_PROVISION_LEN     33   // 16-byte NetKey + 1 flags byte + 16-byte tag
 
+#define MESH_PROV_FLAG_SLEEPY    0x01
+#define MESH_PROV_FLAG_LEAF_ONLY 0x02   // enrolled as "never relay for others"
+
 static bool meshCmacTruncated(const uint8_t* key, const uint8_t* in, size_t len,
                               uint8_t* out8) {
   const mbedtls_cipher_info_t* info =
@@ -59,7 +62,7 @@ static bool meshVerifyNettag(const uint8_t* packet, const uint8_t* netKey) {
 
 static bool meshOpenProvision(const uint8_t* appKey, const uint8_t* mac,
                               const uint8_t* blob, int blobLen,
-                              uint8_t* outNetKey16, bool* outSleepy) {
+                              uint8_t* outNetKey16, bool* outSleepy, bool* outLeafOnly) {
   if (blobLen != MESH_PROVISION_LEN) return false;
   uint8_t nonce[12];
   memcpy(nonce, mac, 6);
@@ -77,6 +80,7 @@ static bool meshOpenProvision(const uint8_t* appKey, const uint8_t* mac,
   mbedtls_gcm_free(&gcm);
   if (!ok) return false;
   memcpy(outNetKey16, plain, 16);
-  *outSleepy = plain[16] == 1;
+  *outSleepy   = (plain[16] & MESH_PROV_FLAG_SLEEPY) != 0;
+  *outLeafOnly = (plain[16] & MESH_PROV_FLAG_LEAF_ONLY) != 0;
   return true;
 }

@@ -42,6 +42,11 @@ static bool meshStoreIsProvisioned() {
 
 static bool meshStoreSleepy()          { return meshPrefs.getBool("sleepy", false); }
 static void meshStoreSetSleepy(bool v) { meshPrefs.putBool("sleepy", v); }
+
+// Absent key = relay-capable, so an already-enrolled fleet upgraded to CART
+// firmware can relay without being re-enrolled.
+static bool meshStoreLeafOnly()          { return meshPrefs.getBool("leafonly", false); }
+static void meshStoreSetLeafOnly(bool v) { meshPrefs.putBool("leafonly", v); }
 static uint32_t meshStoreBootCount()   { return meshPrefs.getUInt("boot", 0); }
 
 static uint32_t meshStoreBumpBootCount() {
@@ -55,4 +60,5 @@ static uint32_t meshStoreBumpBootCount() {
 static void meshStoreClearProvisioning() {
   meshPrefs.remove("netkey");
   meshPrefs.remove("sleepy");
+  meshPrefs.remove("leafonly");
 }

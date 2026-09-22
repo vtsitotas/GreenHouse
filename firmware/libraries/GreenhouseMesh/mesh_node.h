@@ -192,6 +192,7 @@ static bool meshNeighborHeardWithin(const uint8_t* mac, uint32_t now, uint32_t w
 }
 
 static bool meshIsSelfSleepy() { return meshStoreSleepy(); }
+static bool meshIsSelfRelayCapable() { return !meshStoreLeafOnly(); }
 
 static void meshSetBatteryMv(uint16_t mv) { meshBatteryMv = mv; }
 
@@ -583,16 +584,18 @@ static void meshSendJoinBeacon() {
 static bool meshHandleProvision(const uint8_t* data, int len) {
   uint8_t netKey[16];
   bool sleepy = false;
+  bool leafOnly = false;
   if (!meshStoreAppKey(meshAppKey)) return false;
-  if (!meshOpenProvision(meshAppKey, meshSelfMac, data, len, netKey, &sleepy)) {
+  if (!meshOpenProvision(meshAppKey, meshSelfMac, data, len, netKey, &sleepy, &leafOnly)) {
     Serial.println("[mesh] provision blob rejected — not for us");
     return false;
   }
   meshStoreSetNetKey(netKey);
   meshStoreSetSleepy(sleepy);
+  meshStoreSetLeafOnly(leafOnly);
   memcpy(meshNetKey, netKey, 16);
   meshKeysLoaded = true;
-  Serial.printf("[mesh] provisioned — sleepy=%d\n", sleepy ? 1 : 0);
+  Serial.printf("[mesh] provisioned — sleepy=%d leafOnly=%d\n", sleepy ? 1 : 0, leafOnly ? 1 : 0);
   return true;
 }
 

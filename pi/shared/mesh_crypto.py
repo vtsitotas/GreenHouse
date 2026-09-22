@@ -71,14 +71,26 @@ def _provision_nonce(mac: bytes) -> bytes:
     return mac + b'\x00' * 6
 
 
-def seal_provision(app_key: bytes, mac: bytes, net_key: bytes, sleepy: bool) -> bytes:
-    plain = net_key + bytes([1 if sleepy else 0])
+PROV_FLAG_SLEEPY = 0x01
+PROV_FLAG_LEAF_ONLY = 0x02
+
+
+def seal_provision(app_key: bytes, mac: bytes, net_key: bytes, sleepy: bool,
+                   leaf_only: bool = False) -> bytes:
+    flags = (PROV_FLAG_SLEEPY if sleepy else 0) | (PROV_FLAG_LEAF_ONLY if leaf_only else 0)
+    plain = net_key + bytes([flags])
     return AESGCM(app_key).encrypt(_provision_nonce(mac), plain, PROVISION_AAD)
 
 
-def open_provision(app_key: bytes, mac: bytes, blob: bytes) -> tuple:
+def open_provision_flags(app_key: bytes, mac: bytes, blob: bytes) -> tuple:
     try:
         plain = AESGCM(app_key).decrypt(_provision_nonce(mac), blob, PROVISION_AAD)
     except (InvalidSignature, InvalidTag) as exc:
         raise MeshAuthError('provision blob failed authentication') from exc
-    return plain[:16], plain[16] == 1
+    flags = plain[16]
+    return plain[:16], bool(flags & PROV_FLAG_SLEEPY), bool(flags & PROV_FLAG_LEAF_ONLY)
+
+
+def open_provision(app_key: bytes, mac: bytes, blob: bytes) -> tuple:
+    net_key, sleepy, _leaf_only = open_provision_flags(app_key, mac, blob)
+    return net_key, sleepy
