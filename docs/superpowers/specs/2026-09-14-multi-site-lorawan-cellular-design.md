@@ -1,7 +1,7 @@
 # Multi-Site Greenhouse via LoRaWAN + Cellular Gateway — Design Spec
 
 **Date:** 2026-09-14
-**Status:** Designed via conversational brainstorm, **not yet written up as an implementation plan, not yet built**. One external unknown blocks committing to the static-IP path (see §8) — everything else is ready to plan from.
+**Status:** Designed via conversational brainstorm; implementation plan written 2026-09-23 (`docs/superpowers/plans/2026-09-23-lorawan-multi-greenhouse.md`), **not built**. Hardware corrections in "Revision 2026-09-23" at the end of this document supersede the hardware tables below where they differ. One external unknown blocks committing to the static-IP path (see §8) — everything else is ready to plan from.
 
 ## Background
 
@@ -145,6 +145,61 @@ Rejected. Both are designed for the opposite profile — infrequent, tiny, ultra
 - **Flutter app multi-site support:** not designed here. The app today pairs with exactly one greenhouse. Needs either (a) each site under its own topic prefix on a shared broker with the app distinguishing them, or (b) the app holding a list of independently-paired sites with a switcher UI. Separate brainstorm.
 - **Exact antenna/module part numbers:** the ones named here are real, currently-available, and technically appropriate, but not a locked procurement list — verify current pricing/availability before purchasing.
 - **Real-world range validation:** the 5–15 km rural line-of-sight figures are industry-typical, not measured for this project's actual terrain. Should be bench/field-validated once hardware is in hand, the same way the ESP-NOW mesh's range was field-tested rather than assumed.
+
+## Revision 2026-09-23 — hardware corrections found while planning
+
+Checked against datasheets and this repo's actual pin usage before writing
+the implementation plan (`docs/superpowers/plans/2026-09-23-lorawan-multi-greenhouse.md`).
+Four statements above do not survive contact with the hardware:
+
+1. **"RAK811/RAK3172, UART to the Pi" is impossible on the remote sites.**
+   Every site Pi is a Pi Zero W, whose only exposed UART (GPIO14/15,
+   `/dev/serial0`) is already taken by the ESP32 bridge
+   (`pi/scripts/serial_bridge.py`, `SERIAL_PORT = '/dev/serial0'`). Use the
+   **RAK3172 Evaluation Board (RAK3172-E)**, which carries its own CH340
+   USB-serial chip, on the Zero W's micro-USB OTG data port → `/dev/ttyUSB0`
+   (pinned to `/dev/lora` by a udev rule on the CH340 VID:PID `1a86:7523`).
+   RAK811 is discontinued; RAK3172 (STM32WLE5, RUI3 firmware) replaces it.
+2. **The gateway cannot be a Pi Zero W.** The RAK2287/RAK5146 Pi HAT is
+   specified for "Raspberry Pi 3 Model B+ and Raspberry 4" (RAK datasheet),
+   and ChirpStack v4 additionally needs Redis ≥ 6.2 and an MQTT v5 broker
+   (ChirpStack requirements) next to the existing greenhouse stack. Gateway =
+   **Raspberry Pi 4, ≥ 2 GB**, Raspberry Pi OS 64-bit. ChirpStack Gateway OS is
+   *not* used: it is a separate OpenWrt-based OS and would replace the
+   greenhouse stack instead of running beside it. ChirpStack ≥ 4.10.1 has an
+   SQLite build (no PostgreSQL needed).
+3. **Pin conflict on a co-located gateway.** The RAK2287 Pi HAT wires its GPS
+   UART to GPIO14/15 (pins 8/10) — the same pins the ESP32 bridge uses. On the
+   Pi 4 the ESP32 bridge moves to **UART3** (`dtoverlay=uart3`: GPIO4 TXD3 /
+   GPIO5 RXD3, pins 7/29). UART2 (GPIO0/1, HAT ID EEPROM), UART4 (GPIO8/9, the
+   HAT's SPI CE0/MISO) and UART5 (GPIO12/13, the HAT's GPS STANDBY) all
+   collide with the HAT; UART3 is the only clean choice. HAT pin map: SPI0
+   GPIO8–11, SX1302 RESET GPIO17 (pin 11), GPIO7, GPS RESET GPIO25, GPS
+   STANDBY GPIO12.
+4. **The SIM7600 HAT would have to stack on the header the RAK HAT already
+   occupies.** Use the SIM7600G-H in **USB-only** form (the 4G dongle, or the
+   HAT connected by its USB port only, not stacked), switched to RNDIS with
+   `AT+CUSBPIDSWITCH=9011,1,1` so Linux sees a plain `usb0` interface. The
+   modem peaks near 2 A on transmit, more than a Pi 4 USB port supplies
+   alongside other loads: power it through a **powered USB hub (≥ 2.5 A)**.
+
+EU868 details the plan relies on: end-device uplinks at 14 dBm on the 1 %
+duty-cycle sub-bands; LoRaWAN default RX2 = 869.525 MHz, DR0 (SF12), in the
+**10 %** sub-band (360 s of gateway airtime per hour ≈ 240 small SF12
+downlinks/hour) — this is what bounds Class C command traffic, not the 1 %
+uplink rule.
+
+Topic placement for remote sites: the existing HiveMQ bridge forwards
+`greenhouse/#` in both directions, so remote data is published under
+`greenhouse/sites/<site_id>/…`. The app's and recorder's single-level `+`
+subscriptions (`greenhouse/+/air/temperature`) cannot match these deeper
+topics, so the local site's dashboard and history are unaffected until the
+separate multi-site app work consumes them.
+
+Sources: RAK2287/RAK5146 Pi HAT datasheet (docs.rakwireless.com), RAK3172
+Evaluation Board datasheet (CH340 USB-serial), RUI3 AT Command Manual,
+ChirpStack requirements and v4.10 release notes (chirpstack.io), Waveshare
+RNDIS dial-up wiki.
 
 ## How this was produced
 
