@@ -116,9 +116,11 @@ static void pumpUart() {
 // ── ESP-NOW receive callback ──────────────────────────────────────────────────
 void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   // Handle join beacons from unenrolled sensors
-  if (len == (int)sizeof(MeshJoinBeacon) && data[1] == MESH_JOIN_MARKER) {
+  if (len == (int)sizeof(MeshJoinBeacon) &&
+      (data[1] == MESH_JOIN_MARKER || data[1] == MESH_JOIN_MARKER_CAPS)) {
     char mac[13]; meshFormatMac(data + 2, mac);
-    uartPrintf("{\"type\":\"unenrolled\",\"mac\":\"%s\"}", mac);
+    uartPrintf("{\"type\":\"unenrolled\",\"mac\":\"%s\",\"caps\":%d}", mac,
+               data[1] == MESH_JOIN_MARKER_CAPS ? 1 : 0);
     return;
   }
 

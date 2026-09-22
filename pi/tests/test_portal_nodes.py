@@ -78,3 +78,19 @@ def test_delete_removes_and_is_idempotent(client):
                       'sleepy': False})
     assert client.delete(f'/api/nodes/{MAC}', headers=_auth()).status_code == 204
     assert client.delete(f'/api/nodes/{MAC}', headers=_auth()).status_code == 404
+
+
+def test_leaf_only_refused_for_firmware_without_caps(client, monkeypatch):
+    monkeypatch.setattr(portal, 'read_node_caps', lambda: {MAC: 0})
+    r = client.post('/api/nodes', headers=_auth(),
+                    json={'mac': MAC, 'key': KEY, 'zone': 'zone2', 'leaf_only': True})
+    assert r.status_code == 409
+    assert MAC not in nodes.load(client._store)
+
+
+def test_leaf_only_accepted_for_capable_firmware(client, monkeypatch):
+    monkeypatch.setattr(portal, 'read_node_caps', lambda: {MAC: 1})
+    r = client.post('/api/nodes', headers=_auth(),
+                    json={'mac': MAC, 'key': KEY, 'zone': 'zone2', 'leaf_only': True})
+    assert r.status_code == 201
+    assert nodes.load(client._store)[MAC].leaf_only is True

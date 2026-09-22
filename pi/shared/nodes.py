@@ -27,6 +27,7 @@ class Node:
     zone: str
     name: str
     sleepy: bool
+    leaf_only: bool = False
 
 
 def normalise_mac(value: str) -> str:
@@ -56,7 +57,7 @@ def load(path: str = NODES_PATH) -> dict:
                 raise ValueError(f'app_key for {entry["mac"]} is {len(key)} bytes')
             mac = normalise_mac(entry['mac'])
             out[mac] = Node(mac, key, entry['zone'], entry['name'],
-                            bool(entry['sleepy']))
+                            bool(entry['sleepy']), bool(entry.get('leaf_only', False)))
         return out
     except (ValueError, KeyError, TypeError, OSError) as exc:
         raise NodeStoreError(f'{path} is unreadable or malformed: {exc}') from exc
@@ -65,7 +66,7 @@ def load(path: str = NODES_PATH) -> dict:
 def save(store: dict, path: str = NODES_PATH) -> None:
     payload = {'version': 1, 'nodes': [
         {'mac': n.mac, 'app_key': n.app_key.hex(), 'zone': n.zone,
-         'name': n.name, 'sleepy': n.sleepy}
+         'name': n.name, 'sleepy': n.sleepy, 'leaf_only': n.leaf_only}
         for n in store.values()]}
     directory = os.path.dirname(path) or '.'
     # Write-then-rename so a power cut mid-write cannot truncate the store.

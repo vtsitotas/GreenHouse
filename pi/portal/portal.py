@@ -617,7 +617,8 @@ def queue_provision(node: Node) -> None:
     except Exception as e:
         print(f"Failed to read netkey: {e}", file=sys.stderr)
         return
-    blob = mesh_crypto.seal_provision(node.app_key, bytes.fromhex(node.mac), net_key, node.sleepy)
+    blob = mesh_crypto.seal_provision(node.app_key, bytes.fromhex(node.mac), net_key,
+                                      node.sleepy, node.leaf_only)
     try:
         # callback_api_version pinned explicitly, matching every other MQTT
         # client in this codebase (hivemq_bridge.py, recorder.py,
@@ -641,6 +642,16 @@ def read_unenrolled() -> list:
     except Exception:
         pass
     return []
+
+def read_node_caps() -> dict:
+    import paho.mqtt.subscribe as subscribe
+    try:
+        msg = subscribe.simple("greenhouse/node_caps", hostname="127.0.0.1", msg_count=1, timeout=0.5)
+        if msg and msg.payload:
+            return json.loads(msg.payload.decode('utf-8'))
+    except Exception:
+        pass
+    return {}
 
 @app.route('/api/nodes', methods=['GET'])
 def api_nodes_list():
@@ -671,8 +682,11 @@ def api_nodes_add():
     if not zone:
         return jsonify({'error': 'zone is required'}), 400
 
+    leaf_only = bool(body.get('leaf_only', False))
+    if leaf_only and int(read_node_caps().get(mac, 0)) < 1:
+        return jsonify({'error': 'sensor firmware too old for leaf-only; reflash first'}), 409
     node = Node(mac, key, zone, (body.get('name') or zone).strip(),
-                bool(body.get('sleepy', True)))
+                bool(body.get('sleepy', True)), leaf_only)
     try:
         add_node(node, NODES_PATH)
     except NodeStoreError as exc:

@@ -111,6 +111,7 @@ def new_state() -> dict:
         'net_key': None,
         'seen': {},
         'unenrolled': {},
+        'caps': {},
     }
 
 
@@ -331,7 +332,11 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
 
 
 def handle_unenrolled(msg: dict, state: dict) -> None:
-    state['unenrolled'][node_store.normalise_mac(msg['mac'])] = time.time()
+    mac = node_store.normalise_mac(msg['mac'])
+    state['unenrolled'][mac] = time.time()
+    # Missing key = pre-CART firmware (join marker 0x4A): must never be sent
+    # a provisioning blob with bit1 set -- it would read "not sleepy".
+    state['caps'][mac] = int(msg.get('caps', 0))
 
 
 def unenrolled_macs(state: dict, max_age_s: float = 300.0) -> list:
@@ -529,6 +534,7 @@ def run() -> None:
             check_heartbeat_offline(client, state)
             sweep_stale_online(client, state)
             client.publish('greenhouse/unenrolled', json.dumps(unenrolled_macs(state)), retain=True)
+            client.publish('greenhouse/node_caps', json.dumps(state['caps']), retain=True)
 
 
 if __name__ == '__main__':

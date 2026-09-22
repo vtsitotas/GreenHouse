@@ -55,6 +55,7 @@ typedef struct __attribute__((packed)) {
 // also the security property: you cannot enrol a sensor you are not standing
 // next to. The app tells the owner to hold the sensor near the hub.
 #define MESH_JOIN_MARKER             0x4A
+#define MESH_JOIN_MARKER_CAPS        0x4B   // same shape; sender understands provisioning bit1
 #define MESH_JOIN_BEACON_INTERVAL_MS 3000UL
 
 typedef struct __attribute__((packed)) {
@@ -576,7 +577,7 @@ static void meshSendReading(const SensorReading* r) {
 
 // ── Provisioning (Task 9) ─────────────────────────────────────────────────────
 static void meshSendJoinBeacon() {
-  MeshJoinBeacon j = { MESH_MAGIC_V2, MESH_JOIN_MARKER, { 0 } };
+  MeshJoinBeacon j = { MESH_MAGIC_V2, MESH_JOIN_MARKER_CAPS, { 0 } };
   memcpy(j.mac, meshSelfMac, 6);
   esp_now_send(MESH_BCAST, (const uint8_t*)&j, sizeof(j));
 }

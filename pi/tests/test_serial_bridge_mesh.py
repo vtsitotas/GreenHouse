@@ -226,3 +226,13 @@ def test_load_net_key_rejects_a_key_that_is_not_16_bytes(tmp_path):
 def test_load_net_key_raises_when_the_file_is_missing(tmp_path):
     with pytest.raises(OSError):
         sb.load_net_key(str(tmp_path / 'does-not-exist'))
+
+
+def test_unenrolled_line_records_capabilities(state):
+    sb.handle_unenrolled({'type': 'unenrolled', 'mac': MAC_S, 'caps': 1}, state)
+    assert state['caps'][MAC_S] == 1
+
+
+def test_unenrolled_line_without_caps_means_old_firmware(state):
+    sb.handle_unenrolled({'type': 'unenrolled', 'mac': MAC_S}, state)
+    assert state['caps'][MAC_S] == 0

@@ -95,3 +95,12 @@ def test_entry_with_a_bad_key_length_is_rejected(store):
              'zone': 'zone2', 'name': 'x', 'sleepy': False}]}, fh)
     with pytest.raises(nodes.NodeStoreError):
         nodes.load(store)
+
+
+def test_leaf_only_round_trips_and_defaults_false(tmp_path):
+    path = str(tmp_path / 'nodes.json')
+    nodes.add(nodes.Node('206EF16C9DB0', bytes(16), 'zone2', 'a', True, leaf_only=True), path)
+    nodes.add(nodes.Node('206EF16C6B50', bytes(16), 'zone3', 'b', True), path)
+    store = nodes.load(path)
+    assert store['206EF16C9DB0'].leaf_only is True
+    assert store['206EF16C6B50'].leaf_only is False
