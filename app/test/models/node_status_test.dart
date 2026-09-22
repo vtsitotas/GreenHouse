@@ -7,7 +7,7 @@ void main() {
       final status = NodeStatus.fromMqttMesh(
         'node2',
         '{"parent":"206EF16C6B50","rank":2,"rssi":-61,"sleepy":true,'
-        '"battery_mv":3312,"zone":"zone1","ts":1753500000}',
+        '"battery_mv":3312,"zone":"zone1","last_ack":"accepted","ts":1753500000}',
       );
       expect(status.nodeId, 'node2');
       expect(status.isOnline, isTrue);
@@ -17,6 +17,7 @@ void main() {
       expect(status.isSleepy, isTrue);
       expect(status.zone, 'zone1');
       expect(status.batteryMv, 3312);
+      expect(status.lastAck, 'accepted');
       // `ts` is the sighting time stamped by serial_bridge.py, NOT arrival
       // time -- that's what makes a retained replay still datable. This
       // payload's ts long predates "now", so a parser that ignored it (as
@@ -87,6 +88,19 @@ void main() {
     test('malformed JSON throws FormatException', () {
       expect(() => NodeStatus.fromMqttMesh('node1', '{not json'), throwsFormatException);
     });
+
+    test('a rejected delivery is parsed distinctly from accepted', () {
+      final status = NodeStatus.fromMqttMesh(
+        'node2',
+        '{"parent":null,"rank":1,"last_ack":"rejected"}',
+      );
+      expect(status.lastAck, 'rejected');
+    });
+
+    test('no last_ack key means lastAck is null, not a guess', () {
+      final status = NodeStatus.fromMqttMesh('node2', '{"rank":1}');
+      expect(status.lastAck, isNull);
+    });
   });
 
   group('NodeStatus.copyWith', () {
@@ -101,6 +115,7 @@ void main() {
         isSleepy: false,
         zone: 'zone1',
         batteryMv: 4100,
+        lastAck: 'accepted',
       );
       final copy = original.copyWith(isOnline: false);
       expect(copy.parentId, 'bridge');
@@ -109,6 +124,7 @@ void main() {
       expect(copy.isSleepy, isFalse);
       expect(copy.zone, 'zone1');
       expect(copy.batteryMv, 4100);
+      expect(copy.lastAck, 'accepted');
       expect(copy.isOnline, isFalse);
     });
 
@@ -125,6 +141,7 @@ void main() {
         isSleepy: true,
         zone: 'zone2',
         batteryMv: 3300,
+        lastAck: 'rejected',
       );
       expect(copy.parentId, 'node1');
       expect(copy.meshRank, 2);
@@ -132,6 +149,7 @@ void main() {
       expect(copy.isSleepy, isTrue);
       expect(copy.zone, 'zone2');
       expect(copy.batteryMv, 3300);
+      expect(copy.lastAck, 'rejected');
     });
   });
 
@@ -142,6 +160,7 @@ void main() {
         isOnline: true,
         lastSeen: DateTime(2026, 1, 1),
         zone: 'zone1',
+        lastAck: 'accepted',
       );
       final cleared = original.withLastSeen(null);
       expect(cleared.lastSeen, isNull);
@@ -149,6 +168,7 @@ void main() {
       expect(cleared.nodeId, 'node1');
       expect(cleared.isOnline, isTrue);
       expect(cleared.zone, 'zone1');
+      expect(cleared.lastAck, 'accepted');
     });
 
     test('can also set a real value, same as copyWith would', () {

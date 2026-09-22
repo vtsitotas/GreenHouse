@@ -1,4 +1,5 @@
 # pi/tests/test_serial_bridge_mesh.py
+import json
 import os
 import sys
 
@@ -66,7 +67,31 @@ def test_a_frame_that_fails_authentication_is_dropped(state):
     raw[30] ^= 0x01
     c = FakeClient()
     sb.handle_frame(c, {'type': 'frame', 'data': bytes(raw).hex()}, state)
-    assert c.published == []
+    # No reading/battery/status topic -- the body never decrypted.
+    assert not any(t.endswith(('temperature', 'humidity', 'moisture', 'status', 'battery'))
+                   for t, _, _ in c.published)
+
+
+def test_a_frame_that_fails_authentication_flags_the_mesh_map(state):
+    f = _frame()
+    raw = bytearray(bytes.fromhex(f['data']))
+    raw[30] ^= 0x01
+    c = FakeClient()
+    sb.handle_frame(c, {'type': 'frame', 'data': bytes(raw).hex()}, state)
+    mesh_pubs = [(t, p) for t, p, _ in c.published if t.endswith('/mesh')]
+    assert len(mesh_pubs) == 1
+    payload = json.loads(mesh_pubs[0][1])
+    assert payload['last_ack'] == 'rejected'
+    assert payload['parent'] is None
+    assert payload['zone'] == 'zone2'   # from the trust store, not the (undecrypted) body
+
+
+def test_a_valid_frame_marks_the_mesh_map_accepted(state):
+    c = FakeClient()
+    sb.handle_frame(c, _frame(), state)
+    mesh_pubs = [(t, p) for t, p, _ in c.published if t.endswith('/mesh')]
+    assert len(mesh_pubs) == 1
+    assert json.loads(mesh_pubs[0][1])['last_ack'] == 'accepted'
 
 
 def test_unenrolled_frame_logs_a_security_event(state, monkeypatch):

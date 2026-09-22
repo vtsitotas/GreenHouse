@@ -133,6 +133,7 @@ class GreenhouseRepository {
               isSleepy:    event.isSleepy ?? prev.isSleepy,
               zone:        event.zone ?? prev.zone,
               batteryMv:   event.batteryMv ?? prev.batteryMv,
+              lastAck:     event.lastAck ?? prev.lastAck,
               lastSeen:    mergedLastSeen,
             );
             break;

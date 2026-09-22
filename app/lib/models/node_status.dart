@@ -24,6 +24,16 @@ class NodeStatus {
   final bool? isSleepy;
   final String? zone;
   final int? batteryMv;
+  // Whether the Pi actually accepted the most recent reading it received
+  // from this node ('accepted' or 'rejected'), straight from serial_bridge.py's
+  // handle_frame() -- null means no frame has ever been processed for this
+  // node yet. 'rejected' means the frame's own header decoded fine (that's
+  // how the Pi even knows which node this concerns) but the encrypted body
+  // failed to decrypt/authenticate -- almost always a stale AppKey on the
+  // sensor's own NVS, occasionally a spoofing attempt. Distinct from
+  // isOnline: a rejected node is still very much transmitting, just not
+  // being believed.
+  final String? lastAck;
   final NodeStatusSource source;
   // True when this specific event was a retained MQTT redelivery rather
   // than a live publish -- e.g. every topic replayed on (re)connect. Only
@@ -42,6 +52,7 @@ class NodeStatus {
     this.isSleepy,
     this.zone,
     this.batteryMv,
+    this.lastAck,
     this.source = NodeStatusSource.status,
     this.retain = false,
   });
@@ -102,6 +113,7 @@ class NodeStatus {
       isSleepy: json['sleepy'] as bool?,
       zone: json['zone'] as String?,
       batteryMv: (json['battery_mv'] as num?)?.toInt(),
+      lastAck: json['last_ack'] as String?,
       source: NodeStatusSource.mesh,
       retain: retain,
     );
@@ -117,6 +129,7 @@ class NodeStatus {
     bool? isSleepy,
     String? zone,
     int? batteryMv,
+    String? lastAck,
   }) =>
       NodeStatus(
         nodeId: nodeId,
@@ -129,6 +142,7 @@ class NodeStatus {
         isSleepy: isSleepy ?? this.isSleepy,
         zone: zone ?? this.zone,
         batteryMv: batteryMv ?? this.batteryMv,
+        lastAck: lastAck ?? this.lastAck,
         source: source,
         retain: retain,
       );
@@ -149,6 +163,7 @@ class NodeStatus {
         isSleepy: isSleepy,
         zone: zone,
         batteryMv: batteryMv,
+        lastAck: lastAck,
         source: source,
         retain: retain,
       );

@@ -81,6 +81,16 @@ String connectionLabel(NodeStatus node, {String? parentName}) {
       : 'Passes through $via ($rank steps to the hub)';
 }
 
+/// Whether the hub actually accepted this node's most recent reading, in
+/// words a grower can act on. Null (no row shown by the caller) means no
+/// frame has been processed for this node yet -- distinct from a genuine
+/// rejection, which needs a different, more alarming message.
+String? lastDeliveryLabel(String? lastAck) => switch (lastAck) {
+      'accepted' => 'Accepted',
+      'rejected' => 'Rejected — sensor may need re-pairing',
+      _ => null,
+    };
+
 /// Short form of [connectionLabel] for the node card, where there is room for
 /// two words at most. Null means "don't show a label at all" — true for the
 /// hub itself and for a node with no mesh data yet.

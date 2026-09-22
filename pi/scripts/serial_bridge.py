@@ -281,6 +281,22 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         log_security_event('mesh_auth_failure', detail=str(exc), source=mac)
         if ser is not None:
             send_ack(ser, mac, header.seq, ok=False)
+        # Previously the node just silently vanished from the Mesh Map on an
+        # auth failure -- this whole function returns before ever reaching
+        # the _publish_mesh() call below, so only the security log knew.
+        # A minimal /mesh update, built entirely from the cleartext header
+        # (the body never decrypted, so parent/rssi/battery_mv are genuinely
+        # unknown -- not just omitted), lets the map flag the node instead of
+        # it just going stale and unplaced.
+        _publish_mesh(client, mac, {
+            'parent':     None,
+            'rank':       header.rank,
+            'rssi':       None,
+            'sleepy':     node.sleepy,
+            'battery_mv': None,
+            'zone':       node.zone,
+            'last_ack':   'rejected',
+        })
         print(f'[mesh] {mac} failed authentication: {exc}', flush=True)
         return
 
@@ -310,6 +326,7 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         'sleepy':     node.sleepy,
         'battery_mv': body.battery_mv or None,
         'zone':       node.zone,
+        'last_ack':   'accepted',
     })
 
 

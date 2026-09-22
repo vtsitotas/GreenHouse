@@ -389,6 +389,8 @@ class _NodeDetailSheet extends StatelessWidget {
         ('Battery', '${batteryLabel(node.batteryPercent)} '
             '(${node.batteryPercent!.toStringAsFixed(0)}%)'),
       if (node.isSleepy != null) ('Power mode', sleepLabel(node.isSleepy)),
+      if (lastDeliveryLabel(node.lastAck) != null)
+        ('Last delivery', lastDeliveryLabel(node.lastAck)!),
     ];
 
     // Everything an engineer would want and a grower would not. Kept verbatim
