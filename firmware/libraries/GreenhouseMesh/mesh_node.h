@@ -506,6 +506,14 @@ static bool meshUnicastToParent(const uint8_t* pkt) {
   return esp_now_send(meshParentMac, pkt, MESH_PACKET_LEN) == ESP_OK;
 }
 
+// TTL for a frame leaving NOW: current rank + margin, or the ceiling while
+// unrouted. Byte 15 is outside both tags, so rewriting it is always safe.
+static uint8_t meshTxTtl() {
+  if (meshMyRank == MESH_RANK_UNROUTED) return MESH_MAX_TTL;
+  uint16_t t = (uint16_t)meshMyRank + MESH_TTL_MARGIN;
+  return t > MESH_MAX_TTL ? MESH_MAX_TTL : (uint8_t)t;
+}
+
 static void meshBufferPush(const uint8_t* pkt) {
   int tail = (meshBufHead + meshBufCount) % MESH_DATA_BUFFER_SIZE;
   memcpy(meshBuf[tail], pkt, MESH_PACKET_LEN);
@@ -515,6 +523,7 @@ static void meshBufferPush(const uint8_t* pkt) {
 
 static void meshFlushBuffer() {
   while (meshBufCount > 0 && meshHasParent_) {
+    meshBuf[meshBufHead][15] = meshTxTtl();
     if (!meshUnicastToParent(meshBuf[meshBufHead])) break;
     meshBufHead = (meshBufHead + 1) % MESH_DATA_BUFFER_SIZE;
     meshBufCount--;
@@ -538,9 +547,7 @@ static void meshSendReading(const SensorReading* r) {
                (int8_t)meshParentRssi);
 
   uint8_t packet[MESH_PACKET_LEN];
-  uint8_t ttl = (meshMyRank == MESH_RANK_UNROUTED)
-                    ? MESH_MAX_TTL
-                    : (uint8_t)(meshMyRank + MESH_TTL_MARGIN);
+  uint8_t ttl = meshTxTtl();
   if (!meshSeal(packet, meshAppKey, meshNetKey, meshSelfMac, meshDataSeq++,
                 meshStoreBootCount(), meshIsSelfSleepy() ? MESH_FLAG_SLEEPY : 0,
                 meshMyRank, ttl, body)) {
