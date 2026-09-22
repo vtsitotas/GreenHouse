@@ -38,6 +38,10 @@
 #define MESH_RESCAN_AFTER_MS           60000UL  // unrouted this long → re-scan the
                                                 // router channel (router may have
                                                 // moved channels)
+#define MESH_ORPHAN_FRESH_MS         60000UL  // an UNROUTED beacon from a MAC not
+                                              // heard for this long is a new orphan
+#define MESH_ORPHAN_RESET_MIN_GAP_MS 10000UL  // at most one orphan-triggered
+                                              // trickle reset per 10 s
 
 // ── Fixed channel (UART-bridge / no-router deployments) ───────────────────────
 // The default deployment scans for a home router's SSID purely to agree on a

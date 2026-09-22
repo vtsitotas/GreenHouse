@@ -120,6 +120,8 @@ static uint32_t meshLastBeaconMs      = 0;
 static uint16_t meshBeaconSeq         = 0;
 static uint32_t meshWindowDurationMs  = MESH_WINDOW_DURATION_MS;
 
+static uint32_t meshLastOrphanResetMs = 0;
+
 // Fixed-size neighbor ring: no longer depends on compile-time fleet size.
 #define MESH_NEIGHBOR_SLOTS 16
 typedef struct { uint8_t mac[6]; uint32_t lastHeardMs; bool used; } MeshNeighbor;
@@ -179,6 +181,14 @@ static void meshNoteNeighbor(const uint8_t* mac, uint32_t nowMs) {
   memcpy(meshNeighbors[oldest].mac, mac, 6);
   meshNeighbors[oldest].lastHeardMs = nowMs;
   meshNeighbors[oldest].used = true;
+}
+
+static bool meshNeighborHeardWithin(const uint8_t* mac, uint32_t now, uint32_t windowMs) {
+  for (int i = 0; i < MESH_NEIGHBOR_SLOTS; i++) {
+    if (meshNeighbors[i].used && meshMacEqual(meshNeighbors[i].mac, mac))
+      return now - meshNeighbors[i].lastHeardMs < windowMs;
+  }
+  return false;
 }
 
 static bool meshIsSelfSleepy() { return meshStoreSleepy(); }
@@ -316,8 +326,23 @@ static void meshHandleBeacon(const uint8_t* srcMac, const MeshBeacon* b,
   if (b->rank == 0) return;
 #endif
 
+  // Must be evaluated BEFORE meshNoteNeighbor() refreshes lastHeardMs.
+  bool freshOrphan = b->rank == MESH_RANK_UNROUTED &&
+                     !meshNeighborHeardWithin(srcMac, now, MESH_ORPHAN_FRESH_MS);
   if (!meshNeighbors[0].used) meshTrickleReset();  // first neighbor seen
   meshNoteNeighbor(srcMac, now);
+
+  // A new orphan is inside a short discovery window right now (5 s for a
+  // sleepy node) -- answer immediately at the trickle floor instead of
+  // whatever backoff we drifted to (up to 60 s). Nettag-verified above, so
+  // only network members can trigger it; rate-limited against a flapping node.
+  if (freshOrphan && meshHasParent_ && !meshIsSelfSleepy() &&
+      now - meshLastOrphanResetMs >= MESH_ORPHAN_RESET_MIN_GAP_MS) {
+    meshLastOrphanResetMs = now;
+    meshTrickleReset();
+    meshSendBeaconNow(meshMyRank, meshBeaconIntervalMs);
+    meshLastBeaconMs = now;
+  }
 
   // Phase 1 (current, shipped) restriction, NOT a permanent design choice:
   // every field-deployed node other than the Pi/bridge is meant to run on
