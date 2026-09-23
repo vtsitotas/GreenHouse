@@ -96,8 +96,12 @@ static void handleUartLine(const char* line) {
     if (!m || !s || !o || !hexToBytes(m + 7, mac, 6)) return;
     uint16_t seq = (uint16_t)atoi(s + 6);
     bool ok = (strncmp(o + 5, "true", 4) == 0);
+    const char* t = strstr(line, "\"ttl\":");
+    int ttl = t ? atoi(t + 6) : MESH_ACK_TTL;
+    if (ttl < 1) ttl = 1;
+    if (ttl > MESH_MAX_TTL) ttl = MESH_MAX_TTL;
     uint8_t ackPkt[sizeof(MeshAck)];
-    if (meshBuildAck(ackPkt, mac, seq, ok ? MESH_ACK_OK : MESH_ACK_REJECTED)) {
+    if (meshBuildAck(ackPkt, mac, seq, ok ? MESH_ACK_OK : MESH_ACK_REJECTED, (uint8_t)ttl)) {
       esp_now_send(MESH_BCAST, ackPkt, sizeof(ackPkt));
       Serial.printf("[bridge] ack broadcast: seq=%u ok=%d\n", seq, ok);
     }

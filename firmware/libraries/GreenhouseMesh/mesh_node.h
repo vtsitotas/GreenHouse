@@ -448,7 +448,7 @@ static int meshAckResult() {
 // bytes). Only ever called by the bridge, which always originates an ack —
 // nothing is upstream of it to relay one to it.
 static bool meshBuildAck(uint8_t* out, const uint8_t* targetMac, uint16_t seq,
-                         uint8_t status) {
+                         uint8_t status, uint8_t ttl) {
   if (!meshLoadKeys()) return false;
   MeshAck a;
   a.magic  = MESH_MAGIC_V2;
@@ -456,7 +456,7 @@ static bool meshBuildAck(uint8_t* out, const uint8_t* targetMac, uint16_t seq,
   memcpy(a.target_mac, targetMac, 6);
   a.seq    = seq;
   a.status = status;
-  a.ttl    = MESH_ACK_TTL;
+  a.ttl    = ttl;
   // -1: ttl (the last byte before the tag) is excluded from coverage because
   // it mutates every hop -- same reason MESH_AAD_LEN excludes the data
   // packet's own last header byte. Without this, verification would fail at

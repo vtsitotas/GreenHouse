@@ -281,7 +281,7 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
     except (mesh_crypto.MeshAuthError, mesh_crypto.MeshFormatError) as exc:
         log_security_event('mesh_auth_failure', detail=str(exc), source=mac)
         if ser is not None:
-            send_ack(ser, mac, header.seq, ok=False)
+            send_ack(ser, mac, header.seq, ok=False, ttl=_ack_ttl(header.rank))
         # Previously the node just silently vanished from the Mesh Map on an
         # auth failure -- this whole function returns before ever reaching
         # the _publish_mesh() call below, so only the security log knew.
@@ -308,7 +308,7 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         client.publish(_battery_topic(mac), f'{body.battery_mv / 1000:.2f}', retain=True)
     client.publish(_status_topic(mac), 'online', retain=True)
     if ser is not None:
-        send_ack(ser, mac, header.seq, ok=True)
+        send_ack(ser, mac, header.seq, ok=True, ttl=_ack_ttl(header.rank))
 
     # The Mesh Map screen (app/lib/screens/devices/mesh_map_screen.dart)
     # places a node by `meshRank`/`parentId` from its retained `/mesh` topic
@@ -372,8 +372,19 @@ def send_provision(ser, mac: str, blob: bytes) -> None:
                         'blob': blob.hex()})
 
 
-def send_ack(ser, mac: str, seq: int, ok: bool) -> None:
-    _send_command(ser, {'type': 'ack', 'mac': mac, 'seq': seq, 'ok': ok})
+ACK_TTL_MARGIN = 2   # mirrors MESH_TTL_MARGIN; spec 2026-09-23 §3.6
+ACK_TTL_MAX = 16     # mirrors MESH_MAX_TTL
+
+
+def send_ack(ser, mac: str, seq: int, ok: bool, ttl=None) -> None:
+    payload = {'type': 'ack', 'mac': mac, 'seq': seq, 'ok': ok}
+    if ttl is not None:
+        payload['ttl'] = ttl
+    _send_command(ser, payload)
+
+
+def _ack_ttl(rank: int) -> int:
+    return min(ACK_TTL_MAX, rank + ACK_TTL_MARGIN)
 
 
 # Handlers that need no run-state. `heartbeat` and `mesh` are dispatched

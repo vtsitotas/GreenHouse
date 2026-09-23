@@ -172,7 +172,7 @@ def test_a_valid_frame_sends_a_positive_ack(state, monkeypatch):
     sentinel_ser = object()
     c = FakeClient()
     sb.handle_frame(c, _frame(), state, sentinel_ser)
-    assert acked == [((sentinel_ser, MAC_S, 1), {'ok': True})]
+    assert acked == [((sentinel_ser, MAC_S, 1), {'ok': True, 'ttl': 3})]
 
 
 def test_an_auth_failure_sends_a_negative_ack(state, monkeypatch):
@@ -184,7 +184,13 @@ def test_an_auth_failure_sends_a_negative_ack(state, monkeypatch):
     sentinel_ser = object()
     c = FakeClient()
     sb.handle_frame(c, {'type': 'frame', 'data': bytes(raw).hex()}, state, sentinel_ser)
-    assert acked == [((sentinel_ser, MAC_S, 1), {'ok': False})]
+    assert acked == [((sentinel_ser, MAC_S, 1), {'ok': False, 'ttl': 3})]
+
+
+def test_send_ack_carries_ttl_when_given():
+    written = []
+    sb.send_ack(type('S', (), {'write': lambda _s, b: written.append(b)})(), MAC_S, 7, True, ttl=4)
+    assert b'"ttl":4' in written[0]
 
 
 def test_handle_frame_without_a_serial_connection_does_not_crash(state):
