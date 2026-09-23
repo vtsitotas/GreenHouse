@@ -8,6 +8,11 @@
 #include "mesh_node.h"
 #include "node_key.h"   // this board's AppKey -- see node_key.h.example
 
+#ifdef MESH_BENCH_RTC_FAST
+#include "soc/rtc.h"
+#include "esp_private/esp_clk.h"
+#endif
+
 // ── Pin definitions ───────────────────────────────────────────────────────────
 #define SOIL_DATA_PIN  1   // ADC1_CH1 — NOT GPIO2: that's an ESP32-C3 strapping
                             // pin and some boards carry a hardware pull-up on
@@ -242,6 +247,14 @@ void runSleepyCycle() {
 
 void setup() {
   Serial.begin(115200);
+#ifdef MESH_BENCH_RTC_FAST
+  // Bench-only (Gate 0 A/B): run RTC_SLOW_CLK from the ~17.5 MHz RC / 256
+  // instead of the default ~136 kHz RC. Re-applied every boot: the
+  // bootloader restores the default source on each deep-sleep wake.
+  rtc_clk_8m_enable(true, true);
+  rtc_clk_slow_src_set(SOC_RTC_SLOW_CLK_SRC_RC_FAST_D256);
+  esp_clk_slowclk_cal_set(rtc_clk_cal(RTC_CAL_RTC_MUX, 1024));
+#endif
   if (esp_sleep_get_wakeup_cause() != ESP_SLEEP_WAKEUP_TIMER) delay(1500);
 
   pinMode(SOIL_PWR_PIN, OUTPUT);
