@@ -27,3 +27,12 @@ def test_pair_relative_bias_is_the_difference():
     b = da.per_node_rates([i * 300.0 * 1.003 for i in range(20)], 300.0)
     rel = da.pair_relative(a, b, 300.0)
     assert rel['bias'] == pytest.approx(0.002, abs=1e-6)
+
+
+def test_a_single_clean_cycle_still_reports_its_own_rate_as_bias():
+    times = [0.0, 300.0 * 1.01]          # exactly one clean cycle, 1 % fast
+    rates = da.per_node_rates(times, 300.0)
+    s = da.summarize(rates)
+    assert s['bias'] == pytest.approx(0.01, abs=1e-9)
+    assert s['step'] == pytest.approx(0.0, abs=1e-9)
+    assert s['n'] == 1

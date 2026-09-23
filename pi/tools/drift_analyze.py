@@ -20,8 +20,10 @@ def per_node_rates(times, period_s):
 
 
 def _stats(values):
-    if len(values) < 2:
-        return {'bias': 0.0, 'step': 0.0, 'n': len(values)}
+    if len(values) == 0:
+        return {'bias': 0.0, 'step': 0.0, 'n': 0}
+    if len(values) == 1:
+        return {'bias': values[0], 'step': 0.0, 'n': 1}
     diffs = [b - a for a, b in zip(values, values[1:])]
     return {'bias': statistics.mean(values),
             'step': statistics.pstdev(diffs) if len(diffs) > 1 else 0.0,
