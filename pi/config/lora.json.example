@@ -1,0 +1,6 @@
+{
+  "dev_eui": "AC1F09FFFE000001",
+  "app_eui": "0000000000000000",
+  "app_key": "REPLACE_WITH_32_HEX_FROM_CHIRPSTACK",
+  "report_interval_s": 600
+}
