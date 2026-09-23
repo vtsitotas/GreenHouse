@@ -10,6 +10,7 @@ the local data path.
 import json
 import os
 import sys
+import threading
 import time
 
 import paho.mqtt.client as mqtt
@@ -26,24 +27,36 @@ _METRICS = {('air', 'temperature'): 'temperature', ('air', 'humidity'): 'humidit
 
 
 class ZoneAggregator:
+    """Not just convenient but required: add() runs on paho's network thread
+    (on_message -> route_reading) while the main loop calls
+    summaries()/reset() from the service loop. Without the lock, a reading
+    for a brand-new zone arriving mid-summaries() can resize self._sums while
+    `sorted(self._sums)` is iterating it, raising "dictionary changed size
+    during iteration" -- uncaught by the loop's `except RakError`, killing
+    the service.
+    """
     def __init__(self):
+        self._lock = threading.Lock()
         self.reset()
 
     def reset(self):
-        self._sums = {}
+        with self._lock:
+            self._sums = {}
 
     def add(self, zone, metric, value):
-        z = self._sums.setdefault(zone, {})
-        s, n = z.get(metric, (0.0, 0))
-        z[metric] = (s + value, n + 1)
+        with self._lock:
+            z = self._sums.setdefault(zone, {})
+            s, n = z.get(metric, (0.0, 0))
+            z[metric] = (s + value, n + 1)
 
     def summaries(self):
-        out = []
-        for zone in sorted(self._sums):
-            m = self._sums[zone]
-            mean = lambda k: (m[k][0] / m[k][1]) if k in m else None  # noqa: E731
-            out.append(lp.ZoneSummary(zone, mean('temperature'), mean('humidity'), mean('soil')))
-        return out
+        with self._lock:
+            out = []
+            for zone in sorted(self._sums):
+                m = self._sums[zone]
+                mean = lambda k: (m[k][0] / m[k][1]) if k in m else None  # noqa: E731
+                out.append(lp.ZoneSummary(zone, mean('temperature'), mean('humidity'), mean('soil')))
+            return out
 
 
 def route_reading(topic, payload, agg) -> bool:
@@ -78,8 +91,11 @@ def command_publication(evt):
     if evt.get('type') != 'rx' or evt.get('port') != lp.PORT_COMMAND:
         return None
     try:
-        actuator, on = lp.decode_command(evt['payload'])
-    except ValueError:
+        actuator, on = lp.decode_command(evt.get('payload'))
+    except (ValueError, TypeError):
+        # TypeError covers a missing 'payload' key: evt.get() returns None,
+        # and decode_command's `len(data)` raises TypeError on None rather
+        # than the ValueError it raises for a too-short/malformed bytes value.
         return None
     return f'greenhouse/actuators/{actuator}/set', 'ON' if on else 'OFF'
 

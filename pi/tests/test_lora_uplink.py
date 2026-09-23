@@ -1,5 +1,6 @@
 import os
 import sys
+import threading
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
@@ -40,3 +41,35 @@ def test_class_c_command_becomes_a_local_actuator_publish():
     evt = {'type': 'rx', 'port': lp.PORT_COMMAND, 'payload': lp.encode_command('pump1', True)}
     assert lu.command_publication(evt) == ('greenhouse/actuators/pump1/set', 'ON')
     assert lu.command_publication({'type': 'rx', 'port': 3, 'payload': b'\x01'}) is None
+
+
+def test_command_publication_tolerates_a_missing_payload_key():
+    assert lu.command_publication({'type': 'rx', 'port': lp.PORT_COMMAND}) is None
+
+
+def test_aggregator_survives_concurrent_add_and_summaries_reset():
+    # add() runs on paho's network thread (on_message -> route_reading) while
+    # the main loop calls summaries()/reset() concurrently. A first reading
+    # for a brand-new zone during summaries()'s `sorted(self._sums)` used to
+    # be able to race a dict resize in add()'s `setdefault`, raising
+    # "dictionary changed size during iteration" and killing the service.
+    agg = lu.ZoneAggregator()
+    stop = threading.Event()
+
+    def writer():
+        zone = 1
+        while not stop.is_set():
+            lu.route_reading(f'greenhouse/zone{zone}/air/temperature', b'20.0', agg)
+            zone = zone + 1 if zone < 200 else 1
+
+    t = threading.Thread(target=writer)
+    t.start()
+    try:
+        for _ in range(2000):
+            summaries = agg.summaries()
+            for s in summaries:
+                assert 1 <= s.zone <= 200
+            agg.reset()
+    finally:
+        stop.set()
+        t.join()
