@@ -41,7 +41,7 @@ def parse_event(line: str):
                 # a line parser that command()/join()/send()/poll_events()
                 # all call from inside a read loop; a crash here would take
                 # the whole service down over one bad line.
-                return {'type': 'other', 'line': line}
+                return {'type': 'other', 'raw': body}
     return {'type': 'other', 'raw': body}
 
 

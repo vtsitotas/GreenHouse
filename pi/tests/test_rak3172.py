@@ -93,7 +93,7 @@ def test_send_returns_false_on_tx_failed():
 def test_parse_malformed_rx_line_does_not_raise():
     # non-hex payload
     evt = rk.parse_event('+EVT:RX_C:-70:8:UNICAST:10:ZZZZ')
-    assert evt == {'type': 'other', 'line': '+EVT:RX_C:-70:8:UNICAST:10:ZZZZ'}
+    assert evt == {'type': 'other', 'raw': 'RX_C:-70:8:UNICAST:10:ZZZZ'}
     # non-numeric rssi
     evt = rk.parse_event('+EVT:RX_C:abc:8:UNICAST:10:0101')
-    assert evt == {'type': 'other', 'line': '+EVT:RX_C:abc:8:UNICAST:10:0101'}
+    assert evt == {'type': 'other', 'raw': 'RX_C:abc:8:UNICAST:10:0101'}
