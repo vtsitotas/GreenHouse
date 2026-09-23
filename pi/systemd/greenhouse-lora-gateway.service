@@ -1,0 +1,49 @@
+[Unit]
+Description=Greenhouse LoRaWAN gateway bridge (ChirpStack <-> greenhouse/sites)
+After=network.target mosquitto.service chirpstack.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/lora_gateway_bridge.py
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+# ── Sandboxing ───────────────────────────────────────────────────────────────
+# Unlike greenhouse-serial-bridge and greenhouse-lora-uplink, this service
+# touches no device node -- it only bridges ChirpStack's MQTT topics to
+# greenhouse/sites/<site>/... over the local Mosquitto -- so PrivateDevices
+# is safe to enable here.
+NoNewPrivileges=yes
+PrivateDevices=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+# No ReadWritePaths= entry: this service only talks to Mosquitto on loopback
+# and to ChirpStack's MQTT broker (also local), it doesn't touch the
+# filesystem beyond that.
+
+[Install]
+WantedBy=multi-user.target

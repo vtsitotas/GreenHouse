@@ -1,0 +1,56 @@
+[Unit]
+Description=Greenhouse LoRaWAN uplink (remote site -> shared gateway)
+After=network.target mosquitto.service
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/lora_uplink.py
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+TimeoutStopSec=15
+KillSignal=SIGTERM
+
+# ── Sandboxing ───────────────────────────────────────────────────────────────
+# PrivateDevices is deliberately NOT set here (unlike every sibling service):
+# it would replace /dev with a minimal private instance that has no
+# /dev/lora, which is the one thing this service exists to read/write (the
+# RAK3172-E's CH340, named by pi/udev/99-greenhouse-lora.rules).
+# See greenhouse-cam-bridge.service for why AF_NETLINK stays allowed.
+NoNewPrivileges=yes
+PrivateTmp=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+# No ReadWritePaths= entry: this service only reads/writes the /dev/lora
+# device node and talks to Mosquitto on loopback, it doesn't touch the
+# filesystem beyond that. Device-node access is governed by Unix group
+# membership, not by ProtectSystem=strict's filesystem allowlist -- as long
+# as `pi` is in the `dialout` group (the default on Raspberry Pi OS; nothing
+# install.sh needs to set up), the kernel already grants this access.
+#
+# /dev/lora only appears once pi/udev/99-greenhouse-lora.rules is installed
+# (see docs/LORAWAN_SETUP.md, Task H1) -- unlike /dev/serial0 it needs no
+# raspi-config step, since it's a USB-serial adapter, not the Pi's own UART.
+
+[Install]
+WantedBy=multi-user.target
