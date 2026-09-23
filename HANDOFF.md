@@ -1,7 +1,9 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-09-14 (multi-site LoRaWAN + cellular gateway —
-design-only, see "TL;DR of this session" below; previous session
+**Last updated:** 2026-09-23 (mesh ACK + report Ch. 21 on main; CART
+prerequisites + LoRa software on branch `feature/cart-prereqs-lora-software`,
+see the first TL;DR below). Session before that 2026-09-14 (multi-site LoRaWAN + cellular gateway —
+design-only; previous session
 2026-09-12 finished the unlimited-sensors bench work this handoff used
 to point at as unfinished — zone2/zone4 now live-verified end to end,
 zone3 still needs a physical erase+reflash). Previous session 2026-09-11:
@@ -51,7 +53,66 @@ reports 45/45.
 > sleeps AND relays) is fully designed as CART —
 > `docs/superpowers/specs/2026-08-17-mesh-phase2-synced-wake-design.md` —
 > but not implemented; it's gated on a real-hardware drift-measurement bench
-> step (§Drift-measurement bench plan in that spec) that hasn't been run.
+> step that hasn't been run. **2026-09-23:** mechanism superseded by
+> `docs/superpowers/specs/2026-09-23-cart-v2-revision.md`; its firmware/Pi
+> prerequisites and the drift bench tooling are built (branch
+> `feature/cart-prereqs-lora-software`) — the 2×24 h bench (plan Task B4) is next.
+
+---
+
+## TL;DR of this session (2026-09-16 → 2026-09-23 — mesh ACK, report Ch. 21, CART v2 + LoRaWAN plans, prerequisites built)
+
+**1. Delivery visibility (merged to main).** Two phases answered "how does the
+Pi know the mesh works / how does a sensor know its reading arrived":
+- *Phase 1:* `serial_bridge.py` now writes `security_log` events for every
+  dropped frame (`mesh_unenrolled_frame`, `mesh_replay_dropped`,
+  `mesh_auth_failure` — the last one is ALERTABLE → push).
+- *Phase 2:* application-layer mesh ACK. After authenticating a frame the Pi
+  sends `{"cmd":"ack",...}` to the bridge, which floods a 20-byte `MeshAck`
+  (nettag = AES-CMAC over everything except ttl) back to the sender. The
+  sensor waits up to `MESH_APP_ACK_WAIT_MS` = 2000 ms after sending and logs
+  delivered / rejected / no-ack. The mesh map shows a "Last delivery" row
+  (`last_ack` accepted/rejected in the `/mesh` record). One real bug caught in
+  review: the CMAC covered the ttl byte (12 B instead of 11) — fixed 2c7c1d7.
+
+**2. Report.** `docs/GreenHouse_Report.docx` gained Chapter 21 (pp. 76–83):
+parent-selection algorithm with worked numbers, min/max/performance of every
+device, energy budget including collision scenarios (pure-ALOHA ≈ 0.44 % at
+N = 8), discovery-phase collision analysis, and LoRa multi-greenhouse. §22.3 is
+now the per-chapter key-file index. Chapters 6 and 19 were rewritten in place
+to describe the v2 protocol (61-byte sealed packet, AES-GCM + CMAC nettag,
+ACK) instead of v1.
+
+**3. Plans written (docs/superpowers/plans/).**
+- `2026-09-23-cart-phase2-synced-wake.md` against the revised spec
+  `specs/2026-09-23-cart-v2-revision.md` (simulation `docs/analysis/cart_sim.py`:
+  guard hint in beacon, G_max ≥ 2·|bias|·T, T = 300 s, J = 100 ms, ≤ 6 children
+  per relay, ACK ttl = rank + 2, go/no-go gates).
+- `2026-09-23-lorawan-multi-greenhouse.md` — RAK3172-E over USB at remote sites
+  (the Zero W UART is the ESP32 bridge's), Pi 4 + RAK2287 HAT + ChirpStack
+  (SQLite) at the gateway, SIM7600G-H over USB (RNDIS), ESP32 bridge moved to
+  UART3 there; payloads ≤ 51 B, fPort 1/2/10, topics `greenhouse/sites/<site>/…`.
+
+**4. Built on branch `feature/cart-prereqs-lora-software` (NOT merged yet).**
+Subagent-driven, every task reviewed. Ledgers:
+`.superpowers/sdd/2026-09-23-*/progress.md` (git-ignored).
+- CART prerequisites A1–A5: orphan-beacon trickle reset, TTL stamped at
+  transmit time, provisioning flag bit-field (`leaf_only`), capability-
+  advertising join (marker 0x4B → `greenhouse/node_caps`, portal 409 if a
+  node can't do leaf-only), ACK ttl = rank + 2.
+- Drift bench tooling B1–B3: `MESH_BENCH_RTC_FAST` build flag (RC_FAST_D256
+  slow clock), `pi/tools/drift_logger.py`, `pi/tools/drift_analyze.py`.
+- LoRa software S1–S6: `pi/shared/lora_payload.py`, `pi/shared/rak3172.py`,
+  `pi/scripts/lora_uplink.py`, `pi/scripts/lora_gateway_bridge.py`,
+  configurable serial port (`GREENHOUSE_SERIAL_PORT`), systemd units, udev
+  rule, `docs/LORAWAN_SETUP.md`.
+
+**Still NOT done (hardware-gated, by decision):** CART B4 (2 × 24 h drift
+bench on real boards → Gate 0), CART Part C (the synced-wake scheduler
+itself — gated on Gate 0), D1–D3 field gates, LoRa H1–H3/V1–V6 (hardware not
+bought). **Next step:** run B4 with two C3 boards flashed with
+`MESH_BENCH_RTC_FAST`, log with `drift_logger.py`, analyse with
+`drift_analyze.py`; its numbers decide whether Part C proceeds.
 
 ---
 
