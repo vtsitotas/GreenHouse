@@ -1,0 +1,6 @@
+{
+  "application_id": "REPLACE_WITH_CHIRPSTACK_APPLICATION_UUID",
+  "mqtt_user": "lora-gateway",
+  "mqtt_password": "REPLACE",
+  "sites": { "AC1F09FFFE000001": "north" }
+}
