@@ -472,3 +472,16 @@ def test_retained_status_ignored_after_sweep_completed():
     state['startup_swept'] = True
     serial_bridge.note_retained_status(state, 'greenhouse/nodes/AABBCC/status', b'online')
     assert state['retained_online'] == set()
+
+
+# ── configurable serial port (LoRa gateway Pi 4 moves the bridge to UART3) ───
+def test_serial_port_can_be_overridden_by_environment(monkeypatch):
+    import importlib
+    monkeypatch.setenv('GREENHOUSE_SERIAL_PORT', '/dev/ttyAMA3')
+    import serial_bridge
+    importlib.reload(serial_bridge)
+    try:
+        assert serial_bridge.SERIAL_PORT == '/dev/ttyAMA3'
+    finally:
+        monkeypatch.delenv('GREENHOUSE_SERIAL_PORT')
+        importlib.reload(serial_bridge)

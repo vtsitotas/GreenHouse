@@ -36,7 +36,10 @@ except Exception:  # pragma: no cover - logging must never break mesh ingestion
     def log_security_event(*_a, **_kw):
         return {}
 
-SERIAL_PORT = '/dev/serial0'
+# Pi Zero W sites: the one exposed UART. A Pi 4 gateway carrying the RAK2287
+# HAT moves the ESP32 bridge to UART3 (the HAT's GPS owns GPIO14/15) and sets
+# GREENHOUSE_SERIAL_PORT in the service unit -- see docs/LORAWAN_SETUP.md.
+SERIAL_PORT = _os.environ.get('GREENHOUSE_SERIAL_PORT', '/dev/serial0')
 BAUD = 115200
 MQTT_HOST = '127.0.0.1'
 MQTT_PORT = 1883
