@@ -41,3 +41,8 @@ def test_command_round_trip():
 def test_unknown_version_is_rejected():
     with pytest.raises(ValueError):
         lp.decode_summary(b'\x02\x00')
+
+
+def test_encode_command_rejects_empty_actuator_name():
+    with pytest.raises(ValueError):
+        lp.encode_command('', True)

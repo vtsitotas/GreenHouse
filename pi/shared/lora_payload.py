@@ -81,7 +81,10 @@ def decode_alert(data: bytes) -> dict:
 
 
 def encode_command(actuator: str, on: bool) -> bytes:
-    return bytes([VERSION, 1 if on else 0]) + _text(actuator)
+    name = _text(actuator)
+    if not name:
+        raise ValueError('actuator name must not be empty')
+    return bytes([VERSION, 1 if on else 0]) + name
 
 
 def decode_command(data: bytes):
