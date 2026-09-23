@@ -31,14 +31,27 @@ def parse_event(line: str):
         parts = body.split(':')
         # RX_C:<rssi>:<snr>:UNICAST:<port>:<hex>
         if len(parts) >= 6:
-            return {'type': 'rx', 'window': parts[0][3:], 'rssi': int(parts[1]),
-                    'snr': int(parts[2]), 'port': int(parts[4]),
-                    'payload': bytes.fromhex(parts[5])}
+            try:
+                return {'type': 'rx', 'window': parts[0][3:], 'rssi': int(parts[1]),
+                        'snr': int(parts[2]), 'port': int(parts[4]),
+                        'payload': bytes.fromhex(parts[5])}
+            except (ValueError, IndexError):
+                # Torn/garbled line on the wire (e.g. a partial read split
+                # across two poll_events() calls) -- must never raise out of
+                # a line parser that command()/join()/send()/poll_events()
+                # all call from inside a read loop; a crash here would take
+                # the whole service down over one bad line.
+                return {'type': 'other', 'line': line}
     return {'type': 'other', 'raw': body}
 
 
 class Rak3172:
     def __init__(self, ser, clock=time.monotonic):
+        """``ser`` must be opened with a read timeout, e.g.
+        ``serial.Serial(port, 115200, timeout=1)``. Without one, `readline()`
+        blocks indefinitely on silence and the timeouts in command()/join()/
+        send() never get a chance to fire.
+        """
         self.ser = ser
         self.clock = clock
         self.events = []

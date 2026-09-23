@@ -82,3 +82,18 @@ def test_send_waits_for_tx_done_and_keeps_downlinks_queued():
     dev = rk.Rak3172(ser, clock=FakeClock())
     assert dev.send(1, b'\x01\x02') is True
     assert dev.poll_events()[0]['port'] == 10
+
+
+def test_send_returns_false_on_tx_failed():
+    ser = FakeSerial({'AT+SEND=1:0102': ['OK', '+EVT:SEND_CONFIRMED_FAILED']})
+    dev = rk.Rak3172(ser, clock=FakeClock())
+    assert dev.send(1, b'\x01\x02') is False
+
+
+def test_parse_malformed_rx_line_does_not_raise():
+    # non-hex payload
+    evt = rk.parse_event('+EVT:RX_C:-70:8:UNICAST:10:ZZZZ')
+    assert evt == {'type': 'other', 'line': '+EVT:RX_C:-70:8:UNICAST:10:ZZZZ'}
+    # non-numeric rssi
+    evt = rk.parse_event('+EVT:RX_C:abc:8:UNICAST:10:0101')
+    assert evt == {'type': 'other', 'line': '+EVT:RX_C:abc:8:UNICAST:10:0101'}
