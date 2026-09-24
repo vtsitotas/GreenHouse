@@ -240,22 +240,28 @@ _METRICS = {
 }
 
 
-def accept_replay(state, mac: str, boot_count: int, seq: int) -> bool:
-    """Reject replays without a clock: no node in this system has one.
+def replay_verdict(state, mac: str, boot_count: int, seq: int) -> str:
+    """Classify an AUTHENTICATED frame against this node's replay window.
 
-    A higher boot_count always wins and resets the window, because a cold boot
-    legitimately restarts seq at 0. A lower one is a rollback attempt.
+    No node in this system has a clock, so freshness is (boot_count, seq):
+    a higher boot_count always wins and resets the window (a cold boot
+    legitimately restarts seq at 0); a lower one is a rollback. A seq already
+    seen under the current boot_count is a duplicate -- after authentication
+    that means the node resending a frame whose ack it never heard (or a
+    verbatim replay of it, which gains an attacker nothing but one more ack).
+    Only call this after open_packet() succeeded: an unauthenticated header
+    must never move the window.
     """
     last_boot, seen = state['seen'].get(mac, (-1, set()))
     if boot_count < last_boot:
-        return False
+        return 'rollback'
     if boot_count > last_boot:
         state['seen'][mac] = (boot_count, {seq})
-        return True
+        return 'new'
     if seq in seen:
-        return False
+        return 'duplicate'
     seen.add(seq)
-    return True
+    return 'new'
 
 
 def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
@@ -274,10 +280,6 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         print(f'[mesh] frame from unenrolled {mac} — ignored', flush=True)
         return
 
-    if not accept_replay(state, mac, header.boot_count, header.seq):
-        log_security_event('mesh_replay_dropped', source=mac)
-        print(f'[mesh] replay from {mac} dropped', flush=True)
-        return
 
     try:
         body = mesh_crypto.open_packet(raw, node.app_key)
@@ -302,6 +304,20 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
             'last_ack':   'rejected',
         })
         print(f'[mesh] {mac} failed authentication: {exc}', flush=True)
+        return
+
+    verdict = replay_verdict(state, mac, header.boot_count, header.seq)
+    if verdict == 'rollback':
+        log_security_event('mesh_replay_dropped', source=mac)
+        print(f'[mesh] replay from {mac} dropped (boot_count rollback)', flush=True)
+        return
+    if verdict == 'duplicate':
+        # The node resent a frame we already accepted -- our first ack never
+        # reached it. Re-ack so it stops resending; publish nothing, the
+        # reading is already out.
+        if ser is not None:
+            send_ack(ser, mac, header.seq, ok=True, ttl=_ack_ttl(header.rank))
+        print(f'[mesh] duplicate from {mac} seq {header.seq} \u2014 re-acked', flush=True)
         return
 
     for metric, (group, topic_metric) in _METRICS.items():

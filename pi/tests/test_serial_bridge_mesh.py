@@ -105,14 +105,81 @@ def test_unenrolled_frame_logs_a_security_event(state, monkeypatch):
     assert logged == [(('mesh_unenrolled_frame',), {'source': 'AABBCCDDEEFF'})]
 
 
-def test_replay_drop_logs_a_security_event(state, monkeypatch):
-    logged = []
+def test_a_repeated_seq_under_the_same_boot_count_is_a_duplicate(state):
+    assert sb.replay_verdict(state, MAC_S, boot_count=1, seq=5) == 'new'
+    assert sb.replay_verdict(state, MAC_S, boot_count=1, seq=5) == 'duplicate'
+
+
+def test_a_lower_boot_count_is_a_rollback(state):
+    assert sb.replay_verdict(state, MAC_S, boot_count=4, seq=1) == 'new'
+    assert sb.replay_verdict(state, MAC_S, boot_count=3, seq=99) == 'rollback'
+
+
+def test_a_new_boot_count_resets_the_seq_window(state):
+    assert sb.replay_verdict(state, MAC_S, boot_count=1, seq=9) == 'new'
+    assert sb.replay_verdict(state, MAC_S, boot_count=2, seq=9) == 'new'
+
+
+def test_a_resent_duplicate_is_re_acked_not_logged_not_republished(state, monkeypatch):
+    logged, acked = [], []
     monkeypatch.setattr(sb, 'log_security_event', lambda *a, **kw: logged.append((a, kw)))
+    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
+    ser = object()
     c = FakeClient()
-    sb.handle_frame(c, _frame(), state)   # first delivery: accepted, not logged
-    logged.clear()
-    sb.handle_frame(c, _frame(), state)   # same (boot_count, seq): replay
+    sb.handle_frame(c, _frame(), state, ser)      # first delivery: accepted
+    published_before = list(c.published)
+    logged.clear(); acked.clear()
+    sb.handle_frame(c, _frame(), state, ser)      # identical frame: the node never got our ack
+    assert acked == [((ser, MAC_S, 1), {'ok': True, 'ttl': 3})]
+    assert logged == []
+    assert c.published == published_before        # nothing republished
+
+
+def test_a_boot_count_rollback_logs_and_is_not_acked(state, monkeypatch):
+    logged, acked = [], []
+    monkeypatch.setattr(sb, 'log_security_event', lambda *a, **kw: logged.append((a, kw)))
+    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
+    ser = object()
+    c = FakeClient()
+    sb.handle_frame(c, _frame(seq=1, boot=2), state, ser)
+    logged.clear(); acked.clear()
+    sb.handle_frame(c, _frame(seq=5, boot=1), state, ser)
     assert logged == [(('mesh_replay_dropped',), {'source': MAC_S})]
+    assert acked == []
+
+
+def test_unenrolled_frames_are_not_acked(state, monkeypatch):
+    acked = []
+    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
+    other = mc.seal_packet(bytes(16), NET, bytes.fromhex('AABBCCDDEEFF'),
+                           seq=1, boot_count=1, flags=0, rank=1, ttl=4,
+                           body=mp.pack_body(1, 1, 1, 0, PARENT, 0))
+    sb.handle_frame(FakeClient(), {'type': 'frame', 'data': other.hex()}, state, object())
+    assert acked == []
+
+
+def test_a_forged_frame_cannot_poison_the_replay_window(state):
+    # Right MAC and a huge boot_count, but sealed with the wrong AppKey: it must
+    # fail authentication BEFORE the replay window ever records its boot_count.
+    forged = mc.seal_packet(bytes(16), NET, MAC, seq=1, boot_count=0xFFFFFFFF,
+                            flags=0, rank=1, ttl=4,
+                            body=mp.pack_body(1, 1, 1, 0, PARENT, 0))
+    c = FakeClient()
+    sb.handle_frame(c, {'type': 'frame', 'data': forged.hex()}, state)
+    c.published.clear()
+    sb.handle_frame(c, _frame(seq=2, boot=1), state)   # the node's next genuine frame
+    assert any(t.endswith('temperature') for t, _, _ in c.published)
+
+
+def test_after_a_pi_restart_a_resend_is_accepted_again(state):
+    # Documented limitation (plan Review Focus #1): the replay window lives in
+    # memory, so a resend that crosses a Pi restart is treated as new.
+    c = FakeClient()
+    sb.handle_frame(c, _frame(), state)
+    state['seen'].clear()                              # what a restart does
+    c.published.clear()
+    sb.handle_frame(c, _frame(), state)
+    assert any(t.endswith('temperature') for t, _, _ in c.published)
 
 
 def test_auth_failure_logs_a_security_event(state, monkeypatch):
@@ -128,21 +195,6 @@ def test_auth_failure_logs_a_security_event(state, monkeypatch):
     assert args == ('mesh_auth_failure',)
     assert kwargs['source'] == MAC_S
     assert 'detail' in kwargs and kwargs['detail']
-
-
-def test_replayed_seq_under_the_same_boot_count_is_rejected(state):
-    assert sb.accept_replay(state, MAC_S, boot_count=1, seq=5) is True
-    assert sb.accept_replay(state, MAC_S, boot_count=1, seq=5) is False
-
-
-def test_a_lower_boot_count_is_rejected_as_a_rollback(state):
-    assert sb.accept_replay(state, MAC_S, boot_count=4, seq=1) is True
-    assert sb.accept_replay(state, MAC_S, boot_count=3, seq=99) is False
-
-
-def test_a_new_boot_count_resets_the_seq_window(state):
-    assert sb.accept_replay(state, MAC_S, boot_count=1, seq=9) is True
-    assert sb.accept_replay(state, MAC_S, boot_count=2, seq=1) is True
 
 
 def test_unenrolled_macs_are_remembered_for_the_app(state):
@@ -199,21 +251,6 @@ def test_handle_frame_without_a_serial_connection_does_not_crash(state):
     sb.handle_frame(c, _frame(), state)
     topics = [t for t, _, _ in c.published]
     assert any('temperature' in t for t in topics)
-
-
-def test_unenrolled_and_replay_drops_do_not_send_an_ack(state, monkeypatch):
-    acked = []
-    monkeypatch.setattr(sb, 'send_ack', lambda *a, **kw: acked.append((a, kw)))
-    sentinel_ser = object()
-    c = FakeClient()
-    other = mc.seal_packet(bytes(16), NET, bytes.fromhex('AABBCCDDEEFF'),
-                           seq=1, boot_count=1, flags=0, rank=1, ttl=4,
-                           body=mp.pack_body(1, 1, 1, 0, PARENT, 0))
-    sb.handle_frame(c, {'type': 'frame', 'data': other.hex()}, state, sentinel_ser)
-    sb.handle_frame(c, _frame(), state, sentinel_ser)   # first: accepted
-    acked.clear()
-    sb.handle_frame(c, _frame(), state, sentinel_ser)   # same seq again: replay
-    assert acked == []
 
 
 def test_load_net_key_reads_hex_from_disk(tmp_path):
