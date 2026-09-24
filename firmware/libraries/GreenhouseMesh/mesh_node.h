@@ -428,8 +428,6 @@ static bool meshAckDedupSeen(const uint8_t* targetMac, uint16_t seq) {
   return false;
 }
 
-
-
 // Builds and signs a fresh MeshAck into out (must point at >= sizeof(MeshAck)
 // bytes). Only ever called by the bridge, which always originates an ack —
 // nothing is upstream of it to relay one to it.

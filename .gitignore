@@ -43,3 +43,5 @@ app/android/.gradle/
 .worktrees/
 firmware/test/host/layout_vectors
 firmware/test/host/layout_vectors.exe
+firmware/test/host/inflight_test
+firmware/test/host/inflight_test.exe

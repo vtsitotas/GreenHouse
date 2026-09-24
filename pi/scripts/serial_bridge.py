@@ -280,7 +280,6 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         print(f'[mesh] frame from unenrolled {mac} — ignored', flush=True)
         return
 
-
     try:
         body = mesh_crypto.open_packet(raw, node.app_key)
     except (mesh_crypto.MeshAuthError, mesh_crypto.MeshFormatError) as exc:
