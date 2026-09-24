@@ -1,8 +1,9 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-09-23 (mesh ACK + report Ch. 21 on main; CART
-prerequisites + LoRa software on branch `feature/cart-prereqs-lora-software`,
-see the first TL;DR below). Session before that 2026-09-14 (multi-site LoRaWAN + cellular gateway —
+**Last updated:** 2026-09-24 (everything merged to `main` and deployed; three
+sensors enrolled via the app; five live bugs in add/delete/provisioning fixed --
+see the first TL;DR below). Session 2026-09-16..23: mesh ACK, report Ch. 21,
+CART prerequisites + LoRa software. Session before that 2026-09-14 (multi-site LoRaWAN + cellular gateway —
 design-only; previous session
 2026-09-12 finished the unlimited-sensors bench work this handoff used
 to point at as unfinished — zone2/zone4 now live-verified end to end,
@@ -57,6 +58,66 @@ reports 45/45.
 > `docs/superpowers/specs/2026-09-23-cart-v2-revision.md`; its firmware/Pi
 > prerequisites and the drift bench tooling are built (branch
 > `feature/cart-prereqs-lora-software`) — the 2×24 h bench (plan Task B4) is next.
+
+---
+
+## TL;DR of this session (2026-09-24 — merged to main, live bench: add/delete sensors actually work now)
+
+**State at end of session:** `main` (all of 2026-09-16..23 merged by fast-forward,
+branch deleted) is deployed to the bench Pi (`greenhouse`, 192.168.1.94) and the
+latest app (`bbc762f`+) is installed on the phone (in-place, pairing kept).
+**Three sensors enrolled via the app and reporting, one zone each:** 9DB0, 6B50,
+75EC -- all rank 1 under bridge BE:80, `last_ack: accepted`. Pairing PIN is in
+`/etc/greenhouse/device.json` (`pair_pin`); the portal pairing window is 600 s
+after the *portal* starts (`sudo systemctl restart greenhouse-portal` reopens it).
+
+**ACK revision (plan `2026-09-24-mesh-ack-retry-and-link-counter.md`):** the
+rescan counter is link-only again; unacknowledged frames are resent next wake;
+the Pi authenticates before its replay check (closes a forged-header DoS) and
+re-acks duplicates. Report §6.9/6.10/19.4γ/21.3 updated (87 pages).
+
+**Bugs found live and fixed today (each with tests, all deployed):**
+1. *Delete left the sensor in the app* -- portal published 3 empty retained
+   messages then disconnected with no paho loop; only the first reached the
+   broker. Now `paho.mqtt.publish.multiple`; zone readings are cleared when no
+   other sensor reports there; DELETE of an already-forgotten MAC still clears
+   its leftovers (`b9a38d0`).
+2. *Battery showed 4 %* -- v2 path published volts; now percent (LiFePO4 table).
+3. *False security push at every selftest* -- loopback-sourced events are logged,
+   never pushed. *Security log unwritable* -- serial-bridge/portal units lacked
+   `ReadWritePaths=-/var/log/greenhouse-security.log`.
+4. *A sensor added in the app could stay unenrolled forever* -- the bridge sends
+   the provisioning blob exactly once; if the sensor is off/rebooting then
+   (the natural customer order: scan first, power later) it is lost silently.
+   serial_bridge now resends it whenever a trusted MAC is still sending join
+   beacons (≤ 1 per 10 s) and logs the likely cause after ~1 min (stale AppKey
+   → erase-flash). The app lists added-but-silent sensors as "Joining…" /
+   "Waiting for first reading…" with their MAC (`bbc762f`). *Resend path is
+   unit-tested only -- not yet exercised with a blank board.*
+5. *Deleted sensors/zones came back after a Pi restart* -- the HiveMQ bridge
+   forwarded a retained delete as a plain message (RETAIN=0 on live delivery),
+   so the cloud kept its copy and re-injected it on the next bridge start. Empty
+   payloads are now always forwarded retained (`cd4d057`); verified by clearing
+   the ghost zone `sensor9DB0` and restarting the bridge.
+
+**Bench procedures learned:**
+- *Stale NVS AppKey* (board logs `provision blob rejected — not for us`): copy
+  `provisioning/node_key-<MAC>.h` to the sketch's `node_key.h`, then
+  `arduino-cli compile --upload -p COMx --fqbn esp32:esp32:esp32c3:EraseFlash=all,CDCOnBoot=cdc fake_edge_node_esp32_c3`,
+  then Add again in the app. `CDCOnBoot=cdc` is needed to see `Serial` over USB
+  on the C3 (default builds log to UART0 pins). QR images + key headers per
+  board live in `provisioning/` (git-ignored).
+- *Deploy:* `deploy.ps1` pings to resolve the host; ICMP is blocked from the
+  Claude sandbox, so run its four steps over ssh/scp directly.
+- Trust store (`nodes.json`) was found **empty** at session start (not caused by
+  the deploy -- `install.sh` only `touch`es it); cause unknown.
+
+**Still open:** CART Gate 0 drift bench (B4, 2 × 24 h, see plan); bridge and
+9DB0/75EC still run pre-ACK-revision firmware (6B50 has the latest); app MQTT
+password is the weak `123` (selftest FAIL; rotating means re-pairing); on a
+bridge restart the cloud can briefly re-inject an *older* reading until the next
+real one (full fix: MQTT 5 retain-as-published); `sleepy=true` everywhere now,
+`MESH_SLEEP_INTERVAL_MS` still the 60 s test value (production 900 s).
 
 ---
 
