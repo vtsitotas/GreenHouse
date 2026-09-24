@@ -13,3 +13,11 @@ final unenrolledMacsProvider = FutureProvider<List<String>>((ref) async {
   if (svc == null) return [];
   return svc.unenrolled();
 });
+
+/// Sensors the Pi trusts, including ones that have not reported yet -- the
+/// Devices screen lists those as "Joining" / "Waiting for first reading".
+final enrolledSensorsProvider = FutureProvider<List<EnrolledSensor>>((ref) async {
+  final svc = ref.watch(sensorProvisioningServiceProvider);
+  if (svc == null) return [];
+  return svc.enrolled();
+});

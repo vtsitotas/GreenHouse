@@ -14,7 +14,8 @@ import 'package:greenhouse_app/screens/pairing/qr_scan_screen.dart';
 import 'package:greenhouse_app/screens/devices/add_sensor_screen.dart';
 import 'package:greenhouse_app/models/sensor_enrolment.dart';
 import 'package:greenhouse_app/services/sensor_provisioning_service.dart'
-    show SensorNotManagedException;
+    show EnrolledSensor, SensorNotManagedException;
+import 'package:greenhouse_app/theme/app_colors.dart';
 
 /// True for the bridge's own entry, never a real sensor: `zone == null` and
 /// `meshRank == 0` is the bridge's definition of itself, per the payload
@@ -23,7 +24,7 @@ import 'package:greenhouse_app/services/sensor_provisioning_service.dart'
 bool _isBridge(NodeStatus node) => node.zone == null && node.meshRank == 0;
 
 Future<void> _confirmAndRemove(
-    BuildContext context, WidgetRef ref, NodeStatus node) async {
+    BuildContext context, WidgetRef ref, String mac) async {
   final confirmed = await showDialog<bool>(
     context: context,
     builder: (dialogContext) => AlertDialog(
@@ -50,9 +51,10 @@ Future<void> _confirmAndRemove(
   final svc = ref.read(sensorProvisioningServiceProvider);
   if (svc == null) return;
   try {
-    await svc.remove(node.nodeId);
+    await svc.remove(mac);
     ref.invalidate(nodesProvider);
     ref.invalidate(unenrolledMacsProvider);
+    ref.invalidate(enrolledSensorsProvider);
   } on SensorNotManagedException catch (e) {
     if (context.mounted) {
       ScaffoldMessenger.of(context)
@@ -74,6 +76,11 @@ class DevicesScreen extends ConsumerWidget {
     final nodes = ref.watch(nodesProvider);
     final names = ref.watch(deviceNamesProvider).valueOrNull ?? const {};
     final unenrolled = ref.watch(unenrolledMacsProvider).valueOrNull ?? const [];
+    final enrolled = ref.watch(enrolledSensorsProvider).valueOrNull ?? const [];
+    final enrolledMacs = {for (final e in enrolled) e.mac};
+    // Only a sensor nobody has added yet deserves the "scan its code" banner;
+    // an added one still sending join beacons is shown as "Joining" instead.
+    final strangers = unenrolled.where((m) => !enrolledMacs.contains(m.toUpperCase()));
 
     return Scaffold(
       appBar: AppBar(
@@ -122,6 +129,7 @@ class DevicesScreen extends ConsumerWidget {
           );
           if (added == true && context.mounted) {
              ref.invalidate(unenrolledMacsProvider);
+             ref.invalidate(enrolledSensorsProvider);
              ref.invalidate(nodesProvider);
           }
         },
@@ -134,9 +142,13 @@ class DevicesScreen extends ConsumerWidget {
           error: e,
           onRetry: () => ref.invalidate(nodesProvider),
         ),
-        data: (n) => ListView(
+        data: (n) {
+          final reporting = {for (final id in n.keys) id.toUpperCase()};
+          final pending = enrolled.where((e) => !reporting.contains(e.mac)).toList();
+          final joining = {for (final m in unenrolled) m.toUpperCase()};
+          return ListView(
           children: [
-            if (unenrolled.isNotEmpty)
+            if (strangers.isNotEmpty)
               MaterialBanner(
                 content: const Text(
                   "A sensor nearby hasn't been added yet — scan the code on its box.",
@@ -149,7 +161,7 @@ class DevicesScreen extends ConsumerWidget {
                   ),
                 ],
               ),
-            if (n.isEmpty)
+            if (n.isEmpty && pending.isEmpty)
               const Padding(
                 padding: EdgeInsets.all(32.0),
                 child: Center(child: Text('No devices found yet')),
@@ -174,10 +186,50 @@ class DevicesScreen extends ConsumerWidget {
                   ),
                   onRemove: _isBridge(node)
                       ? null
-                      : () => _confirmAndRemove(context, ref, node),
+                      : () => _confirmAndRemove(context, ref, node.nodeId),
+                )),
+            ...pending.map((sensor) => _PendingSensorTile(
+                  sensor: sensor,
+                  joining: joining.contains(sensor.mac),
+                  onRemove: () => _confirmAndRemove(context, ref, sensor.mac),
                 )),
           ],
-        ),
+        );
+        },
+      ),
+    );
+  }
+}
+
+/// A sensor added through the app that has not delivered a reading yet.
+/// Before this existed such a sensor was simply invisible, so a wrong QR, a
+/// sensor that was switched off, or one whose enrolment failed all looked
+/// exactly like "nothing happened".
+class _PendingSensorTile extends StatelessWidget {
+  const _PendingSensorTile(
+      {required this.sensor, required this.joining, required this.onRemove});
+
+  final EnrolledSensor sensor;
+
+  /// Still sending join beacons: the Pi is (re)sending its enrolment and it
+  /// has not been able to use it yet.
+  final bool joining;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    final title = sensor.name.isNotEmpty ? sensor.name : sensor.zone;
+    final state = joining
+        ? 'Joining — keep it close to the hub'
+        : 'Waiting for first reading… is it switched on?';
+    return ListTile(
+      leading: const Icon(Icons.sensors, color: AppColors.offline),
+      title: Text(title.isNotEmpty ? title : sensor.mac),
+      subtitle: Text('${sensor.mac} · $state'),
+      trailing: IconButton(
+        icon: const Icon(Icons.delete_outline),
+        tooltip: 'Remove sensor',
+        onPressed: onRemove,
       ),
     );
   }

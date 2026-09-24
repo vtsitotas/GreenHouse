@@ -158,3 +158,19 @@ def test_clear_node_retained_sends_all_topics_in_one_flushed_batch(monkeypatch):
     assert {m[0] for m in msgs} == {f'greenhouse/nodes/{MAC}/{s}' for s in ('status', 'battery', 'mesh')}
     assert all(m[1] == '' and m[3] is True for m in msgs)     # empty + retained = delete
     assert kw['hostname'] == '127.0.0.1'
+
+
+def test_enrolment_publishes_the_provisioning_blob_through_a_flushed_publish(tmp_path, monkeypatch):
+    netkey = tmp_path / 'netkey'
+    netkey.write_text(bytes(range(16, 32)).hex())
+    real_open = open
+    monkeypatch.setattr('builtins.open',
+                        lambda f, *a, **k: real_open(str(netkey) if f == '/etc/greenhouse/netkey' else f, *a, **k))
+    sent = []
+    monkeypatch.setattr(portal.mqtt_publish, 'single', lambda topic, payload, **kw: sent.append((topic, payload, kw)))
+    node = nodes.Node(MAC, bytes(range(16)), 'z', 'x', True)
+    portal.queue_provision(node)
+    assert len(sent) == 1
+    topic, payload, kw = sent[0]
+    assert topic == f'greenhouse/provision/{MAC}'
+    assert len(payload) == 33 and kw['retain'] is True

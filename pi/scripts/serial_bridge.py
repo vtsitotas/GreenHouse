@@ -114,6 +114,7 @@ def new_state() -> dict:
         'net_key': None,
         'seen': {},
         'unenrolled': {},
+        'provision_sent': {},   # mac -> (last resend wall time, resend count)
         'caps': {},
     }
 
@@ -340,6 +341,10 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         print(f'[mesh] duplicate from {mac} seq {header.seq} \u2014 re-acked', flush=True)
         return
 
+    # Enrolled and delivering: no longer a sensor waiting to be added.
+    state['unenrolled'].pop(mac, None)
+    state['provision_sent'].pop(mac, None)
+
     for metric, (group, topic_metric) in _METRICS.items():
         client.publish(_reading_topic(node.zone, group, topic_metric),
                        f'{float(getattr(body, metric)):.1f}', retain=True)
@@ -371,12 +376,47 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
     })
 
 
-def handle_unenrolled(msg: dict, state: dict) -> None:
+# A join beacon from a MAC the Pi already trusts means that sensor never got
+# (or could not open) its provisioning blob. The bridge transmits the Add-time
+# blob exactly once, so a sensor that was off, rebooting or out of range at
+# that instant would otherwise stay unenrolled forever with no error anywhere.
+PROVISION_RESEND_S = 10.0    # join beacons arrive every ~3 s; answer 1 in ~3
+PROVISION_WARN_AFTER = 6     # ~1 min of rejected resends -> explain in the log
+
+
+def handle_unenrolled(msg: dict, state: dict, ser=None) -> None:
     mac = node_store.normalise_mac(msg['mac'])
-    state['unenrolled'][mac] = time.time()
+    now = time.time()
+    state['unenrolled'][mac] = now
     # Missing key = pre-CART firmware (join marker 0x4A): must never be sent
     # a provisioning blob with bit1 set -- it would read "not sleepy".
     state['caps'][mac] = int(msg.get('caps', 0))
+    if ser is not None:
+        _resend_provision_if_trusted(ser, mac, state, now)
+
+
+def _resend_provision_if_trusted(ser, mac: str, state: dict, now: float) -> None:
+    node = node_store.load(state['nodes_path']).get(mac)
+    net_key = state.get('net_key')
+    if node is None or net_key is None:
+        return   # not added through the app (yet): nothing to send
+    last, count = state['provision_sent'].get(mac, (None, 0))
+    if last is not None and now - last < PROVISION_RESEND_S:
+        return
+    # Sealed to this sensor's own AppKey: a spoofed join beacon only gets back
+    # a blob nobody else can open.
+    blob = mesh_crypto.seal_provision(node.app_key, bytes.fromhex(mac), net_key,
+                                      node.sleepy, node.leaf_only)
+    send_provision(ser, mac, blob)
+    count += 1
+    state['provision_sent'][mac] = (now, count)
+    print(f'[mesh] {mac} is trusted but still joining -- provisioning resent ({count})',
+          flush=True)
+    if count == PROVISION_WARN_AFTER:
+        print(f'[mesh] {mac} still joining after {count} provisioning resends: it '
+              'receives the blob but cannot open it, so its stored AppKey does not '
+              "match the QR that was scanned. Erase the board's flash, reflash it "
+              'with its own node_key.h, then add it again.', flush=True)
 
 
 def unenrolled_macs(state: dict, max_age_s: float = 300.0) -> list:
@@ -465,7 +505,7 @@ def handle_line(client, line: bytes, state: dict, ser=None) -> None:
         elif msg_type == 'frame':
             handle_frame(client, msg, state, ser)
         elif msg_type == 'unenrolled':
-            handle_unenrolled(msg, state)
+            handle_unenrolled(msg, state, ser)
         else:
             handler = _HANDLERS.get(msg_type)
             if handler is not None:

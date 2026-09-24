@@ -621,16 +621,14 @@ def queue_provision(node: Node) -> None:
     blob = mesh_crypto.seal_provision(node.app_key, bytes.fromhex(node.mac), net_key,
                                       node.sleepy, node.leaf_only)
     try:
-        # callback_api_version pinned explicitly, matching every other MQTT
-        # client in this codebase (hivemq_bridge.py, recorder.py,
-        # serial_bridge.py, simulator.py) -- omitting it can raise depending
-        # on the installed paho-mqtt version, and this call sits on the
-        # request path for POST /api/nodes.
-        client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1,
-                             client_id='greenhouse-provisioner')
-        client.connect("127.0.0.1", 1883, 5)
-        client.publish(f"greenhouse/provision/{node.mac}", blob, retain=True)
-        client.disconnect()
+        # publish.single runs the network loop until the message is out (see
+        # _clear_retained for what a bare connect/publish/disconnect loses).
+        # This is only the fast first attempt: serial_bridge.py also answers
+        # the sensor's own join beacons with the same blob, so a sensor that
+        # was off or rebooting right now still gets enrolled later.
+        mqtt_publish.single(f"greenhouse/provision/{node.mac}", blob, retain=True,
+                            hostname='127.0.0.1', port=1883,
+                            client_id='greenhouse-provisioner')
     except Exception as e:
         print(f"MQTT Error: {e}", file=sys.stderr)
 

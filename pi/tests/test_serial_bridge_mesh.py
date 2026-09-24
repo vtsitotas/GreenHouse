@@ -300,3 +300,71 @@ def test_battery_percent_follows_the_lifepo4_table():
     assert sb.battery_pct_from_mv(3100) == 15.0       # halfway 3000..3200
     assert sb.battery_pct_from_mv(2800) == 0.0
     assert sb.battery_pct_from_mv(2500) == 0.0        # below the table clamps
+
+
+class _Writer:
+    def __init__(self):
+        self.lines = []
+
+    def write(self, b):
+        self.lines.append(json.loads(b.decode()))
+
+
+def _join(state, ser, caps=1):
+    sb.handle_unenrolled({'type': 'unenrolled', 'mac': MAC_S, 'caps': caps}, state, ser)
+
+
+def test_an_enrolled_sensor_still_joining_is_resent_its_provisioning_blob(state):
+    # The bridge transmits the Add-time blob exactly once. A sensor that was
+    # off, rebooting or out of range at that instant keeps sending join
+    # beacons forever -- the Pi must answer them while it still trusts the MAC.
+    ser = _Writer()
+    _join(state, ser)
+    assert [l['type'] for l in ser.lines] == ['provision']
+    assert ser.lines[0]['mac'] == MAC_S
+    net, sleepy = mc.open_provision(APP, MAC, bytes.fromhex(ser.lines[0]['blob']))
+    assert net == NET and sleepy is True
+
+
+def test_provisioning_resend_is_rate_limited(state, monkeypatch):
+    clock = [1000.0]
+    monkeypatch.setattr(sb.time, 'time', lambda: clock[0])
+    ser = _Writer()
+    _join(state, ser)
+    clock[0] += 3          # join beacons arrive every ~3 s
+    _join(state, ser)
+    assert len(ser.lines) == 1
+    clock[0] += sb.PROVISION_RESEND_S
+    _join(state, ser)
+    assert len(ser.lines) == 2
+
+
+def test_an_unknown_sensor_joining_is_not_sent_anything(state):
+    ser = _Writer()
+    sb.handle_unenrolled({'type': 'unenrolled', 'mac': 'AABBCCDDEEFF', 'caps': 1}, state, ser)
+    assert ser.lines == []
+    assert 'AABBCCDDEEFF' in sb.unenrolled_macs(state)
+
+
+def test_joining_without_a_serial_link_does_not_crash(state):
+    _join(state, None)
+    assert MAC_S in sb.unenrolled_macs(state)
+
+
+def test_repeated_rejection_is_explained_once_in_the_log(state, monkeypatch, capsys):
+    clock = [1000.0]
+    monkeypatch.setattr(sb.time, 'time', lambda: clock[0])
+    ser = _Writer()
+    for _ in range(sb.PROVISION_WARN_AFTER + 3):
+        _join(state, ser)
+        clock[0] += sb.PROVISION_RESEND_S
+    out = capsys.readouterr().out
+    assert out.count('still joining after') == 1
+    assert 'erase' in out.lower()
+
+
+def test_a_sensor_leaves_the_unenrolled_list_on_its_first_accepted_reading(state):
+    _join(state, None)
+    assert MAC_S in sb.unenrolled_macs(state)
+    sb.handle_frame(FakeClient(), _frame(), state)
+    assert MAC_S not in sb.unenrolled_macs(state)

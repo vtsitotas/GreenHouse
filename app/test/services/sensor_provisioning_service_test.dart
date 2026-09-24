@@ -64,6 +64,29 @@ void main() {
     expect(await svc.unenrolled(), isEmpty);
   });
 
+  test('enrolled lists the sensors the Pi trusts', () async {
+    final svc = SensorProvisioningService(
+      config: _config,
+      client: MockClient((_) async => http.Response(
+          '{"nodes":[{"mac":"206EF16C6B50","zone":"zone3","name":"Basil","sleepy":true}],'
+          '"unenrolled":[]}',
+          200)),
+    );
+    final list = await svc.enrolled();
+    expect(list, hasLength(1));
+    expect(list.single.mac, '206EF16C6B50');
+    expect(list.single.zone, 'zone3');
+    expect(list.single.name, 'Basil');
+  });
+
+  test('enrolled returns an empty list rather than throwing on error', () async {
+    final svc = SensorProvisioningService(
+      config: _config,
+      client: MockClient((_) async => http.Response('nope', 500)),
+    );
+    expect(await svc.enrolled(), isEmpty);
+  });
+
   test('remove issues DELETE', () async {
     late http.Request seen;
     final svc = SensorProvisioningService(

@@ -21,6 +21,16 @@ class SensorNotManagedException implements Exception {
       'through the app.';
 }
 
+/// A sensor the Pi trusts (added through the app), as listed by
+/// `GET /api/nodes`. It may or may not have delivered a reading yet.
+class EnrolledSensor {
+  const EnrolledSensor({required this.mac, required this.zone, required this.name});
+
+  final String mac;
+  final String zone;
+  final String name;
+}
+
 /// Talks to the Pi's `/api/nodes` (add/list/remove a sensor). Mirrors
 /// [HistoryService]'s transport exactly -- pinned HTTPS first, falling back
 /// to plaintext only on failure -- since this hits the same portal over the
@@ -103,6 +113,27 @@ class SensorProvisioningService {
     if (res.statusCode != 200) return const [];
     final body = jsonDecode(res.body) as Map<String, dynamic>;
     return (body['unenrolled'] as List? ?? const []).cast<String>();
+  }
+
+  /// Every sensor the Pi trusts. Empty (never throws) on any error, same as
+  /// [unenrolled]: the Devices screen must still render from MQTT alone.
+  Future<List<EnrolledSensor>> enrolled() async {
+    try {
+      final res =
+          await _request('/api/nodes', (c, uri) => c.get(uri, headers: _headers));
+      if (res.statusCode != 200) return const [];
+      final body = jsonDecode(res.body) as Map<String, dynamic>;
+      return [
+        for (final n in (body['nodes'] as List? ?? const []).cast<Map<String, dynamic>>())
+          EnrolledSensor(
+            mac: (n['mac'] as String).toUpperCase(),
+            zone: n['zone'] as String? ?? '',
+            name: n['name'] as String? ?? '',
+          ),
+      ];
+    } catch (_) {
+      return const [];
+    }
   }
 
   Future<void> remove(String mac) async {
