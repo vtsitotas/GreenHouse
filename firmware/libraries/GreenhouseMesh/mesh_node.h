@@ -21,6 +21,7 @@
 #include <string.h>
 #include "mesh_config.h"
 #include "mesh_packet.h"
+#include "mesh_inflight.h"
 #include "mesh_store.h"
 #include "mesh_crypto.h"
 
@@ -72,9 +73,7 @@ typedef struct __attribute__((packed)) {
 // it (if it's the addressed target) or floods it one hop further (if it's
 // not sleepy) — see meshHandleAck() below.
 #define MESH_ACK_MARKER    0x41   // 'A' — distinct from MESH_JOIN_MARKER (0x4A)
-#define MESH_ACK_OK        1      // 0 is deliberately unused: an all-zero or
-#define MESH_ACK_REJECTED  2      // uninitialized status is never mistaken
-                                  // for a valid outcome
+// MESH_ACK_OK / MESH_ACK_REJECTED now defined in mesh_inflight.h
 #define MESH_ACK_TTL       6      // flood hop budget; generous relative to
                                   // this fleet's field-observed 1-2 hops
 
@@ -138,13 +137,10 @@ typedef struct { uint8_t mac[6]; uint16_t seq; uint32_t ms; bool used; } MeshAck
 static MeshAckDedupEntry meshAckDedup[MESH_ACK_DEDUP_CACHE_SIZE];
 static int meshAckDedupNext = 0;
 
-// Set by meshSendReading() right before it unicasts to the parent; polled by
-// the wake-cycle loop in each edge sketch. -1 (via meshAckResult()) means "no
-// answer yet". Only one outstanding wait at a time — a sleepy node only ever
-// has one reading in flight.
-static uint16_t meshWaitingAckSeq    = 0;
-static bool     meshWaitingAckSeen   = false;
-static uint8_t  meshWaitingAckStatus = 0;
+// Every frame unicast this wake, awaiting the Pi's verdict (mesh_inflight.h).
+// RAM only: anything unanswered is moved back into the RTC buffer before
+// sleep by meshSettleInFlight(), so nothing here needs to survive deep sleep.
+static MeshInFlight meshInFlight;
 
 // Data buffer: now holds sealed 61-byte packets (MESH_PACKET_LEN) instead of
 // the old plaintext MeshDataPacket struct. A buffered packet keeps its original
@@ -156,8 +152,6 @@ static uint16_t meshDataSeq  = 0;
 static int      meshTxFailCount = 0;
 
 static uint16_t meshBatteryMv = 0;
-static uint8_t  meshLastPkt[MESH_PACKET_LEN];
-static bool     meshLastPktValid = false;
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static bool meshMacEqual(const uint8_t* a, const uint8_t* b) {
@@ -434,15 +428,7 @@ static bool meshAckDedupSeen(const uint8_t* targetMac, uint16_t seq) {
   return false;
 }
 
-static void meshArmAckWait(uint16_t seq) {
-  meshWaitingAckSeq  = seq;
-  meshWaitingAckSeen = false;
-}
 
-// -1 = no answer yet, else MESH_ACK_OK or MESH_ACK_REJECTED.
-static int meshAckResult() {
-  return meshWaitingAckSeen ? (int)meshWaitingAckStatus : -1;
-}
 
 // Builds and signs a fresh MeshAck into out (must point at >= sizeof(MeshAck)
 // bytes). Only ever called by the bridge, which always originates an ack —
@@ -486,12 +472,10 @@ static void meshHandleAck(const uint8_t* data, int len) {
 
   if (meshAckDedupSeen(a.target_mac, a.seq)) return;
 
-  if (meshMacEqual(a.target_mac, meshSelfMac) && a.seq == meshWaitingAckSeq) {
-    // Idempotent overwrite — this ack can legitimately arrive more than once
-    // (the same broadcast heard via two different relays), and a second
-    // identical write here must be harmless, never a counter/toggle.
-    meshWaitingAckStatus = a.status;
-    meshWaitingAckSeen   = true;
+  if (meshMacEqual(a.target_mac, meshSelfMac)) {
+    // Idempotent (the same ack can arrive via two relays); a late ack from
+    // an earlier wake matches nothing in flight and changes nothing.
+    meshInFlightAnswer(&meshInFlight, a.seq, a.status);
   }
 
   if (!meshIsSelfSleepy() && a.ttl > 0) {
@@ -524,9 +508,10 @@ static void meshBufferPush(const uint8_t* pkt) {
 }
 
 static void meshFlushBuffer() {
-  while (meshBufCount > 0 && meshHasParent_) {
+  while (meshBufCount > 0 && meshHasParent_ && meshInFlight.count < MESH_INFLIGHT_MAX) {
     meshBuf[meshBufHead][15] = meshTxTtl();
-    if (!meshUnicastToParent(meshBuf[meshBufHead])) break;
+    if (!meshUnicastToParent(meshBuf[meshBufHead])) break;   // stays buffered
+    meshInFlightAdd(&meshInFlight, meshBuf[meshBufHead]);    // room checked above
     meshBufHead = (meshBufHead + 1) % MESH_DATA_BUFFER_SIZE;
     meshBufCount--;
   }
@@ -538,6 +523,11 @@ typedef struct { float temperature; float humidity; float soil_moisture; } Senso
 
 // Build the sealed 61-byte packet and send it (or buffer while unrouted).
 static void meshSendReading(const SensorReading* r) {
+  // An always-on node never settles, so each reading starts a fresh table
+  // (no retry — unchanged behavior); a sleepy node calls this once per
+  // wake, on an already-empty table.
+  meshInFlightClear(&meshInFlight);
+
   if (!meshLoadKeys()) {
     Serial.println("[mesh] keys not loaded — reading dropped");
     return;
@@ -556,12 +546,9 @@ static void meshSendReading(const SensorReading* r) {
     Serial.println("[mesh] seal failed — reading dropped");
     return;
   }
-  memcpy(meshLastPkt, packet, MESH_PACKET_LEN);
-  meshLastPktValid = true;
 
   if (!meshHasParent_) {
     meshBufferPush(packet);
-    meshLastPktValid = false;
     Serial.printf("[mesh] unrouted — reading buffered (%d queued)\n", meshBufCount);
     return;
   }
@@ -569,9 +556,10 @@ static void meshSendReading(const SensorReading* r) {
     Serial.printf("[mesh] routed again — flushing %d buffered readings\n", meshBufCount);
     meshFlushBuffer();
   }
-  meshArmAckWait((uint16_t)(meshDataSeq - 1));  // meshDataSeq++ above already
-                                                // advanced past the seq this
-                                                // packet actually used
+  if (!meshInFlightAdd(&meshInFlight, packet)) {   // cannot happen: MAX = buffer + 1
+    meshBufferPush(packet);
+    return;
+  }
   meshUnicastToParent(packet);
 }
 
@@ -665,10 +653,20 @@ static void meshRtcPersist(uint8_t channel) {
   memcpy(meshRtcState.buf, meshBuf, sizeof(meshBuf));
 }
 
-static void meshRequeueLastReading() {
-  if (!meshLastPktValid) return;
-  meshBufferPush(meshLastPkt);
-  meshLastPktValid = false;
+static int meshInFlightPendingCount() { return meshInFlightPending(&meshInFlight); }
+
+// Nothing sent so far is known to have arrived (e.g. the parent just failed):
+// put every unanswered frame back in the buffer so a re-flush resends it.
+static void meshRequeueInFlight() {
+  meshInFlightDrain(&meshInFlight, meshBufferPush, NULL, NULL);
+}
+
+// End of a wake: report the Pi's verdicts, requeue anything unanswered.
+static void meshSettleInFlight() {
+  int ok = 0, rejected = 0;
+  int requeued = meshInFlightDrain(&meshInFlight, meshBufferPush, &ok, &rejected);
+  Serial.printf("[wake] app ack: %d accepted, %d rejected%s, %d unanswered -> resend next wake\n",
+                ok, rejected, rejected ? " (check AppKey)" : "", requeued);
 }
 
 // ── Relay data path ───────────────────────────────────────────────────────────
