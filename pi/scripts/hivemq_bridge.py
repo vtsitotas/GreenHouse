@@ -56,7 +56,15 @@ def _make_forwarder(name, target_holder):
             if seen_payload == msg.payload and (now - seen_at) < ECHO_SUPPRESS_WINDOW_S:
                 return  # echo of what we ourselves just forwarded
         _last_seen[key] = (msg.payload, now)
-        target.publish(msg.topic, msg.payload, qos=1, retain=msg.retain)
+        # An empty payload only ever means "delete this retained topic". A
+        # broker hands a live publish to existing subscribers with RETAIN=0
+        # (MQTT 3.1.1 3.3.1.3), so forwarding the flag as received turned a
+        # deletion into a meaningless plain message: the other broker kept
+        # its retained copy and pushed it back on the next bridge start,
+        # resurrecting deleted sensors and renamed zones. Always forward a
+        # delete as retained so it clears both brokers.
+        retain = msg.retain or not msg.payload
+        target.publish(msg.topic, msg.payload, qos=1, retain=retain)
 
     return on_message
 
