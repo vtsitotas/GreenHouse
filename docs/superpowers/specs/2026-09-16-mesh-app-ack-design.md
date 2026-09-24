@@ -303,3 +303,19 @@ risk.
   field-observed scale (a handful of nodes, low message rate) doesn't
   seem to need more, but if a future fleet grows meaningfully, this is the
   first constant to revisit.
+
+
+## Revision 2026-09-24 — resend until acknowledged; link-only rescan counter
+
+- The stale-channel rescan counter (\g_unconfirmedWakes\) counts link-layer
+  failures only again. The app ACK previously fed it, so a Pi outage or a
+  rejected AppKey made every node rescan channels every other wake.
+- Every frame a sleepy node unicasts in a wake is tracked
+  (\mesh_inflight.h\). Unanswered frames go back to the RTC buffer and are
+  resent next wake. REJECTED frames are dropped.
+- The Pi authenticates before its replay check and re-ACKs an authenticated
+  duplicate (same boot_count + seq) without republishing. Authenticating
+  first also stops a forged header from moving a node's replay window.
+- Limitation: the Pi's replay window is in memory, so a resend that crosses
+  a Pi restart is republished once.
+Plan: \docs/superpowers/plans/2026-09-24-mesh-ack-retry-and-link-counter.md\.

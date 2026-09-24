@@ -74,6 +74,9 @@ Pi know the mesh works / how does a sensor know its reading arrived":
   delivered / rejected / no-ack. The mesh map shows a "Last delivery" row
   (`last_ack` accepted/rejected in the `/mesh` record). One real bug caught in
   review: the CMAC covered the ttl byte (12 B instead of 11) — fixed 2c7c1d7.
+- *2026-09-24:* readings with no ACK are resent next wake (the Pi re-acks
+  duplicates and authenticates before its replay check); the rescan counter is
+  link-only again, so a Pi outage no longer triggers channel rescans.
 
 **2. Report.** `docs/GreenHouse_Report.docx` gained Chapter 21 (pp. 76–83):
 parent-selection algorithm with worked numbers, min/max/performance of every
