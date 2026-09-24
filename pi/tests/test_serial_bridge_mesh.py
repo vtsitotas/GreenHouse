@@ -279,3 +279,24 @@ def test_unenrolled_line_records_capabilities(state):
 def test_unenrolled_line_without_caps_means_old_firmware(state):
     sb.handle_unenrolled({'type': 'unenrolled', 'mac': MAC_S}, state)
     assert state['caps'][MAC_S] == 0
+
+
+def test_battery_is_published_as_a_percent_not_volts(state):
+    # The app renders greenhouse/nodes/<mac>/battery as a percentage (same
+    # contract as the legacy 'battery' line and the simulator). Publishing
+    # volts ("3.30") showed a full LiFePO4 cell as "3 %".
+    body = mp.pack_body(21.5, 60.0, 42.0, 3300, PARENT, -67)
+    raw = mc.seal_packet(APP, NET, MAC, seq=1, boot_count=1, flags=0, rank=1, ttl=4, body=body)
+    c = FakeClient()
+    sb.handle_frame(c, {'type': 'frame', 'data': raw.hex()}, state)
+    battery = [p for t, p, _ in c.published if t == f'greenhouse/nodes/{MAC_S}/battery']
+    assert battery == ['70.0']
+
+
+def test_battery_percent_follows_the_lifepo4_table():
+    assert sb.battery_pct_from_mv(3400) == 100.0
+    assert sb.battery_pct_from_mv(4135) == 100.0      # above the table clamps
+    assert sb.battery_pct_from_mv(3260) == 50.0
+    assert sb.battery_pct_from_mv(3100) == 15.0       # halfway 3000..3200
+    assert sb.battery_pct_from_mv(2800) == 0.0
+    assert sb.battery_pct_from_mv(2500) == 0.0        # below the table clamps

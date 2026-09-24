@@ -233,6 +233,27 @@ def _handle_hello(ser, state: dict) -> None:
 # here previously matched neither consumer, so real mesh sensor readings
 # reached the Pi and decrypted fine but were invisible on the Dashboard and
 # never recorded to history.
+# LiFePO4 discharge curve (mV, %), descending -- the same table the WiFi-
+# fallback bridge firmware uses (bridge_esp32_wifi_fallback.ino
+# batteryPctFromMv). The app renders greenhouse/nodes/<mac>/battery as a
+# PERCENT, so the v2 path must convert, not publish volts.
+_LIFEPO4_CURVE = ((3400, 100.0), (3350, 90.0), (3320, 80.0), (3300, 70.0),
+                  (3280, 60.0), (3260, 50.0), (3250, 40.0), (3220, 30.0),
+                  (3200, 20.0), (3000, 10.0), (2800, 0.0))
+
+
+def battery_pct_from_mv(mv: int) -> float:
+    """Piecewise-linear over _LIFEPO4_CURVE, clamped at both ends."""
+    if mv >= _LIFEPO4_CURVE[0][0]:
+        return _LIFEPO4_CURVE[0][1]
+    if mv <= _LIFEPO4_CURVE[-1][0]:
+        return _LIFEPO4_CURVE[-1][1]
+    for (hi_mv, hi_pct), (lo_mv, lo_pct) in zip(_LIFEPO4_CURVE, _LIFEPO4_CURVE[1:]):
+        if lo_mv <= mv <= hi_mv:
+            return round(lo_pct + (mv - lo_mv) * (hi_pct - lo_pct) / (hi_mv - lo_mv), 1)
+    return 0.0   # unreachable: the table is contiguous
+
+
 _METRICS = {
     'temperature':   ('air', 'temperature'),
     'humidity':      ('air', 'humidity'),
@@ -323,7 +344,8 @@ def handle_frame(client, msg: dict, state: dict, ser=None) -> None:
         client.publish(_reading_topic(node.zone, group, topic_metric),
                        f'{float(getattr(body, metric)):.1f}', retain=True)
     if body.battery_mv:
-        client.publish(_battery_topic(mac), f'{body.battery_mv / 1000:.2f}', retain=True)
+        client.publish(_battery_topic(mac), f'{battery_pct_from_mv(body.battery_mv):.1f}',
+                       retain=True)
     client.publish(_status_topic(mac), 'online', retain=True)
     if ser is not None:
         send_ack(ser, mac, header.seq, ok=True, ttl=_ack_ttl(header.rank))

@@ -32,6 +32,7 @@ from history_query import query_points
 from nodes import NODES_PATH, Node, NodeStoreError, load, normalise_mac, remove
 from nodes import add as add_node
 import paho.mqtt.client as mqtt
+import paho.mqtt.publish as mqtt_publish
 
 try:
     from security_log import log_security_event
@@ -694,37 +695,47 @@ def api_nodes_add():
     queue_provision(node)      # serial_bridge picks this up and seals the NetKey
     return jsonify({'mac': mac}), 201
 
-def clear_node_retained(mac: str) -> None:
-    """Publish an empty retained payload to every known per-node MQTT topic.
+# Reading topics serial_bridge.py publishes per zone (its _METRICS table).
+_ZONE_READING_TOPICS = ('air/temperature', 'air/humidity', 'soil/moisture')
 
-    This removes ghost entries from the broker after a node is deleted or
-    renamed (rename = DELETE old MAC + POST new MAC). Without this, the old
-    MAC's retained topics (status/battery/mesh) persist indefinitely and show
-    up as phantom devices in the app and dashboards.
 
-    Reading/zone-level topics (greenhouse/<zone>/sensors/<metric>) are NOT
-    cleared here: a zone may have several nodes and it is not safe to wipe a
-    shared metric topic when only one of them is being removed. Use
-    clear_retained.sh for zone-level cleanup when a whole zone is retired.
+def _clear_retained(topics) -> None:
+    """Delete retained messages by publishing an empty retained payload.
+
+    publish.multiple() runs the network loop until every message is out. The
+    previous connect/publish/publish/publish/disconnect sequence had no loop
+    running, so only the FIRST message ever reached the broker -- a deleted
+    sensor kept its battery and mesh topics and stayed visible in the app.
+    """
+    mqtt_publish.multiple([(t, '', 0, True) for t in topics],
+                          hostname='127.0.0.1', port=1883,
+                          client_id='greenhouse-retained-cleaner')
+
+
+def clear_node_retained(mac: str, zone: str | None = None) -> None:
+    """Remove a deleted node's retained MQTT topics so it leaves the app.
+
+    Always clears the node's own topics (status/battery/mesh). Clears the
+    zone's reading topics only when `zone` is given -- the caller passes it
+    only when no remaining sensor reports into that zone, since a shared
+    zone's readings still belong to the other sensors.
 
     The two-broker caveat documented in clear_retained.sh (§1) applies: this
-    call targets the local broker only. If a HiveMQ Cloud bridge is configured,
+    targets the local broker only. If a HiveMQ Cloud bridge is configured,
     the operator should additionally run clear_retained.sh for the same MAC
     to clean the cloud side (the bridge only forwards retained as non-retained,
     so the cloud copy is not cleaned automatically).
     """
-    _NODE_TOPICS = ('status', 'battery', 'mesh')
+    topics = [f'greenhouse/nodes/{mac}/{sub}' for sub in ('status', 'battery', 'mesh')]
+    if zone:
+        topics += [f'greenhouse/{zone}/{t}' for t in _ZONE_READING_TOPICS]
     try:
-        cl = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1,
-                         client_id='greenhouse-retained-cleaner')
-        cl.connect('127.0.0.1', 1883, keepalive=5)
-        for subtopic in _NODE_TOPICS:
-            cl.publish(f'greenhouse/nodes/{mac}/{subtopic}', '', retain=True)
-        cl.disconnect()
-        print(f'[portal] cleared retained topics for {mac}', file=sys.stderr)
+        _clear_retained(topics)
+        print(f'[portal] cleared retained topics for {mac}'
+              + (f' and zone {zone}' if zone else ''), file=sys.stderr)
     except Exception as exc:
         # Non-fatal: the node is already removed from nodes.json; a failure
-        # here only means ghost topics survive until the next manual clear.
+        # here only means ghost topics survive until the next delete/clear.
         print(f'[portal] WARNING: could not clear retained topics for {mac}: {exc}',
               file=sys.stderr)
 
@@ -734,14 +745,18 @@ def api_nodes_delete(mac):
     if not _require_api_token():
         return jsonify({"error": "unauthorized"}), 401
     try:
-        removed = remove(mac, NODES_PATH)
+        mac = normalise_mac(mac)
     except ValueError:
         return jsonify({'error': 'bad mac'}), 400
-    if removed:
-        try:
-            clear_node_retained(normalise_mac(mac))
-        except Exception:
-            pass  # already logged inside clear_node_retained
+    node = load(NODES_PATH).get(mac)
+    removed = remove(mac, NODES_PATH)
+    # The zone's readings go too, but only if no remaining sensor reports there.
+    zone = None
+    if node is not None and not any(n.zone == node.zone for n in load(NODES_PATH).values()):
+        zone = node.zone
+    # Also on 404: a sensor the Pi already forgot can still linger in the app
+    # from retained topics, and pressing delete again must remove that ghost.
+    clear_node_retained(mac, zone)
     return ('', 204) if removed else (jsonify({'error': 'unknown mac'}), 404)
 
 HTTPS_PORT = 8443

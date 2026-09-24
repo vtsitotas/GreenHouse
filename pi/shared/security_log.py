@@ -50,6 +50,12 @@ ALERTABLE = {
                             # stale AppKey or spoofing, either way worth a push
 }
 
+# Sources that never trigger a push. Code already running ON the Pi (e.g.
+# selftest.sh probing /api/history without a token to prove it is protected)
+# is not an intruder worth waking the owner for -- anything that can do that
+# already owns the box. Still written to the audit log like everything else.
+_LOCAL_SOURCES = {'127.0.0.1', '::1', 'localhost'}
+
 _last_alert: dict = {}   # kind -> monotonic timestamp of last push
 
 
@@ -90,7 +96,10 @@ def log_security_event(kind: str, detail: str = '', source: str = '',
     }
     _write_record(record)
 
-    want = _should_alert(kind, time.monotonic()) if alert is None else alert
+    if alert is None:
+        want = source not in _LOCAL_SOURCES and _should_alert(kind, time.monotonic())
+    else:
+        want = alert
     if want:
         try:
             from push import send_push

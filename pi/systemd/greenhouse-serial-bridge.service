@@ -40,9 +40,15 @@ SystemCallFilter=@system-service
 SystemCallErrorNumber=EPERM
 UMask=0077
 
-# No ReadWritePaths= entry: this service only reads/writes the /dev/serial0
-# device node and talks to Mosquitto on loopback, it doesn't touch the
-# filesystem beyond that. Device-node access is governed by Unix group
+# The only filesystem write is the security audit log (mesh_auth_failure,
+# mesh_replay_dropped, mesh_unenrolled_frame -- pi/shared/security_log.py);
+# without this entry every one of those writes failed with EROFS and the
+# events survived only in the journal. The leading '-' keeps the unit
+# starting even if install.sh has not created the file yet.
+ReadWritePaths=-/var/log/greenhouse-security.log
+
+# Beyond that it only reads/writes the /dev/serial0
+# device node and talks to Mosquitto on loopback. Device-node access is governed by Unix group
 # membership, not by ProtectSystem=strict's filesystem allowlist -- as long
 # as `pi` is in the `dialout` group (the default on Raspberry Pi OS; nothing
 # install.sh needs to set up), the kernel already grants this access.

@@ -27,6 +27,7 @@ def client(tmp_path, monkeypatch):
     store = str(tmp_path / 'nodes.json')
     monkeypatch.setattr(portal, 'NODES_PATH', store, raising=False)
     monkeypatch.setattr(portal, '_require_api_token', _mock_require_api_token, raising=False)
+    monkeypatch.setattr(portal, '_clear_retained', lambda topics: None)   # never touch a real broker
     portal.app.config['TESTING'] = True
     with portal.app.test_client() as c:
         c._store = store
@@ -94,3 +95,66 @@ def test_leaf_only_accepted_for_capable_firmware(client, monkeypatch):
                     json={'mac': MAC, 'key': KEY, 'zone': 'zone2', 'leaf_only': True})
     assert r.status_code == 201
     assert nodes.load(client._store)[MAC].leaf_only is True
+
+
+MAC2 = '206EF16C75EC'
+
+
+@pytest.fixture
+def cleared(monkeypatch):
+    """Capture what the DELETE path asks the broker to clear (no real MQTT)."""
+    topics = []
+    monkeypatch.setattr(portal, '_clear_retained', lambda ts: topics.extend(ts))
+    return topics
+
+
+def _enrol(client, mac, zone):
+    client.post('/api/nodes', headers=_auth(),
+                json={'mac': mac, 'key': KEY, 'zone': zone, 'name': zone, 'sleepy': True})
+
+
+def test_delete_clears_every_per_node_topic(client, cleared):
+    _enrol(client, MAC, 'tomatoes')
+    client.delete(f'/api/nodes/{MAC}', headers=_auth())
+    for sub in ('status', 'battery', 'mesh'):
+        assert f'greenhouse/nodes/{MAC}/{sub}' in cleared
+
+
+def test_delete_of_the_last_sensor_in_a_zone_clears_its_readings(client, cleared):
+    # Otherwise the zone lingers on the Dashboard from its retained readings.
+    _enrol(client, MAC, 'tomatoes')
+    client.delete(f'/api/nodes/{MAC}', headers=_auth())
+    for t in ('greenhouse/tomatoes/air/temperature', 'greenhouse/tomatoes/air/humidity',
+              'greenhouse/tomatoes/soil/moisture'):
+        assert t in cleared
+
+
+def test_delete_keeps_readings_of_a_zone_another_sensor_still_reports(client, cleared):
+    _enrol(client, MAC, 'tomatoes')
+    _enrol(client, MAC2, 'tomatoes')
+    client.delete(f'/api/nodes/{MAC}', headers=_auth())
+    assert not any(t.startswith('greenhouse/tomatoes/') for t in cleared)
+    assert f'greenhouse/nodes/{MAC}/mesh' in cleared
+
+
+def test_delete_of_an_unknown_mac_still_clears_its_leftover_topics(client, cleared):
+    # A device the Pi already forgot can still linger in the app from retained
+    # topics (e.g. an earlier clear that never reached the broker). Pressing
+    # delete again must remove the ghost, not just answer 404.
+    r = client.delete(f'/api/nodes/{MAC}', headers=_auth())
+    assert r.status_code == 404
+    assert f'greenhouse/nodes/{MAC}/mesh' in cleared
+
+
+def test_clear_node_retained_sends_all_topics_in_one_flushed_batch(monkeypatch):
+    # Regression: publishing three messages then disconnecting immediately,
+    # with no network loop running, delivered only the first one.
+    batches = []
+    monkeypatch.setattr(portal.mqtt_publish, 'multiple',
+                        lambda msgs, **kw: batches.append((list(msgs), kw)))
+    portal.clear_node_retained(MAC)
+    assert len(batches) == 1
+    msgs, kw = batches[0]
+    assert {m[0] for m in msgs} == {f'greenhouse/nodes/{MAC}/{s}' for s in ('status', 'battery', 'mesh')}
+    assert all(m[1] == '' and m[3] is True for m in msgs)     # empty + retained = delete
+    assert kw['hostname'] == '127.0.0.1'

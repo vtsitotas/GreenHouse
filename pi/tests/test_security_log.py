@@ -144,3 +144,21 @@ def test_read_recent_tolerates_a_corrupt_line(tmp_path, monkeypatch):
 
 def test_read_recent_on_missing_file_returns_empty(tmp_path, monkeypatch):
     assert security_log.read_recent(path=str(tmp_path / 'absent.log')) == []
+
+
+def test_loopback_source_is_logged_but_never_pushed(tmp_path, monkeypatch):
+    """selftest.sh deliberately probes /api/history without a token from the
+    Pi itself to prove it is protected. That must stay in the audit log but
+    must not wake the owner: code already running on the Pi owns it anyway."""
+    log = _fresh(tmp_path, monkeypatch)
+    sent = []
+    monkeypatch.setitem(sys.modules, 'push', type(sys)('push'))
+    sys.modules['push'].send_push = lambda t, b: sent.append((t, b))
+    for src in ('127.0.0.1', '::1'):
+        security_log.log_security_event('history_auth_failure', '/api/history/series', source=src)
+    assert sent == []
+    assert len(log.read_text().strip().splitlines()) == 2
+    # A remote source of the same kind still alerts (the loopback probes did
+    # not consume the cooldown).
+    security_log.log_security_event('history_auth_failure', '/api/history/series', source='192.168.1.50')
+    assert len(sent) == 1

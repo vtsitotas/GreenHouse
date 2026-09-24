@@ -27,7 +27,9 @@ ProtectHome=read-only
 # /etc/greenhouse: portal.py writes the .wifi_configured sentinel.
 # /run/sudo: sudo's own timestamp cache -- read-only here would make even
 # NOPASSWD sudo calls fail to initialize under ProtectSystem=strict.
-ReadWritePaths=/etc/greenhouse /run/sudo
+# /var/log/greenhouse-security.log: the security audit log (pair/history
+# auth failures); '-' so a missing file never stops the portal starting.
+ReadWritePaths=/etc/greenhouse /run/sudo -/var/log/greenhouse-security.log
 
 # Additional sandboxing, deliberately a SUBSET of what the sibling services
 # get. This process must keep working with setuid sudo, so three directives
