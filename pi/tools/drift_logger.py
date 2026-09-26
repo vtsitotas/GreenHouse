@@ -20,6 +20,17 @@ def format_line(topic: str, retain: bool, now: float):
     return f'{parts[2]},{now:.6f}'
 
 
+TOPIC = 'greenhouse/nodes/+/mesh'
+
+
+def on_connect(client, _userdata, _flags, _rc):
+    # Here, not once before loop_forever(): a clean-session reconnect (broker
+    # restart, or the clock jump when a Pi with no RTC syncs NTP at boot)
+    # drops the subscription, and the logger would keep running and record
+    # nothing.
+    client.subscribe(TOPIC, qos=1)
+
+
 def main(argv=None) -> None:
     ap = argparse.ArgumentParser()
     ap.add_argument('--out', required=True)
@@ -34,8 +45,8 @@ def main(argv=None) -> None:
 
     client = mqtt.Client(mqtt.CallbackAPIVersion.VERSION1, client_id='drift-logger')
     client.on_message = on_message
+    client.on_connect = on_connect
     client.connect(args.host, 1883, 30)
-    client.subscribe('greenhouse/nodes/+/mesh', qos=1)
     client.loop_forever()
 
 

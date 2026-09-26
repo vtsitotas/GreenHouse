@@ -485,3 +485,21 @@ def test_serial_port_can_be_overridden_by_environment(monkeypatch):
     finally:
         monkeypatch.delenv('GREENHOUSE_SERIAL_PORT')
         importlib.reload(serial_bridge)
+
+
+def test_serial_link_is_not_stalled_while_lines_keep_arriving():
+    assert not serial_bridge.serial_link_stalled(last_rx=100.0, started=0.0, now=110.0)
+
+
+def test_serial_link_is_stalled_after_the_silence_limit():
+    # The bridge heartbeats every 2 s, so 30 s of total silence means the
+    # port is wedged (seen live after an abrupt Pi reboot: the wire carried
+    # heartbeats, the process read nothing until it was restarted).
+    limit = serial_bridge.SERIAL_SILENCE_RESTART_S
+    assert serial_bridge.serial_link_stalled(last_rx=100.0, started=0.0, now=100.0 + limit + 1)
+
+
+def test_a_link_that_never_received_anything_counts_from_start():
+    limit = serial_bridge.SERIAL_SILENCE_RESTART_S
+    assert not serial_bridge.serial_link_stalled(last_rx=None, started=50.0, now=50.0 + limit - 1)
+    assert serial_bridge.serial_link_stalled(last_rx=None, started=50.0, now=50.0 + limit + 1)

@@ -63,6 +63,20 @@ HEARTBEAT_TIMEOUT_S = HEARTBEAT_INTERVAL_S * HEARTBEAT_OFFLINE_AFTER
 # tighter than this since HEARTBEAT_TIMEOUT_S is itself several seconds.
 OFFLINE_CHECK_INTERVAL_S = 1.0
 
+# No byte at all from the bridge for this long (it heartbeats every 2 s) means
+# the serial port is wedged, not that the bridge is quiet. Seen live after an
+# abrupt Pi reboot: the wire carried heartbeats, but this process read nothing
+# for 6 hours until it was restarted. Exiting lets systemd (Restart=always)
+# reopen the port from scratch.
+SERIAL_SILENCE_RESTART_S = 30.0
+
+
+def serial_link_stalled(last_rx, started: float, now: float,
+                        limit: float = SERIAL_SILENCE_RESTART_S) -> bool:
+    """True once nothing has been read for `limit` seconds (counting from
+    process start if nothing was ever read)."""
+    return now - (last_rx if last_rx is not None else started) > limit
+
 # How often the bridge's OWN mesh record is republished with a fresh timestamp
 # while heartbeats keep arriving. The firmware sends that record once at boot
 # (setup()'s sendMesh(bridgeMac, nullptr, 0, ...)), so without this its
@@ -615,13 +629,22 @@ def run() -> None:
     print(f'[serial-bridge] listening on {SERIAL_PORT} @ {BAUD}', flush=True)
 
     last_offline_check = time.monotonic()
+    started = last_offline_check
+    last_rx = None
     while True:
         line = ser.readline()
+        if line:
+            last_rx = time.monotonic()
         handle_line(client, line, state, ser)
 
         now = time.monotonic()
         if now - last_offline_check >= OFFLINE_CHECK_INTERVAL_S:
             last_offline_check = now
+            if serial_link_stalled(last_rx, started, now):
+                print(f'[serial-bridge] nothing read from {SERIAL_PORT} for '
+                      f'{SERIAL_SILENCE_RESTART_S:.0f}s -- exiting so systemd reopens '
+                      'the port', flush=True)
+                raise SystemExit(1)
             check_heartbeat_offline(client, state)
             sweep_stale_online(client, state)
             client.publish('greenhouse/unenrolled', json.dumps(unenrolled_macs(state)), retain=True)

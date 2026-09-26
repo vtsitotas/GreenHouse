@@ -198,6 +198,19 @@ pi@greenhouse:~ $ sudo raspi-config
 - *"Would you like the serial port hardware to be enabled?"* → **Yes**
 - **Finish**, then reboot.
 
+**Pi Zero W: also give the bridge the full UART.** By default Bluetooth owns
+the PL011 UART and `/dev/serial0` is the *mini*-UART (`ttyS0`), whose baud
+rate follows the VPU core clock. On 2026-09-26, after an abrupt reboot, the
+serial bridge read nothing for 6 hours even though the wire carried the
+bridge's heartbeats. The project does not use Bluetooth, so add this to
+`/boot/firmware/config.txt` under `[all]`, then run
+`sudo systemctl disable bluetooth` and reboot:
+```
+dtoverlay=disable-bt
+```
+`/dev/serial0` then points at `ttyAMA0`. The same GPIO14/15 pins are used, so
+the wiring does not change.
+
 `install.sh` does **not** do this step for you — it only prints a reminder.
 Flipping this setting touches boot config, and doing it wrong on a unit
 someone is already relying on risks locking out serial-console access to it,

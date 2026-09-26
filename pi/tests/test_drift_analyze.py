@@ -36,3 +36,20 @@ def test_a_single_clean_cycle_still_reports_its_own_rate_as_bias():
     assert s['bias'] == pytest.approx(0.01, abs=1e-9)
     assert s['step'] == pytest.approx(0.0, abs=1e-9)
     assert s['n'] == 1
+
+
+def test_rows_damaged_by_a_power_cut_are_skipped():
+    # An abrupt Pi power loss left NUL bytes and a half-written row in the
+    # live bench CSV; they must not show up as an extra "node".
+    rows = ['206EF16C6B50,1000.5\n',
+            '\x00' * 31 + '206EF16CB\n',
+            '\x00\x00206EF16CBE80,1060.0\n',
+            'garbage\n',
+            '206EF16C6B50,notanumber\n',
+            '206EF16C6B50,1300.5\n']
+    times = da.load_times(rows)
+    # NULs in front of an otherwise complete row are stripped and the row kept;
+    # the truncated row, the garbage and the bad number are dropped.
+    assert set(times) == {'206EF16C6B50', '206EF16CBE80'}
+    assert times['206EF16C6B50'] == [1000.5, 1300.5]
+    assert times['206EF16CBE80'] == [1060.0]
