@@ -27,6 +27,7 @@ apt-get install -y -qq \
   python3-cryptography \
   python3-pip \
   python3-serial \
+  python3-grpcio \
   openssl \
   dnsmasq-base \
   iptables \
@@ -51,8 +52,27 @@ echo "==> Installing firebase-admin (for push notifications)..."
 #      crashed/rebooted this Pi Zero W (512MB RAM) twice before this was
 #      diagnosed. --prefer-binary tells pip to prefer an older version with a
 #      prebuilt wheel over a newer version requiring a source build.
+#
+# A fresh Trixie install on 2026-09-25 hit two more problems, and
+# --prefer-binary alone does not fix them:
+#   3. piwheels has no armv6l grpcio wheel at all for Trixie's Python, so pip
+#      compiled it anyway (20+ min in, RAM full, swap full, no end in sight).
+#      Fix: grpcio comes from apt (python3-grpcio, installed above, built for
+#      this CPU). Pinning grpcio-status to the same minor version stops the
+#      newest grpcio-status from demanding a newer grpcio, which would bring
+#      the source build straight back.
+#   4. pip tried to "upgrade" a Debian-installed package (requests) and
+#      aborted with uninstall-no-record-file: Debian packages have no RECORD
+#      file for pip to uninstall. Fix: constrain every package in Debian's
+#      dist-packages to the version apt installed, so pip only adds what is
+#      missing.
 mkdir -p /home/pi/pip-tmp
-TMPDIR=/home/pi/pip-tmp pip3 install --break-system-packages --resume-retries 5 --prefer-binary firebase-admin
+PIP_CONSTRAINTS=/home/pi/pip-tmp/debian-constraints.txt
+pip3 list --format=freeze --path /usr/lib/python3/dist-packages > "$PIP_CONSTRAINTS"
+GRPC_MINOR=$(python3 -c 'import grpc; print(".".join(grpc.__version__.split(".")[:2]))')
+echo "grpcio-status==${GRPC_MINOR}.*" >> "$PIP_CONSTRAINTS"
+TMPDIR=/home/pi/pip-tmp PIP_CONSTRAINT="$PIP_CONSTRAINTS" \
+  pip3 install --break-system-packages --resume-retries 5 --prefer-binary firebase-admin
 
 echo "==> Creating directories..."
 # /var/log/journal makes journald persistent across reboots (so a failed
