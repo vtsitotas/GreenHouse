@@ -1,6 +1,6 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-09-24 (everything merged to `main` and deployed; three
+**Last updated:** 2026-09-27 (Pi rebuilt on a new SD card; first CART Gate 0 drift bench run -- see the first TL;DR). Previously 2026-09-24 (everything merged to `main` and deployed; three
 sensors enrolled via the app; five live bugs in add/delete/provisioning fixed --
 see the first TL;DR below). Session 2026-09-16..23: mesh ACK, report Ch. 21,
 CART prerequisites + LoRa software. Session before that 2026-09-14 (multi-site LoRaWAN + cellular gateway —
@@ -58,6 +58,63 @@ reports 45/45.
 > `docs/superpowers/specs/2026-09-23-cart-v2-revision.md`; its firmware/Pi
 > prerequisites and the drift bench tooling are built (branch
 > `feature/cart-prereqs-lora-software`) — the 2×24 h bench (plan Task B4) is next.
+
+---
+
+## TL;DR of this session (2026-09-25 → 2026-09-27 — SD card died, Pi rebuilt, first drift bench run)
+
+**Pi SD card died (25/09).** The card was pulled from power mid-write. Its
+partition table was destroyed (Windows showed one RAW partition) and the Pi
+Zero would not even light its LED. The old card is untouched and could be
+recovered with `testdisk` from Kali if the old history/keys are wanted.
+**The Pi was rebuilt on a new card:**
+- Raspberry Pi OS **Trixie** Lite, user `pi`, hostname `greenhouse`,
+  192.168.1.94.
+- The PC's SSH key is authorised, and `pi` has NOPASSWD sudo (added by the
+  owner).
+- New NetKey, so all three sensors were erase-flashed and re-added.
+- New app pairing (PIN in `device.json`).
+- The HiveMQ cloud credentials were **lost** with the old card, so remote
+  access is down. The cloud still holds stale retained topics: clear them
+  *before* restoring the credentials.
+
+**Reinstall problems, now fixed in the repo:**
+- `install.sh` compiled grpcio for hours and then failed on Debian's
+  `requests`. It now takes grpcio from apt plus a PIP_CONSTRAINT built from
+  dist-packages (`f193351`).
+- After an abrupt reboot the mini-UART link wedged for 6 h. Now fixed:
+  `dtoverlay=disable-bt` (serial0 → ttyAMA0; the step is in INSTRUCTIONS),
+  and serial_bridge exits after 30 s of silence so systemd reopens the port
+  (`7743308`).
+- The drift logger lost its subscription on every reconnect. It now
+  subscribes in `on_connect`.
+- The analyzer choked on NUL rows left by the power cut.
+
+**Validated on hardware:** the automatic provisioning resend. 9DB0 was stuck in
+download mode when Add was pressed; the Pi re-sent the blob when its join
+beacon appeared, and it enrolled with no manual step.
+
+**Gate 0 drift bench, run 1: inconclusive.**
+- Bench: `drift-bench.service` on the Pi, data in `/home/pi/bench/`,
+  firmware from local branch `bench/cart-gate0-drift`.
+- The worst relative clock bias is 0.17 %, which is **3.5× better** than the
+  0.6 % planning value.
+- The step came out at 0.95 % (classic) or 0.11 % (robust), and would fail the
+  gate. But the method timed Pi *arrivals*, which mixes in send-path latency.
+- Next: `docs/superpowers/plans/2026-09-27-reliable-drift-bench.md`. Nodes
+  report their awake-ms, the analyzer uses the real wake time, and the RC and
+  RC_FAST phases are re-run.
+- Results: spec `2026-09-23-cart-v2-revision.md` §5 "Gate 0, run 1" and report
+  §21.8 (88 pages).
+- 9DB0 dropped out for 3.8 h on 27/09 while still waking. Suspect the antenna
+  or its position.
+
+**Bench rules learned:**
+- Never open a sensor's or the bridge's USB serial port during a run (it
+  resets the board).
+- Keep the PC awake, since it powers the boards.
+- Power the bridge from one source only.
+- Never cut the Pi's power: `sudo shutdown now` first.
 
 ---
 

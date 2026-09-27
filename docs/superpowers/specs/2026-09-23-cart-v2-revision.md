@@ -245,6 +245,34 @@ on these boards. Every constant above is either a formula of those or a
 simulated consequence of them; `cart_sim.py` is re-run with the measured
 values before any constant is committed (plan Task 3).
 
+### Gate 0, run 1 (2026-09-25 20:26 → 2026-09-27 ~15:00) — arrival-time method, inconclusive
+
+Setup: three ESP32-C3 on fake firmware (9DB0, 6B50, 75EC), T = 300 s, default
+136 kHz RC clock, sitting together indoors and powered over USB.
+`drift_logger.py` recorded when each `/mesh` arrived at the Pi. Two data gaps
+came from abrupt Pi reboots. After one of them the serial link wedged for
+6 h; that is now fixed (commit 7743308).
+
+| | Planning (§2) | Classic stats | Robust stats (median, 1.4826·MAD) |
+|---|---|---|---|
+| Absolute bias per node | 0.56–2 % | −0.83 … −0.94 % | −0.77 … −0.92 % |
+| Worst relative bias (pair) | 0.6 % | 0.12 % | 0.17 % |
+| Worst relative step per cycle | 0.01 % | 0.95 % | 0.11 % |
+
+Running `cart_sim.py` with bias 0.17 % and step 0.11 % at T = 300 s,
+G_max = 8 s gives ≈ 1.6 % miss and ≈ 260 sweeps per year. That would **fail**
+Gate 0.
+
+**Not a decision.** The logger timed Pi *arrivals*, so send-path latency is
+counted as clock step: WiFi/ESP-NOW init, sensor warm-up, a 5 s parent search
+after a missed wake, and buffered bursts. Robust statistics alone cut the step
+figure by 9×. Bias is unaffected (the latency averages out), so the relative
+bias of ≤ 0.17 % stands and is ~3.5× better than planned. The step figure
+waits for run 2, which uses the wake-time method
+(`docs/superpowers/plans/2026-09-27-reliable-drift-bench.md`):
+`wake = arrival − awake_ms/1000`, with awake_ms reported by the node, rank-255
+frames dropped, and robust statistics. Both clock phases are re-run with it.
+
 ## 6. Go / no-go gates
 
 | Gate | Pass criteria |
