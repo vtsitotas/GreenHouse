@@ -16,7 +16,11 @@
                                    // parent-rank drift while the packet is in
                                    // flight, without capping how deep the mesh
                                    // can physically grow
-#define MESH_MAX_TTL        16     // ceiling/fallback only: used when a reading
+#define MESH_MAX_TTL        64     // ceiling/fallback only: used when a reading
+                                   // (was 16, which silently capped delivery at
+                                   // rank 17 because meshTxTtl() clamps rank+2 to
+                                   // it — see spec 2026-09-28-cart-depth-n. Must
+                                   // match ACK_TTL_MAX in pi/scripts/serial_bridge.py.)
                                    // is buffered while unrouted (rank not known
                                    // yet, see meshSendReading()) and as a hard
                                    // backstop against runaway forwarding. Loops
@@ -71,6 +75,29 @@
                                             // sleep no matter what path we're on
 #define MESH_MIN_SLEEP_MS         1000UL    // floor after subtracting awake time
                                             // (never arm a 0/negative timer)
+
+// ── CART depth N: every node sleeps AND relays (spec 2026-09-28-cart-depth-n) ──
+// Ladder schedule: a node's receive window for its children sits right before
+// its parent's window. Constants marked "Gate 0" are provisional until the
+// drift bench (run 2) measures them; the rest are meshsim-informed best guesses.
+#define MESH_CART_ENABLE          1         // 0 = exact Phase 1 behaviour (rollback)
+#define MESH_FLAG_RX_OPEN         0x02      // beacon: sender's receive window is open now
+#define MESH_FLAG_RELAY_CAP       0x04      // beacon: sender accepts children
+#define MESH_FLAG_BUF_FULL        0x08      // beacon: relay buffer full, keep your frames
+#define MESH_CART_SLOT_MS         2500UL    // receive window per node; >= sensor warm-up
+                                            // (2000 ms) so the own reading is ready to send
+#define MESH_CART_JITTER_MS       300UL     // random send delay after a catch (meshsim:
+                                            // 100 ms -> ~50 % collisions at 10 nodes/rank)
+#define MESH_CART_ATTEMPTS        3         // L2 send attempts per frame per window
+#define MESH_RX_BEACON_PERIOD_MS  100UL     // RX_OPEN beacon cadence inside the window
+#define MESH_WAKE_GUARD_MIN_MS    250       // radio/boot jitter floor
+#define MESH_DRIFT_BIAS_PPM       1700UL    // Gate 0 run 1: worst pair relative bias
+#define MESH_DRIFT_STEP_PPM_300S  100UL     // Gate 0: per-cycle wander step (planning value)
+#define MESH_GUARD_CAP_MS         20000UL   // hard ceiling for G_max
+#define MESH_RELAY_BUFFER_SIZE    50        // relayed frames kept in RTC across sleep
+                                            // (50 x 61 B = 3050 B of the 8 KB RTC FAST)
+#define MESH_CYCLE_MIN_MS         30000UL   // sanity bounds on a parent's advertised period
+#define MESH_CYCLE_MAX_MS         3600000UL
 
 // ── Buffers ───────────────────────────────────────────────────────────────────
 #define MESH_DEDUP_CACHE_SIZE  32   // (origin_mac, seq) ring — drops route-flap dupes
