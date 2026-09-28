@@ -4,6 +4,13 @@
 **Status:** Approved (plan mode 2026-09-28). Implementation on branch `feat/mesh-simulator`.  
 **Parameter catalogue (generated):** `docs/simulator/PARAMETERS.md`
 
+> **Deployment constraint (user, 2026-09-28): there are NO always-on relays.** Every field
+> node is battery-powered, deep-sleeps, relays for others, and wakes on a synchronized
+> schedule. Only the Pi and the bridge beside it have mains power. `allsleepy` is the
+> design target; `phase1` exists only as a labelled baseline of today's firmware, and
+> `cart1` (one sleepy hop) as the stepping stone. Scaling fixes come from scheduling,
+> TTL/ACK design, bridge throughput and depth — never from powered relays.
+
 
 ## Context
 

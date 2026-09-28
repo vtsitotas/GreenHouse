@@ -226,8 +226,8 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `TOPOLOGY` | layered |  | σενάριο | scenario | layered (γειτονία rank k±1) | geometric 2D |
 | `T_S` | 900 | s | σενάριο | scenario | presets: 900 (15′), 1800 (30′)· οποιαδήποτε τιμή > 30 s |
 | `TECHNIQUE` | T2-flood |  | σενάριο | scenario | T1-ladder | T1-per-cycle | T2-flood | T2-unicast |
-| `SLEEP_MODE` | allsleepy |  | σενάριο | scenario | phase1 | cart1 | allsleepy |
-| `ACK_RELAY_GATE` | firmware |  | σενάριο | scenario | firmware: !sleepy | cart: !sleepy || rxOpen |
+| `SLEEP_MODE` | allsleepy |  | σενάριο | scenario | allsleepy = το deployment: ΟΛΟΙ οι κόμβοι μπαταρία, ύπνος, relay, συγχρονισμένη αφύπνιση· phase1 μόνο ως baseline του σημερινού firmware, ποτέ ως πρόταση |
+| `ACK_RELAY_GATE` | cart |  | σενάριο | scenario | cart: !sleepy || rxOpen (απαραίτητο στο allsleepy)· firmware: !sleepy (baseline — μπλοκάρει κάθε re-flood) |
 | `MAX_TTL_OVERRIDE` | — | hops | σενάριο | scenario | None = firmware (16)· what-if π.χ. 255 |
 | `RELAY_BUFFER` | derived (§H) | frames | σενάριο | scenario | T1 store-and-forward |
 | `RELAY_OVERFLOW` | backpressure |  | σενάριο | scenario | drop-oldest | drop-new | backpressure (δεν γίνεται hop-ACK) |
