@@ -77,6 +77,16 @@ SPEC = [
     ("energy.i_light_sleep_ma", lambda c: c["I_LIGHT_SLEEP_UA"] / 1000, "light sleep chip", None),
     ("energy.i_active_lumped_ma", lambda c: c["I_ACTIVE_LUMPED_MA"], "lumped: ενιαίο ρεύμα awake", None),
     ("energy.phase1_lumped_awake_s", lambda c: c["AWAKE_PHASE1_S"], "lumped phase1: awake του repo", None),
+    # ── discrete-event simulation ─────────────────────────────────────────
+    ("des.cycles", 3, "κύκλοι που προσομοιώνονται", None),
+    ("des.seed", 1, "seed (ίδιο seed → ίδιο αποτέλεσμα)", None),
+    ("des.seeds", 1, "πόσα seeds (>1 → μέσος όρος ± 95 % CI)", None),
+    ("des.trace_cycles", 1, "κύκλοι που καταγράφονται στο timeline (Gantt)", None),
+    ("des.shadow_sigma_db", lambda c: c["SHADOWING_SIGMA_DB"], "shadowing ανά link (dB)", None),
+    ("des.window_s", None, "T2: μήκος παραθύρου (None = από τον calculator)", None),
+    ("des.clock_burnin", 64, "κύκλοι προθέρμανσης ρολογιών πριν την προσομοίωση", None),
+    ("des.sweep_energy", "expected", "ενέργεια sweeps: αναμενόμενη (μοντέλο) ή παρατηρημένη",
+     ["expected", "observed"]),
     # ── requirements (for checks / optimisation) ──────────────────────────
     ("req.lifetime_days", 365, "στόχος αυτονομίας χωρίς ήλιο (ημέρες)", None),
     ("req.latency_s", 900, "μέγιστη αποδεκτή καθυστέρηση μέτρησης (s)", None),

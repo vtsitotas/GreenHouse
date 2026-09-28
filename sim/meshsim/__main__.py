@@ -5,6 +5,7 @@
     python -m meshsim calc --preset greenhouse --set hw.climate_sensor=sht40
     python -m meshsim improve --preset stress_50x10     each improvement alone + all together
     python -m meshsim sweep --preset greenhouse --vary timing.T_s=900,1800 --vary hw.climate_sensor=dht22,sht40
+    python -m meshsim des --preset greenhouse --set des.cycles=20 --set des.seeds=5
     python -m meshsim params --md ../docs/simulator/PARAMETERS.md
     python -m meshsim snapshot
 
@@ -61,6 +62,28 @@ def cmd_calc(args, cat, with_improvements=False):
     return res
 
 
+def cmd_des(args, cat):
+    from . import des
+    cfg = config.resolve(cat, args.preset, _overrides(args.set))
+    res = des.simulate(cfg, cat)
+    s = res["summary"]
+    print(f"  DES {s['technique']}  nodes={s['nodes']}  cycles={s['cycles']}")
+    print(f"  PDR settled {s['pdr_settled']}  (in horizon {s['pdr']})   duplicates {s['duplicates_at_pi']}")
+    print(f"  worst rank {s['worst_rank']} {s['worst_mah_day']} mAh/day  leaf {s['leaf_mah_day']} mAh/day"
+          f"  → {s['worst_autonomy_dark_days']} days without sun")
+    print(f"  latency median {s['latency_median_s']} s  p95 {s['latency_p95_s']} s   "
+          f"P(collision)/attempt {s['p_collision_per_attempt']}  bridge queue max {s['bridge_queue_max']}"
+          f" rejects {s['bridge_rejects']}")
+    if res.get("ci"):
+        for k, v in res["ci"].items():
+            print(f"  {k}: {v['mean']} ± {v['ci95']} (95% CI, n={v['n']})")
+    if not args.no_log:
+        md = report.des_report(cfg, res, runlog.changed_keys(cfg, config.defaults(cat)))
+        d = runlog.log_run("des", args.label or args.preset or "des", cfg, res, md, config.defaults(cat))
+        print(f"\n  logged → {d}")
+    return res
+
+
 def cmd_sweep(args, cat):
     base = _overrides(args.set)
     axes = []
@@ -100,7 +123,7 @@ def main(argv=None):
     sub.add_parser("snapshot", help="re-parse firmware sources into firmware_snapshot.json")
     sub.add_parser("keys", help="list every run variable")
     sub.add_parser("presets", help="list presets")
-    for name in ("calc", "improve", "sweep"):
+    for name in ("calc", "improve", "sweep", "des"):
         q = sub.add_parser(name)
         q.add_argument("--preset", choices=sorted(config.PRESETS))
         q.add_argument("--set", action="append", metavar="KEY=VALUE")
@@ -144,6 +167,8 @@ def main(argv=None):
         cmd_calc(args, cat, with_improvements=True)
     elif args.cmd == "sweep":
         cmd_sweep(args, cat)
+    elif args.cmd == "des":
+        cmd_des(args, cat)
 
 
 if __name__ == "__main__":

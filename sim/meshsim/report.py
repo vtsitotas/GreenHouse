@@ -20,6 +20,61 @@ def _pick_ranks(n):
     return sorted({1, 2, 3, 5, 10, 15, 16, 17, 18, 20, 25, 30, 40, 50, n} & set(range(1, n + 1)))
 
 
+def des_report(cfg, res, changed=None):
+    s = res["summary"]
+    p = res["plan"]["summary"]
+    L = []
+    P = L.append
+    P(f"# DES run — {s['technique']} · {s['nodes']} κόμβοι · {s['cycles']} κύκλοι · T = {cfg['timing.T_s']} s\n")
+    if cfg.get("_preset"):
+        P(f"Preset: `{cfg['_preset']}`  ")
+    if changed:
+        P("Αλλαγμένες μεταβλητές: " + ", ".join(f"`{k}={v}`" for k, v in changed.items()) + "\n")
+    P("## Προσομοίωση (DES) έναντι calculator\n")
+    P("| Μέγεθος | DES (μετρημένο) | Calculator (κλειστός τύπος) |\n|---|---|---|")
+    rows = [
+        ("PDR (settled / εντός ορίζοντα)", f"{_f(s['pdr_settled'], 4) if s['pdr_settled'] is not None else '—'} / {_f(s['pdr'], 4)}",
+         f"on-time {_f(p['pdr_ontime_mean'], 4)}"),
+        ("Κατανάλωση χειρότερου (mAh/ημ.)", _f(s["worst_mah_day"]), _f(p["worst_mah_day"])),
+        ("Κατανάλωση φύλλου (mAh/ημ.)", _f(s["leaf_mah_day"]), _f(p["leaf_mah_day"])),
+        ("Ζωή δικτύου χωρίς ήλιο (ημ.)", _f(s["worst_autonomy_dark_days"], 1), _f(p["worst_autonomy_dark_days"], 1)),
+        ("Καθυστέρηση διάμεση / μέση / p95 (s)",
+         f"{_f(s['latency_median_s'], 2)} / {_f(s['latency_mean_s'], 2)} / {_f(s['latency_p95_s'], 2)}",
+         f"εντός κύκλου ≤ {_f(p['latency_max_s'], 2)}"),
+        ("Σύγκρουση ανά προσπάθεια", _f(s["p_collision_per_attempt"], 4), "βλ. calc report"),
+        ("Διπλότυπα στο Pi", s["duplicates_at_pi"], "—"),
+        ("Γέφυρα: max ουρά / απορρίψεις", f"{s['bridge_queue_max']} / {s['bridge_rejects']}", "—"),
+        ("Προσπάθειες εκπομπής", s["tx_attempts"], "—"),
+    ]
+    for k, a, b in rows:
+        P(f"| {k} | {a} | {b} |")
+    if res.get("ci"):
+        P("\n**95 % CI (πολλά seeds):** " + " · ".join(
+            f"{k} = {v['mean']} ± {v['ci95']} (n={v['n']})" for k, v in res["ci"].items()))
+    P("")
+    P("## Ανά rank (DES)\n")
+    P("| rank | gen | παραδ. | PDR | lat. μέση s | p95 s | mAh/ημ. (calc) | αυτον. ημ. | awake s/κύκλο | on-air ms | P(coll) | P(PER) | sync miss | own buf μέσο/max | relay buf μέσο/max (util) | drops |")
+    P("|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|---|")
+    calc = {x["rank"]: x for x in res["plan"]["per_rank"]}
+    by = {x["rank"]: x for x in res["per_rank"]}
+    for r in _pick_ranks(len(by)):
+        x = by[r]
+        drops = ", ".join(f"{k}={v}" for k, v in x["drops"].items() if v)
+        P(f"| {r} | {x['gen']} | {x['delivered']} | {_f(x['pdr'], 3)} | {_f(x['latency_mean_s'], 2)} | "
+          f"{_f(x['latency_p95_s'], 2)} | {_f(x['mah_day'], 2)} ({_f(calc[r]['mah_day'], 2)}) | "
+          f"{_f(x['autonomy_dark_days'], 1)} | {_f(x['awake_s_per_cycle'], 2)} | {_f(x['time_on_air_ms_per_cycle'], 2)} | "
+          f"{_f(x['p_collision_per_attempt'], 3)} | {_f(x['p_per_per_attempt'], 4)} | {_f(x['sync_miss_rate'], 3)} | "
+          f"{_f(x['own_buffer_mean'], 2)}/{x['own_buffer_max']} | {_f(x['relay_buffer_mean'], 2)}/{x['relay_buffer_max']} "
+          f"({_f(x['relay_buffer_util_max'], 2)}) | {drops or '—'} |")
+    P("")
+    P("## Έλεγχοι εφικτότητας (calculator)\n")
+    for c in res["plan"]["checks"]:
+        P(f"- {'✅' if c['ok'] else '❌'} `{c['name']}` — {c['detail']}")
+    P("\n_Ενέργεια sweeps: " + ("αναμενόμενη από το μοντέλο ζεύγους" if cfg["des.sweep_energy"] == "expected"
+                               else "παρατηρημένη") + "· timeline στο results.json → `trace`._")
+    return "\n".join(L) + "\n"
+
+
 def calc_report(cfg, res, changed=None, improvements=None):
     s = res["summary"]
     L = []

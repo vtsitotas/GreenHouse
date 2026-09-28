@@ -182,14 +182,16 @@ def _t1_slots(cfg, R, W, rad, gw):
             gw_time = max(0, N - cfg["bridge.ingress_queue"]) * gw["t_gw"]
             D[r] = max(row_channel, gw_time) + cfg["radio.jitter_s"]
         else:
-            D[r] = row_channel + cfg["radio.jitter_s"]            # guard added by caller
+            D[r] = row_channel + cfg["radio.jitter_s"]
     return D, per_frame
 
 
 def _scheme_t1(cfg, cat, R, W, rad, gw, I, sync):
-    D0, per_frame = _t1_slots(cfg, R, W, rad, gw)
-    guard = sync["guard_mean"]
-    D = {r: D0[r] + (guard / 2 if r >= 2 else 0.0) for r in D0}  # sleepy parent opens late by ≤G/2
+    # A child wakes G/2 early by its own clock and listens *before* the parent's slot
+    # starts, catching the parent's RX_OPEN beacon at the true start — so slots need no
+    # guard, and a relay's pre-listen overlaps the receive window it is holding for
+    # its own children (it is already awake).
+    D, per_frame = _t1_slots(cfg, R, W, rad, gw)
     rows = []
     for r in range(1, R + 1):
         tl = Timeline()
@@ -201,9 +203,10 @@ def _scheme_t1(cfg, cat, R, W, rad, gw, I, sync):
             tl.add("rx_window", D[r + 1] - ack_air, I["rx"])
             tl.add("tx_air", ack_air, I["tx"])            # hop-ACKs sent to the child
         if r >= 2:
-            tl.add("sync_listen", sync["listen"], I["rx"])  # catch the parent's RX_OPEN
+            extra = sync["listen"] if r == R else max(0.0, sync["listen"] - D[r + 1])
+            tl.add("sync_listen", extra, I["rx"])          # catch the parent's RX_OPEN
         share = (W + 1) / (2 * W)                          # expected position in the row
-        wait = max(0.0, D[r] - (guard / 2 if r >= 2 else 0.0)) * share - f_out * per_frame
+        wait = D[r] * share - f_out * per_frame
         tl.add("radio_other", max(0.0, wait), I["rx"])
         _add_tx(tl, f_out, rad, I)
         if cfg["scheme.t1_hop_ack"] == "per_frame":
