@@ -167,11 +167,19 @@ def cmd_serve(port, open_browser=True):
                           ".md": "text/plain; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
 
         def translate_path(self, path):
-            path = path.split("?", 1)[0].split("#", 1)[0]
-            for prefix, root in roots.items():
+            """Map URL → file, never outside its root (rejects .. / encoded traversal)."""
+            from urllib.parse import unquote
+            path = unquote(path.split("?", 1)[0].split("#", 1)[0])
+            root, tail = SIM_DIR / "web", path
+            for prefix, r in roots.items():
                 if path.startswith(prefix):
-                    return str(root / path[len(prefix):])
-            return str(SIM_DIR / "web" / path.lstrip("/"))
+                    root, tail = r, path[len(prefix):]
+                    break
+            base = root.resolve()
+            full = (base / tail.lstrip("/")).resolve()
+            if full != base and base not in full.parents:
+                return str(base / "__forbidden__")          # → 404
+            return str(full)
 
         def end_headers(self):
             self.send_header("Cache-Control", "no-store")
