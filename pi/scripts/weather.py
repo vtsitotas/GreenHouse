@@ -131,26 +131,29 @@ def _pull_notification_settings():
         if not msg:
             return
         data = json.loads(msg)
-        settings = {
-            'frost_forecast': bool(data.get('frost_forecast', True)),
-            'daily_summary':  bool(data.get('daily_summary', True)),
-        }
+        settings = _normalize_notification_settings(data)
         with open(NOTIFICATION_SETTINGS_CFG, 'w') as f:
             json.dump(settings, f)
     except Exception as e:
         print(f'[weather] WARN: notification settings pull: {e}', flush=True)
 
 
+def _normalize_notification_settings(d: dict) -> dict:
+    # hazard_alerts is read by hazard_monitor.py; kept here so a pull from
+    # the app and the retained .../current republish both carry it.
+    return {
+        'frost_forecast': bool(d.get('frost_forecast', True)),
+        'daily_summary':  bool(d.get('daily_summary', True)),
+        'hazard_alerts':  bool(d.get('hazard_alerts', True)),
+    }
+
+
 def load_notification_settings() -> dict:
     try:
         with open(NOTIFICATION_SETTINGS_CFG) as f:
-            d = json.load(f)
-        return {
-            'frost_forecast': bool(d.get('frost_forecast', True)),
-            'daily_summary':  bool(d.get('daily_summary', True)),
-        }
+            return _normalize_notification_settings(json.load(f))
     except Exception:
-        return {'frost_forecast': True, 'daily_summary': True}
+        return _normalize_notification_settings({})
 
 
 def publish_notification_settings():

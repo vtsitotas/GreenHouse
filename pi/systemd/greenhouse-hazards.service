@@ -1,0 +1,42 @@
+[Unit]
+Description=Greenhouse Hazard Alerts (fire, flood, frost, heat, drought)
+After=network-online.target mosquitto.service
+Wants=network-online.target
+Requires=mosquitto.service
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/python3 /home/pi/greenhouse/scripts/hazard_monitor.py
+Restart=always
+RestartSec=10
+User=pi
+WorkingDirectory=/home/pi/greenhouse
+
+# ── Sandboxing (outbound network stays open — push goes to Firebase) ────────
+# Same profile as greenhouse-weather.service. It reads /etc/greenhouse (the
+# optional hazards.json override and the Firebase credentials for push) and
+# writes nothing.
+NoNewPrivileges=yes
+PrivateTmp=yes
+PrivateDevices=yes
+ProtectSystem=strict
+ProtectHome=read-only
+ProtectKernelTunables=yes
+ProtectKernelModules=yes
+ProtectKernelLogs=yes
+ProtectControlGroups=yes
+ProtectClock=yes
+ProtectHostname=yes
+ProtectProc=invisible
+RestrictNamespaces=yes
+RestrictRealtime=yes
+RestrictSUIDSGID=yes
+LockPersonality=yes
+CapabilityBoundingSet=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6 AF_NETLINK
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target

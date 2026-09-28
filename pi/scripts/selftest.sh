@@ -6,12 +6,12 @@ ok(){ echo "  [ OK ] $1"; PASS=$((PASS+1)); }
 no(){ echo "  [FAIL] $1"; FAIL=$((FAIL+1)); }
 
 echo "== services enabled =="
-for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge greenhouse-weather mosquitto; do
+for s in greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge greenhouse-weather greenhouse-hazards mosquitto; do
   systemctl is-enabled "$s" >/dev/null 2>&1 && ok "$s enabled" || no "$s not enabled"
 done
 
 echo "== services active =="
-for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge greenhouse-weather mosquitto; do
+for s in greenhouse-portal greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge greenhouse-weather greenhouse-hazards mosquitto; do
   systemctl is-active "$s" >/dev/null 2>&1 && ok "$s running" || no "$s not running"
 done
 

@@ -226,6 +226,7 @@ cp "$REPO"/systemd/greenhouse-portal.service         /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-ap.service             /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-wifi-watchdog.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-weather.service        /etc/systemd/system/
+cp "$REPO"/systemd/greenhouse-hazards.service        /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-recorder.service       /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-hivemq-bridge.service  /etc/systemd/system/
 cp "$REPO"/systemd/greenhouse-serial-bridge.service  /etc/systemd/system/
@@ -248,7 +249,7 @@ After=greenhouse-firstboot.service
 EOF
 
 systemctl daemon-reload
-systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge >/dev/null 2>&1
+systemctl enable greenhouse-firstboot greenhouse-portal greenhouse-ap greenhouse-wifi-watchdog greenhouse-weather greenhouse-hazards greenhouse-recorder greenhouse-hivemq-bridge greenhouse-serial-bridge >/dev/null 2>&1
 
 # The camera is parked (parked/camera/) -- tear down the cam-bridge unit on
 # units that were installed back when it shipped, so a redeploy doesn't leave
@@ -375,6 +376,7 @@ echo "==> Restarting services..."
 systemctl restart mosquitto
 systemctl restart greenhouse-portal
 systemctl restart greenhouse-weather
+systemctl restart greenhouse-hazards
 systemctl restart greenhouse-recorder
 systemctl restart greenhouse-hivemq-bridge
 # greenhouse-serial-bridge is deliberately NOT restarted here -- it's enabled
