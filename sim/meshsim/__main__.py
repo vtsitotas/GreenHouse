@@ -84,6 +84,124 @@ def cmd_des(args, cat):
     return res
 
 
+SIM_DIR = Path(__file__).resolve().parents[1]
+
+# (label, preset, overrides, with DES)
+WEB_EXAMPLES = [
+    ("Θερμοκήπιο · T2 · σημερινό hardware", "greenhouse", {}, True),
+    ("Θερμοκήπιο · T2 · όλες οι δωρεάν βελτιώσεις", "greenhouse", {
+        "hw.climate_sensor": "sht40", "hw.warmup_mode": "light_sleep", "hw.divider": "switched",
+        "sync.g_max_rule": "bias_wander", "scheme.t2_ack": "aggregate", "bridge.baud": 921600,
+        "bridge.framing": "binary", "pi.process_s": 0.005}, True),
+    ("Θερμοκήπιο · T1 σκάλα", "greenhouse", {"scheme.technique": "T1-ladder"}, True),
+    ("50×10 · T1 · TTL 64 · κανόνας bias+wander", "stress_50x10",
+     {"scheme.max_ttl": 64, "sync.g_max_rule": "bias_wander"}, True),
+    ("50×10 · T2 unicast · TTL 64 · bias+wander", "stress_50x10",
+     {"scheme.technique": "T2-window", "scheme.max_ttl": 64, "sync.g_max_rule": "bias_wander"}, True),
+    ("Σημερινό firmware (bench, Phase 1)", "firmware_today", {"timing.T_s": 900}, True),
+]
+
+
+def cmd_web_examples(cat):
+    """Precompute runs for the dashboard's viewer mode (sim/web/examples.json)."""
+    import json
+    from . import des
+    out = []
+    for label, preset, over, with_des in WEB_EXAMPLES:
+        cfg = config.resolve(cat, preset, over)
+        res = calculator.compute(cfg, cat)
+        _, res["improvements"] = improvements.evaluate(cat, cfg)
+        item = {"label": label, "preset": preset, "overrides": over, "config": cfg, "calc": res}
+        if with_des:
+            dcfg = dict(cfg)
+            dcfg["des.cycles"] = 6 if cfg["net.ranks"] * cfg["net.per_rank"] <= 100 else 2
+            item["des"] = des.simulate(dcfg, cat)
+        out.append(runlog.sanitize(item))
+        print(f"  {label}")
+    path = SIM_DIR / "web" / "examples.json"
+    path.write_text(json.dumps(out, ensure_ascii=False, separators=(",", ":")), encoding="utf-8")
+    print(f"wrote {path} ({path.stat().st_size // 1024} KB)")
+
+
+def api_call(cat, name, body):
+    """The dashboard's JSON API (same functions the Pyodide boot defines).
+    calc / des runs are logged to sim/runs like CLI runs."""
+    import json
+    from . import des
+    if name == "meta":
+        return {"keys": config.describe(cat), "presets": config.PRESETS}
+    if name == "resolve":
+        return config.resolve(cat, body.get("preset") or None)
+    cfg = config.resolve(cat, body.get("preset") or None, body.get("overrides") or {})
+    changed = runlog.changed_keys(cfg, config.defaults(cat))
+    label = "dashboard_" + (body.get("preset") or "custom")
+    if name == "calc":
+        res = calculator.compute(cfg, cat)
+        _, res["improvements"] = improvements.evaluate(cat, cfg)
+        if body.get("log") is False:        # companion calc for a DES run: logged with the DES
+            return {"config": cfg, "calc": res}
+        d = runlog.log_run("calc", label, cfg, res, report.calc_report(cfg, res, changed, res["improvements"]),
+                           config.defaults(cat))
+        return {"config": cfg, "calc": res, "run_dir": d.name}
+    if name == "des":
+        res = des.simulate(cfg, cat)
+        d = runlog.log_run("des", label, cfg, res, report.des_report(cfg, res, changed), config.defaults(cat))
+        return {"config": cfg, "des": res, "run_dir": d.name}
+    raise KeyError(name)
+
+
+def cmd_serve(port, open_browser=True):
+    """Local dashboard: / → sim/web, /meshsim/ → the engine, /runs/ → logged runs,
+    POST /api/<meta|resolve|calc|des> → the engine in this CPython process."""
+    import http.server
+    import json
+    import traceback
+    import webbrowser
+    roots = {"/meshsim/": SIM_DIR / "meshsim", "/runs/": SIM_DIR / "runs"}
+    cat = params.build()
+
+    class Handler(http.server.SimpleHTTPRequestHandler):
+        extensions_map = {**http.server.SimpleHTTPRequestHandler.extensions_map,
+                          ".html": "text/html; charset=utf-8", ".json": "application/json; charset=utf-8",
+                          ".py": "text/plain; charset=utf-8", ".csv": "text/csv; charset=utf-8",
+                          ".md": "text/plain; charset=utf-8", ".js": "text/javascript; charset=utf-8"}
+
+        def translate_path(self, path):
+            path = path.split("?", 1)[0].split("#", 1)[0]
+            for prefix, root in roots.items():
+                if path.startswith(prefix):
+                    return str(root / path[len(prefix):])
+            return str(SIM_DIR / "web" / path.lstrip("/"))
+
+        def end_headers(self):
+            self.send_header("Cache-Control", "no-store")
+            super().end_headers()
+
+        def do_POST(self):
+            name = self.path.split("?", 1)[0].rstrip("/").rsplit("/", 1)[-1]
+            try:
+                body = json.loads(self.rfile.read(int(self.headers.get("Content-Length") or 0)) or b"{}")
+                out, code = runlog.sanitize(api_call(cat, name, body)), 200
+            except Exception as e:  # report to the page instead of dropping the connection
+                out, code = {"error": f"{type(e).__name__}: {e}", "trace": traceback.format_exc()[-800:]}, 400
+            data = json.dumps(out, ensure_ascii=False).encode("utf-8")
+            self.send_response(code)
+            self.send_header("Content-Type", "application/json; charset=utf-8")
+            self.send_header("Content-Length", str(len(data)))
+            self.end_headers()
+            self.wfile.write(data)
+
+        def log_message(self, *a):
+            pass
+
+    with http.server.ThreadingHTTPServer(("127.0.0.1", port), Handler) as httpd:
+        url = f"http://127.0.0.1:{port}/"
+        print(f"dashboard: {url}  (Ctrl+C to stop)")
+        if open_browser:
+            webbrowser.open(url)
+        httpd.serve_forever()
+
+
 def cmd_sweep(args, cat):
     base = _overrides(args.set)
     axes = []
@@ -122,6 +240,10 @@ def main(argv=None):
     p.add_argument("--json", type=Path)
     sub.add_parser("snapshot", help="re-parse firmware sources into firmware_snapshot.json")
     sub.add_parser("keys", help="list every run variable")
+    sv = sub.add_parser("serve", help="open the local dashboard (full Pyodide mode)")
+    sv.add_argument("--port", type=int, default=8765)
+    sv.add_argument("--no-browser", action="store_true")
+    sub.add_parser("web-examples", help="precompute sim/web/examples.json for the dashboard")
     sub.add_parser("presets", help="list presets")
     for name in ("calc", "improve", "sweep", "des"):
         q = sub.add_parser(name)
@@ -140,6 +262,9 @@ def main(argv=None):
     if args.cmd == "snapshot":
         firmware_params.write_snapshot()
         print(f"wrote {firmware_params.SNAPSHOT}")
+        return
+    if args.cmd == "serve":
+        cmd_serve(args.port, not args.no_browser)
         return
     cat = params.build()
     if args.cmd == "params":
@@ -169,6 +294,8 @@ def main(argv=None):
         cmd_sweep(args, cat)
     elif args.cmd == "des":
         cmd_des(args, cat)
+    elif args.cmd == "web-examples":
+        cmd_web_examples(cat)
 
 
 if __name__ == "__main__":

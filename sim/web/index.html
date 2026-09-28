@@ -1,0 +1,668 @@
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Mesh Bench</title>
+<meta name="description" content="Simulator και calculator του ESP-NOW mesh του θερμοκηπίου">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Commissioner:wght@400;500;600;700&family=JetBrains+Mono:wght@400;600&display=swap">
+<style>
+:root{
+  --plane:#f3f5f1; --surface:#fcfdfb; --surface-2:#eef1ec; --ink:#101a14; --ink-2:#48554c; --muted:#86918a;
+  --hair:#dde3dc; --axis:#c3cac2; --accent:#1f6f4a; --accent-ink:#ffffff; --accent-soft:#dcece2;
+  --good:#0ca30c; --good-ink:#006300; --warn:#fab219; --crit:#d03b3b; --crit-ink:#a32525;
+  --s1:#2a78d6; --s2:#eb6834; --s3:#1baf7a; --s4:#eda100; --s5:#e87ba4; --s6:#008300; --s7:#4a3aa7; --s8:#e34948;
+  --seq-light:#9ec5f4; --ring:rgba(16,26,20,.10);
+  --f-ui:"Commissioner",system-ui,-apple-system,"Segoe UI",sans-serif;
+  --f-mono:"JetBrains Mono",ui-monospace,"Cascadia Mono",Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){
+  color-scheme:dark;
+  --plane:#0c100e; --surface:#151b17; --surface-2:#1c241f; --ink:#eef3ef; --ink-2:#b7c2ba; --muted:#7d8880;
+  --hair:#26302a; --axis:#39443d; --accent:#43b37c; --accent-ink:#06120b; --accent-soft:#183425;
+  --good-ink:#0ca30c; --crit-ink:#ef7474;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  --seq-light:#256abf; --ring:rgba(255,255,255,.10);
+}}
+:root[data-theme="dark"]{
+  color-scheme:dark;
+  --plane:#0c100e; --surface:#151b17; --surface-2:#1c241f; --ink:#eef3ef; --ink-2:#b7c2ba; --muted:#7d8880;
+  --hair:#26302a; --axis:#39443d; --accent:#43b37c; --accent-ink:#06120b; --accent-soft:#183425;
+  --good-ink:#0ca30c; --crit-ink:#ef7474;
+  --s1:#3987e5; --s2:#d95926; --s3:#199e70; --s4:#c98500; --s5:#d55181; --s6:#008300; --s7:#9085e9; --s8:#e66767;
+  --seq-light:#256abf; --ring:rgba(255,255,255,.10);
+}
+*{box-sizing:border-box}
+[hidden]{display:none!important}
+body{background:var(--plane);color:var(--ink);font:14px/1.5 var(--f-ui);padding-inline:16px;padding-block:0 32px}
+h1,h2,h3{font-weight:600;letter-spacing:-.01em;text-wrap:balance;margin:0}
+.mono,.num{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+button,select,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.top{display:flex;flex-wrap:wrap;align-items:center;gap:12px 20px;padding-block:18px 14px;border-bottom:1px solid var(--hair)}
+.brand{display:flex;align-items:baseline;gap:10px}
+.brand h1{font-size:20px}
+.brand span{color:var(--muted);font-size:13px}
+.mode{margin-left:auto;display:flex;align-items:center;gap:8px;font-size:12.5px;color:var(--ink-2)}
+.dot{width:8px;height:8px;border-radius:50%;background:var(--muted)}
+.mode.live .dot{background:var(--good)} .mode.view .dot{background:var(--warn)} .mode.err .dot{background:var(--crit)}
+.app{display:grid;grid-template-columns:minmax(0,310px) minmax(0,1fr);gap:20px;padding-top:18px}
+@media (max-width:900px){.app{grid-template-columns:minmax(0,1fr)}}
+aside{display:flex;flex-direction:column;gap:12px}
+.card{background:var(--surface);border:1px solid var(--ring);border-radius:10px}
+.pad{padding:14px}
+label.lab{display:block;font-size:12px;color:var(--ink-2);margin-bottom:4px}
+select,input[type=number],input[type=text],textarea{width:100%;background:var(--surface);border:1px solid var(--hair);border-radius:6px;padding:6px 8px}
+textarea{font-family:var(--f-mono);font-size:12px;min-height:90px}
+.btns{display:flex;flex-wrap:wrap;gap:8px}
+.btn{border:1px solid var(--hair);background:var(--surface);border-radius:7px;padding:7px 12px;cursor:pointer}
+.btn:hover{background:var(--surface-2)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+.btn.primary:hover{filter:brightness(1.08)}
+.btn:disabled{opacity:.5;cursor:default}
+details.grp{border-top:1px solid var(--hair)}
+details.grp:first-of-type{border-top:0}
+details.grp summary{cursor:pointer;padding:9px 14px;font-weight:600;font-size:13px;display:flex;justify-content:space-between;list-style:none}
+details.grp summary::-webkit-details-marker{display:none}
+details.grp summary .cnt{font-family:var(--f-mono);font-size:11.5px;color:var(--accent);font-weight:600}
+.fields{display:grid;gap:9px;padding:0 14px 14px}
+.field .k{font-family:var(--f-mono);font-size:11.5px;color:var(--ink-2);display:flex;justify-content:space-between;gap:6px}
+.field .k .def{color:var(--muted)}
+.field .d{font-size:11.5px;color:var(--muted);margin-bottom:3px}
+.field.changed input,.field.changed select{border-color:var(--accent);background:var(--accent-soft)}
+.field input[type=checkbox]{width:16px;height:16px;accent-color:var(--accent)}
+main{min-width:0;display:flex;flex-direction:column;gap:14px}
+.headline{display:flex;flex-wrap:wrap;align-items:baseline;gap:6px 14px}
+.headline h2{font-size:17px}
+.headline .sub{color:var(--muted);font-size:13px}
+.tiles{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:10px}
+.tile{padding:12px 14px}
+.tile .v{font-size:22px;font-weight:600;letter-spacing:-.01em}
+.tile .v small{font-size:12px;color:var(--muted);font-weight:500;margin-left:3px}
+.tile .l{font-size:12px;color:var(--ink-2)}
+.tile .c{font-size:11.5px;color:var(--muted);margin-top:2px}
+.checks{display:flex;flex-wrap:wrap;gap:6px}
+.chip{display:inline-flex;align-items:center;gap:5px;font-size:12px;padding:3px 9px;border-radius:999px;border:1px solid var(--hair);background:var(--surface);cursor:default}
+.chip .ic{font-weight:700}
+.chip.ok .ic{color:var(--good-ink)} .chip.bad{border-color:color-mix(in srgb,var(--crit) 45%,var(--hair))} .chip.bad .ic{color:var(--crit-ink)}
+.chip .n{font-family:var(--f-mono);font-size:11.5px}
+.tabs{display:flex;flex-wrap:wrap;gap:4px;border-bottom:1px solid var(--hair)}
+.tab{border:0;background:none;padding:8px 12px;cursor:pointer;color:var(--ink-2);border-bottom:2px solid transparent;margin-bottom:-1px}
+.tab[aria-selected=true]{color:var(--ink);border-bottom-color:var(--accent);font-weight:600}
+.panel{display:grid;gap:14px}
+.panel>*,.grid2>*,.tiles>*{min-width:0}
+.grid2{display:grid;grid-template-columns:repeat(auto-fit,minmax(min(100%,420px),1fr));gap:14px}
+.chart h3{font-size:14px}
+.chart .cap{font-size:12px;color:var(--muted);margin:2px 0 8px}
+.chart svg{display:block;width:100%;height:auto;overflow:visible}
+.legend{display:flex;flex-wrap:wrap;gap:6px 14px;font-size:12px;color:var(--ink-2);margin-top:6px}
+.legend i{display:inline-block;width:10px;height:10px;border-radius:3px;margin-right:5px;vertical-align:-1px}
+.tw{overflow-x:auto}
+table{border-collapse:collapse;width:100%;font-size:12.5px}
+th,td{padding:6px 8px;border-bottom:1px solid var(--hair);text-align:right;white-space:nowrap}
+th:first-child,td:first-child{text-align:left}
+th{font-weight:600;color:var(--ink-2);font-size:12px;position:sticky;top:0;background:var(--surface)}
+td{font-family:var(--f-mono);font-variant-numeric:tabular-nums}
+td.txt{font-family:var(--f-ui);white-space:normal;text-align:left}
+.bad-t{color:var(--crit-ink)} .good-t{color:var(--good-ink)}
+.dbar{display:inline-block;height:8px;border-radius:0 4px 4px 0;vertical-align:middle;margin-left:6px}
+.note{font-size:12.5px;color:var(--ink-2)}
+.note code{font-family:var(--f-mono);font-size:12px}
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(180px,1fr));gap:4px 16px;font-size:12.5px}
+.kv div{display:flex;justify-content:space-between;gap:8px;border-bottom:1px dashed var(--hair);padding-block:3px}
+.kv b{font-weight:500;color:var(--ink-2)}
+.kv span{font-family:var(--f-mono)}
+.busy{position:fixed;inset:auto 16px 16px auto;background:var(--ink);color:var(--plane);padding:8px 14px;border-radius:8px;font-size:13px}
+#tip{position:fixed;pointer-events:none;background:var(--ink);color:var(--plane);font-size:12px;padding:6px 9px;border-radius:6px;max-width:280px;z-index:10;line-height:1.35;white-space:pre-line}
+canvas.gantt{width:100%;display:block}
+.empty{padding:28px;text-align:center;color:var(--muted)}
+@media (prefers-reduced-motion:reduce){*{transition:none!important}}
+</style>
+
+<div class="top">
+  <div class="brand"><h1>Mesh Bench</h1><span>ESP-NOW mesh θερμοκηπίου · calculator + DES</span></div>
+  <div class="mode" id="mode"><span class="dot"></span><span id="modeTxt">Φόρτωση Python…</span></div>
+</div>
+
+<div class="app">
+  <aside>
+    <div class="card pad" style="display:grid;gap:10px">
+      <div>
+        <label class="lab" for="preset">Σενάριο (preset)</label>
+        <select id="preset"></select>
+        <div class="note" id="presetDoc" style="margin-top:4px"></div>
+      </div>
+      <div id="exWrap" hidden>
+        <label class="lab" for="example">Έτοιμο παράδειγμα</label>
+        <select id="example"></select>
+      </div>
+      <div class="btns">
+        <button class="btn primary" id="runCalc">Υπολογισμός</button>
+        <button class="btn" id="runDes">Προσομοίωση (DES)</button>
+        <button class="btn" id="reset">Επαναφορά</button>
+      </div>
+      <div class="note" id="changedNote"></div>
+    </div>
+    <div class="card" id="paramCard"></div>
+  </aside>
+
+  <main>
+    <div class="headline"><h2 id="title">—</h2><span class="sub" id="subtitle"></span></div>
+    <div class="tiles" id="tiles"></div>
+    <div class="checks" id="checks"></div>
+    <div class="tabs" role="tablist" id="tabs">
+      <button class="tab" role="tab" data-t="energy" aria-selected="true">Ενέργεια</button>
+      <button class="tab" role="tab" data-t="net">Δίκτυο</button>
+      <button class="tab" role="tab" data-t="imp">Βελτιώσεις</button>
+      <button class="tab" role="tab" data-t="des">DES</button>
+      <button class="tab" role="tab" data-t="runs">Runs</button>
+    </div>
+    <section class="panel" id="p-energy"></section>
+    <section class="panel" id="p-net" hidden></section>
+    <section class="panel" id="p-imp" hidden></section>
+    <section class="panel" id="p-des" hidden></section>
+    <section class="panel" id="p-runs" hidden></section>
+  </main>
+</div>
+<div id="tip" hidden></div>
+<div class="busy" id="busy" hidden></div>
+
+<script>
+"use strict";
+const PY_FILES = ["__init__.py","analytic.py","calculator.py","clock.py","config.py","des.py","firmware_params.py",
+  "firmware_snapshot.json","hardware.py","improvements.py","params.py"];
+const PY_BOOT = `
+import sys, json, math
+sys.path.insert(0, "/home/pyodide")
+from meshsim import params, config, calculator, des, improvements
+cat = params.build()
+def _san(o):
+    if isinstance(o, float) and (math.isinf(o) or math.isnan(o)): return str(o)
+    if isinstance(o, dict): return {str(k): _san(v) for k, v in o.items()}
+    if isinstance(o, (list, tuple)): return [_san(v) for v in o]
+    return o
+def api_meta():
+    return json.dumps(_san({"keys": config.describe(cat), "presets": config.PRESETS}))
+def api_resolve(preset):
+    return json.dumps(_san(config.resolve(cat, preset or None)))
+def api_calc(preset, over):
+    cfg = config.resolve(cat, preset or None, json.loads(over))
+    res = calculator.compute(cfg, cat)
+    _, res["improvements"] = improvements.evaluate(cat, cfg)
+    return json.dumps(_san({"config": cfg, "calc": res}))
+def api_des(preset, over):
+    cfg = config.resolve(cat, preset or None, json.loads(over))
+    return json.dumps(_san({"config": cfg, "des": des.simulate(cfg, cat)}))
+`;
+const GROUPS = {net:"Δίκτυο",timing:"Χρονισμός",scheme:"Σχήμα / πρωτόκολλο",sync:"Συγχρονισμός ρολογιών",
+  hw:"Hardware",energy:"Ρεύματα",radio:"Ράδιο / MAC",bridge:"Γέφυρα",pi:"Pi",des:"DES",req:"Απαιτήσεις"};
+const STATE_GROUPS = [
+  ["sensor","αισθητήρες",["sensor","sample_wake"],"--s1"],
+  ["boot","εκκίνηση / CPU / init",["boot","cpu","radio_init"],"--s2"],
+  ["sync","συγχρονισμός (guard)",["sync_listen"],"--s3"],
+  ["rxw","παράθυρο λήψης",["rx_window"],"--s4"],
+  ["radio","radio: αναμονή / ACK",["radio_other"],"--s5"],
+  ["tx","εκπομπή (on air)",["tx_air"],"--s6"],
+  ["sleep","deep sleep",["sleep"],"--s7"],
+  ["sweep","orphan sweeps",[],"--s8"],
+];
+const CHECK_GR = {ttl_depth:"βάθος TTL",awake_cap:"όριο αφύπνισης",multihop_possible:"multi-hop",relay_buffer:"relay buffer",
+  rtc_capacity:"χωρητικότητα RTC",ladder_span:"μήκος σκάλας",tx_burst:"ριπή TX",app_ack_wait:"αναμονή ACK",window_fits:"παράθυρο",
+  dedup_ring:"dedup ring",neighbor_slots:"θέσεις γειτόνων",latency_req:"καθυστέρηση",pdr_req:"παράδοση",lifetime_req:"αυτονομία",
+  energy_neutral:"ενεργειακή αυτάρκεια",gateway_rate:"ρυθμός γέφυρας",usb_echo:"USB echo"};
+
+const S = {api:null, mode:"loading", keys:[], presets:{}, base:{}, examples:[], calc:null, des:null, cfg:null, tab:"energy", label:""};
+const $ = s => document.querySelector(s);
+const css = v => getComputedStyle(document.documentElement).getPropertyValue(v).trim();
+const esc = s => String(s).replace(/[&<>"]/g, c => ({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;"}[c]));
+function num(v){ if (v === "inf" || v === Infinity) return Infinity; if (v === null || v === undefined || v === "") return null; return typeof v === "number" ? v : Number(v); }
+function fmt(v, d = 2){
+  const x = num(v);
+  if (x === null || Number.isNaN(x)) return "—";
+  if (!Number.isFinite(x)) return "∞";
+  const a = Math.abs(x);
+  const dd = a >= 1000 ? 0 : a >= 100 ? Math.min(d, 1) : d;
+  return x.toLocaleString("el-GR", {maximumFractionDigits: dd, minimumFractionDigits: 0});
+}
+function store(k, v){ try { localStorage.setItem("meshbench:" + k, JSON.stringify(v)); } catch (e) {} }
+function load(k, d){ try { const v = localStorage.getItem("meshbench:" + k); return v ? JSON.parse(v) : d; } catch (e) { return d; } }
+function busy(msg){ const b = $("#busy"); b.hidden = !msg; b.textContent = msg || ""; }
+function setMode(m, txt){ S.mode = m; const el = $("#mode"); el.className = "mode " + m; $("#modeTxt").textContent = txt; }
+
+/* ── tooltip ─────────────────────────────────────────────── */
+const tip = $("#tip");
+document.addEventListener("mousemove", e => {
+  const t = e.target.closest("[data-tip]");
+  if (!t) { tip.hidden = true; return; }
+  tip.textContent = t.getAttribute("data-tip"); tip.hidden = false;
+  const w = tip.offsetWidth, h = tip.offsetHeight;
+  tip.style.left = Math.min(e.clientX + 12, innerWidth - w - 8) + "px";
+  tip.style.top = Math.max(8, e.clientY - h - 10) + "px";
+});
+
+/* ── SVG charts ──────────────────────────────────────────── */
+function niceMax(m){ if (!(m > 0)) return 1; const p = 10 ** Math.floor(Math.log10(m)); for (const f of [1,1.2,1.5,2,2.5,3,4,5,6,8,10]) if (f * p >= m) return f * p; return 10 * p; }
+function ticks(max, n = 4){ const out = []; for (let i = 0; i <= n; i++) out.push(max * i / n); return out; }
+function svgEl(w, h){ return `<svg viewBox="0 0 ${w} ${h}" role="img">`; }
+function frame(w, h, m, ymax, unit){
+  let s = "";
+  for (const t of ticks(ymax)) {
+    const y = h - m.b - (h - m.t - m.b) * t / ymax;
+    s += `<line x1="${m.l}" x2="${w - m.r}" y1="${y}" y2="${y}" stroke="${t === 0 ? "var(--axis)" : "var(--hair)"}" stroke-width="1"/>`;
+    s += `<text x="${m.l - 6}" y="${y + 4}" text-anchor="end" font-size="11" fill="var(--muted)" font-family="var(--f-mono)">${fmt(t, 2)}</text>`;
+  }
+  if (unit) s += `<text x="${m.l}" y="${m.t - 8}" font-size="11" fill="var(--muted)">${esc(unit)}</text>`;
+  return s;
+}
+function xLabels(w, h, m, xs, xOf, every){
+  let s = "";
+  xs.forEach((x, i) => { if (i % every === 0 || i === xs.length - 1)
+    s += `<text x="${xOf(i)}" y="${h - m.b + 15}" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--f-mono)">${x}</text>`; });
+  return s;
+}
+/* bars: items [{x, y, tip}] one series */
+function barChart({items, unit, color = "--s1", xTitle = "rank", h = 220}){
+  const w = 640, m = {l: 48, r: 10, t: 22, b: 30};
+  const ymax = niceMax(Math.max(...items.map(d => Number.isFinite(num(d.y)) ? num(d.y) : 0)));
+  const n = items.length, bw = (w - m.l - m.r) / n, gap = Math.min(2, bw * 0.2);
+  let s = svgEl(w, h) + frame(w, h, m, ymax, unit);
+  items.forEach((d, i) => {
+    const v = Math.max(0, num(d.y) || 0), bh = (h - m.t - m.b) * v / ymax;
+    const x = m.l + i * bw + gap / 2, y = h - m.b - bh, ww = Math.max(1, bw - gap), r = Math.min(4, ww / 2, bh);
+    s += `<path d="M${x},${h - m.b} V${y + r} q0,-${r} ${r},-${r} H${x + ww - r} q${r},0 ${r},${r} V${h - m.b} Z" fill="var(${d.color || color})"/>`;
+    s += `<rect x="${m.l + i * bw}" y="${m.t}" width="${bw}" height="${h - m.t - m.b}" fill="transparent" data-tip="${esc(d.tip)}"/>`;
+  });
+  s += xLabels(w, h, m, items.map(d => d.x), i => m.l + i * bw + bw / 2, Math.ceil(n / 12));
+  s += `<text x="${w - m.r}" y="${h - 2}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(xTitle)}</text>`;
+  return s + "</svg>";
+}
+/* lines: series [{name, color, pts:[{x, y, tip}], dots}] sharing x categories */
+function lineChart({series, xs, unit, h = 220, ymax: forced, xTitle = "rank"}){
+  const w = 640, m = {l: 48, r: 14, t: 22, b: 30};
+  const all = series.flatMap(s => s.pts.map(p => num(p.y))).filter(v => Number.isFinite(v));
+  const ymax = forced || niceMax(Math.max(0, ...all));
+  const n = xs.length, xOf = i => n === 1 ? (m.l + w - m.r) / 2 : m.l + (w - m.l - m.r) * i / (n - 1);
+  const yOf = v => h - m.b - (h - m.t - m.b) * Math.min(v, ymax) / ymax;
+  let s = svgEl(w, h) + frame(w, h, m, ymax, unit);
+  for (const se of series) {
+    const segs = []; let cur = [];
+    se.pts.forEach((p, i) => { const v = num(p.y); if (Number.isFinite(v)) cur.push(`${xOf(i)},${yOf(v)}`); else if (cur.length) { segs.push(cur); cur = []; } });
+    if (cur.length) segs.push(cur);
+    if (!se.dotsOnly) for (const sg of segs) s += `<polyline points="${sg.join(" ")}" fill="none" stroke="var(${se.color})" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
+    if (se.dots || se.dotsOnly) se.pts.forEach((p, i) => { const v = num(p.y); if (Number.isFinite(v))
+      s += `<circle cx="${xOf(i)}" cy="${yOf(v)}" r="4" fill="var(${se.color})" stroke="var(--surface)" stroke-width="2"/>`; });
+  }
+  const bw = (w - m.l - m.r) / Math.max(1, n - 1);
+  xs.forEach((x, i) => {
+    const t = series.map(se => `${se.name}: ${se.pts[i] ? se.pts[i].tipv ?? fmt(se.pts[i].y, 3) : "—"}`).join("\n");
+    const x0 = Math.max(m.l, xOf(i) - bw / 2), x1 = Math.min(w - m.r, xOf(i) + bw / 2);
+    s += `<rect x="${x0}" y="${m.t}" width="${Math.max(1, x1 - x0)}" height="${h - m.t - m.b}" fill="transparent" data-tip="${esc(xTitle + " " + x + "\n" + t)}"/>`;
+  });
+  s += xLabels(w, h, m, xs, xOf, Math.ceil(n / 12));
+  s += `<text x="${w - m.r}" y="${h - 2}" text-anchor="end" font-size="11" fill="var(--muted)">${esc(xTitle)}</text>`;
+  return s + "</svg>";
+}
+/* horizontal stacked bars in mAh/day */
+function stackChart(rows){
+  const w = 640, rowH = 26, m = {l: 92, r: 14, t: 6, b: 24}, h = m.t + m.b + rows.length * (rowH + 10);
+  const max = niceMax(Math.max(...rows.map(r => r.parts.reduce((a, p) => a + p.v, 0))));
+  let s = svgEl(w, h);
+  for (const t of ticks(max)) { const x = m.l + (w - m.l - m.r) * t / max;
+    s += `<line x1="${x}" x2="${x}" y1="${m.t}" y2="${h - m.b}" stroke="var(--hair)"/><text x="${x}" y="${h - 6}" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--f-mono)">${fmt(t, 1)}</text>`; }
+  rows.forEach((r, i) => {
+    const y = m.t + i * (rowH + 10); let x = m.l;
+    s += `<text x="${m.l - 8}" y="${y + rowH / 2 + 4}" text-anchor="end" font-size="12" fill="var(--ink-2)">${esc(r.label)}</text>`;
+    const total = r.parts.reduce((a, p) => a + p.v, 0);
+    r.parts.forEach(p => {
+      const ww = (w - m.l - m.r) * p.v / max; if (ww <= 0) return;
+      s += `<rect x="${x}" y="${y}" width="${Math.max(0.5, ww - 2)}" height="${rowH}" rx="2" fill="var(${p.color})" data-tip="${esc(`${r.label} · ${p.name}\n${fmt(p.v, 3)} mAh/ημ. (${fmt(100 * p.v / total, 1)} %)`)}"/>`;
+      x += ww;
+    });
+  });
+  return s + "</svg>";
+}
+function legend(items){ return `<div class="legend">${items.map(([n, c]) => `<span><i style="background:var(${c})"></i>${esc(n)}</span>`).join("")}</div>`; }
+function chartCard(title, cap, body, extra = ""){ return `<div class="card pad chart"><h3>${esc(title)}</h3><div class="cap">${cap}</div>${body}${extra}</div>`; }
+
+/* ── parameters panel ────────────────────────────────────── */
+function valOf(k){ const el = document.getElementById("f_" + k); if (!el) return undefined;
+  const meta = S.keys.find(x => x.key === k);
+  if (el.type === "checkbox") return el.checked;
+  if (el.tagName === "SELECT") { const v = el.value; const d = meta.choices.find(c => String(c) === v); return d === undefined ? v : d; }
+  const t = el.value.trim(); if (t === "") return null;
+  const n = Number(t); return Number.isFinite(n) && /^[-+]?[\d.eE+-]+$/.test(t) ? n : t;
+}
+function overrides(){ const o = {}; for (const {key} of S.keys) { const v = valOf(key); if (v !== undefined && JSON.stringify(v) !== JSON.stringify(S.base[key])) o[key] = v; } return o; }
+function renderParams(){
+  const byG = {};
+  for (const k of S.keys) { const g = k.key.split(".")[0]; (byG[g] = byG[g] || []).push(k); }
+  let h = "";
+  for (const g of Object.keys(GROUPS)) { if (!byG[g]) continue;
+    h += `<details class="grp" ${["net","timing","scheme","hw"].includes(g) ? "open" : ""}><summary>${GROUPS[g]} <span class="cnt" id="cnt_${g}"></span></summary><div class="fields">`;
+    for (const k of byG[g]) {
+      const id = "f_" + k.key, v = S.base[k.key];
+      let input;
+      if (k.choices) input = `<select id="${id}">${k.choices.map(c => `<option ${String(c) === String(v) ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`;
+      else if (typeof k.default === "boolean") input = `<input type="checkbox" id="${id}" ${v ? "checked" : ""}>`;
+      else input = `<input type="text" inputmode="decimal" id="${id}" value="${v === null ? "" : esc(v)}" placeholder="auto">`;
+      h += `<div class="field" data-k="${k.key}"><div class="k"><span>${esc(k.key.split(".").slice(1).join("."))}</span><span class="def">${v === null ? "auto" : esc(fmtRaw(v))}</span></div><div class="d">${esc(k.desc)}</div>${input}</div>`;
+    }
+    h += `</div></details>`;
+  }
+  $("#paramCard").innerHTML = h;
+  $("#paramCard").addEventListener("input", markChanged);
+  $("#paramCard").addEventListener("change", markChanged);
+  markChanged();
+}
+function fmtRaw(v){ return typeof v === "number" ? String(v) : String(v); }
+function markChanged(){
+  const o = overrides(), counts = {};
+  document.querySelectorAll(".field").forEach(f => { const k = f.dataset.k, on = k in o; f.classList.toggle("changed", on); if (on) { const g = k.split(".")[0]; counts[g] = (counts[g] || 0) + 1; } });
+  for (const g of Object.keys(GROUPS)) { const c = document.getElementById("cnt_" + g); if (c) c.textContent = counts[g] ? counts[g] + " αλλαγ." : ""; }
+  const n = Object.keys(o).length;
+  $("#changedNote").innerHTML = n ? `${n} αλλαγές έναντι του preset: ${Object.entries(o).map(([k, v]) => `<code>${esc(k)}=${esc(v)}</code>`).join(", ")}` : "Καμία αλλαγή έναντι του preset.";
+}
+async function applyPreset(p){
+  S.base = await S.api.resolve(p);
+  $("#presetDoc").textContent = (S.presets[p] || {})._doc || "";
+  renderParams();
+  store("preset", p);
+}
+
+/* ── rendering results ───────────────────────────────────── */
+function renderAll(){
+  const r = S.calc, c = S.cfg;
+  if (!r) { $("#title").textContent = "—"; return; }
+  const s = r.summary;
+  $("#title").textContent = `${s.technique} · ${s.ranks} ranks × ${s.nodes / s.ranks} κόμβοι · T = ${fmt(s.T_s, 0)} s`;
+  $("#subtitle").textContent = S.label || "";
+  const tile = (l, v, u, cap) => `<div class="card tile"><div class="l">${l}</div><div class="v num">${v}<small>${u}</small></div><div class="c">${cap}</div></div>`;
+  $("#tiles").innerHTML = [
+    tile("Ζωή δικτύου χωρίς ήλιο", fmt(s.network_lifetime_dark_days, 1), "ημ.", `χειρότερος κόμβος: rank ${s.worst_rank}`),
+    tile("Κατανάλωση χειρότερου", fmt(s.worst_mah_day, 2), "mAh/ημ.", `φύλλο: ${fmt(s.leaf_mah_day, 2)} mAh/ημ.`),
+    tile("Ηλιακό", fmt(s.harvest_mah_day, 0), "mAh/ημ.", s.all_energy_neutral ? "όλοι ενεργειακά αυτάρκεις" : "ΔΕΝ καλύπτει όλους"),
+    tile("Παραδίδουν", `${s.delivered_nodes}/${s.nodes}`, "", `on-time PDR ${fmt(s.pdr_ontime_mean, 3)}`),
+    tile("Καθυστέρηση", fmt(s.latency_max_s, 2), "s", "μέσα στον κύκλο, χειρότερο rank"),
+    tile("Μέγ. ξύπνιος", fmt(s.max_awake_s, 2), "s", `όριο firmware ${fmt(c["timing.awake_cap_s"], 0)} s`),
+  ].join("");
+  $("#checks").innerHTML = r.checks.map(k => `<span class="chip ${k.ok ? "ok" : "bad"}" data-tip="${esc(k.detail)}"><span class="ic">${k.ok ? "✓" : "✕"}</span>${esc(CHECK_GR[k.name] || k.name)}</span>`).join("");
+  renderEnergy(); renderNet(); renderImp(); renderDes(); renderRuns();
+}
+function rankItems(key, fmtd, unit){ return S.calc.per_rank.map(x => ({x: x.rank, y: x[key], tip: `rank ${x.rank}: ${fmt(x[key], fmtd)} ${unit}`})); }
+function stateParts(x, Tc){
+  const perDay = 86400 / Tc / 3600;
+  return STATE_GROUPS.map(([id, name, keys, color]) => {
+    let v = keys.reduce((a, k) => a + (x.mas_by_state[k] || 0), 0) * perDay;
+    if (id === "sweep") v = x.sweep_mah_day || 0;
+    return {name, color, v};
+  });
+}
+function renderEnergy(){
+  const r = S.calc, s = r.summary, Tc = s.comm_period_s, pr = r.per_rank;
+  const picks = [...new Set([s.worst_rank, 1, pr.length])].map(k => pr[k - 1]);
+  const rows = picks.map(x => ({label: x.rank === s.worst_rank ? `rank ${x.rank} ★` : x.rank === pr.length ? `rank ${x.rank} (φύλλο)` : `rank ${x.rank}`, parts: stateParts(x, Tc)}));
+  const lim = r.limits;
+  $("#p-energy").innerHTML =
+    `<div class="grid2">` +
+    chartCard("Κατανάλωση ανά rank", "mAh ανά ημέρα, ανά κόμβο (ισορροπημένο δέντρο: ίδιο φορτίο σε κάθε κόμβο του rank)", barChart({items: rankItems("mah_day", 2, "mAh/ημ."), unit: "mAh/ημ."})) +
+    chartCard("Αυτονομία χωρίς ήλιο", "ημέρες με την ωφέλιμη χωρητικότητα της μπαταρίας (με αυτοεκφόρτιση)", barChart({items: rankItems("autonomy_dark_days", 1, "ημέρες"), unit: "ημέρες", color: "--s3"})) +
+    `</div>` +
+    chartCard("Πού πάει η ενέργεια", "ανάλυση ανά κατάσταση σε mAh/ημέρα · ★ = χειρότερος κόμβος", stackChart(rows), legend(STATE_GROUPS.map(g => [g[1], g[3]]))) +
+    `<div class="card pad"><h3 style="font-size:14px">Θεωρητικά όρια</h3><div class="kv" style="margin-top:8px">
+      <div><b>Ιδανικό φύλλο</b><span>${fmt(lim.ideal_leaf_mah_day, 3)} mAh/ημ.</span></div>
+      <div><b>Αυτονομία ιδανικού</b><span>${fmt(lim.ideal_leaf_autonomy_dark_days, 0)} ημ.</span></div>
+      <div><b>Ξύπνιο ιδανικού</b><span>${fmt(lim.ideal_leaf_awake_s, 3)} s</span></div>
+      <div><b>Όριο αυτοεκφόρτισης</b><span>${fmt(lim.self_discharge_floor_days, 0)} ημ.</span></div>
+      <div><b>Ενέργεια 1 frame</b><span>${fmt(lim.one_frame_energy_mas, 4)} mAs</span></div>
+      <div><b>Κόμβοι / παράθυρο (γέφυρα)</b><span>${lim.max_nodes_per_window}</span></div>
+    </div><p class="note" style="margin:8px 0 0">Ιδανικό φύλλο: μόνο το chip σε deep sleep (5 µA), SHT40, light sleep στο warm-up, ένα frame ανά κύκλο.</p></div>` +
+    tableCard("Όλα ανά rank", ["rank","subtree","awake s","duty %","on-air ms","mAh/ημ.","µA μέσο","αυτονομία ημ.","ηλιακό ×","latency s","on-time PDR","buffer","util"],
+      pr.map(x => [x.rank, x.subtree, fmt(x.awake_s, 2), fmt(x.duty_pct, 3), fmt(x.time_on_air_ms, 2), fmt(x.mah_day, 2), fmt(x.avg_ua, 1), fmt(x.autonomy_dark_days, 1), fmt(x.solar_margin_x, 1), fmt(x.latency_s, 2), fmt(x.p_ontime, 4), x.buffer_peak, fmt(x.buffer_util, 2)]));
+}
+function tableCard(title, head, rows, open = false){
+  return `<details class="card pad" ${open ? "open" : ""}><summary style="cursor:pointer;font-weight:600">${esc(title)}</summary><div class="tw" style="margin-top:8px;max-height:420px"><table><thead><tr>${head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${rows.map(r => `<tr>${r.map(c => `<td>${c}</td>`).join("")}</tr>`).join("")}</tbody></table></div></details>`;
+}
+function kvCard(title, obj, labels){
+  return `<div class="card pad"><h3 style="font-size:14px">${esc(title)}</h3><div class="kv" style="margin-top:8px">${labels.map(([k, l, d, u]) => obj[k] === undefined ? "" : `<div><b>${esc(l)}</b><span>${typeof obj[k] === "number" || obj[k] === "inf" ? fmt(obj[k], d ?? 3) : esc(obj[k])}${u ? " " + u : ""}</span></div>`).join("")}</div></div>`;
+}
+function renderNet(){
+  const r = S.calc, pr = r.per_rank, xs = pr.map(x => x.rank);
+  const sy = r.sync || {};
+  $("#p-net").innerHTML =
+    `<div class="grid2">` +
+    chartCard("Καθυστέρηση ανά rank", "μέτρηση → Pi, μέσα στον κύκλο (s)", lineChart({xs, unit: "s", series: [{name: "latency", color: "--s1", dots: pr.length <= 20, pts: pr.map(x => ({y: x.latency_s}))}]})) +
+    chartCard("Πιθανότητα παράδοσης ανά κύκλο", "on-time PDR: συγχρονισμός, απώλειες link, συγκρούσεις, TTL", lineChart({xs, unit: "PDR", ymax: 1, series: [{name: "PDR", color: "--s3", dots: pr.length <= 20, pts: pr.map(x => ({y: x.p_ontime}))}]})) +
+    chartCard("Πληρότητα buffer ανά rank", `μέγιστο φορτίο (frames) έναντι buffer ${S.cfg["scheme.relay_buffer"]}`, barChart({items: pr.map(x => ({x: x.rank, y: x.buffer_peak, color: x.buffer_util > 1 ? "--s8" : "--s1", tip: `rank ${x.rank}: ${x.buffer_peak} frames (${fmt(100 * x.buffer_util, 0)} %)`})), unit: "frames"})) +
+    chartCard("Time on air ανά κόμβο", "ms εκπομπής ανά κύκλο", barChart({items: rankItems("time_on_air_ms", 2, "ms"), unit: "ms", color: "--s2"})) +
+    `</div>` +
+    kvCard("Συγχρονισμός ρολογιών (ζεύγος κόμβου–parent)", sy, [["bias","bias",5],["step","step / κύκλο",6],["wander_std","σ περιπλάνησης",3,"s"],["g_max","G_max",2,"s"],["guard_mean","μέσο guard",3,"s"],["listen","μέσο listen",3,"s"],["miss","χαμένα wakes",4],["drops_per_year","orphan sweeps / έτος",1],["err_std","σ υπολοίπου",3,"s"],["rule","κανόνας"]]) +
+    kvCard("Γέφυρα / Pi", r.gateway, [["line_b","γραμμή UART",0,"B"],["t_uart","χρόνος γραμμής",4,"s"],["ack_line_b","γραμμή ACK",0,"B"],["t_gw","εξυπηρέτηση / frame",4,"s"],["max_frames_s","μέγ. ρυθμός",1,"frames/s"],["ack_rtt","ACK RTT",4,"s"]]) +
+    kvCard("Ράδιο", r.radio, [["packet_b","πακέτο",0,"B"],["t_air","airtime data",6,"s"],["t_exch","unicast exchange",6,"s"],["attempts_mean","μέσες προσπάθειες",4],["per_attempt","PER / προσπάθεια",6],["p_link_fail","αποτυχία link",8]]) +
+    kvCard("Συγκρούσεις (εκτίμηση κλειστού τύπου)", r.collisions, [["contenders","παιδιά / parent",0],["p_csma_first_slot","CSMA first slot",4],["p_hidden_per_attempt","hidden / προσπάθεια",5],["p_fail_after_attempts","αποτυχία μετά από όλες",8]]) +
+    kvCard("Σχήμα", r.scheme, [["window_s","παράθυρο",3,"s"],["window_core_s","πυρήνας παραθύρου",3,"s"],["window_spread_s","διασπορά ρολογιών",3,"s"],["up_time_s","ανέβασμα",3,"s"],["down_time_s","κατέβασμα ACK",3,"s"],["ack_mode","ACK"],["ack_transmissions","εκπομπές ACK / κύκλο",0],["ladder_span_s","μήκος σκάλας",2,"s"],["per_frame_s","ανά frame",4,"s"],["note","σημείωση"]]);
+}
+function renderImp(){
+  const rows = S.calc.improvements;
+  if (!rows) { $("#p-imp").innerHTML = `<div class="card empty">Τρέξε «Υπολογισμός» για να αξιολογηθούν οι βελτιώσεις.</div>`; return; }
+  const base = rows[0];
+  const maxAbs = Math.max(1, ...rows.map(r => Math.abs(r.worst_delta_pct)));
+  $("#p-imp").innerHTML = `<div class="card pad"><h3 style="font-size:14px">Κάθε βελτίωση μόνη της, και όλες μαζί</h3>
+    <p class="note" style="margin:4px 0 10px">Σε σχέση με την τρέχουσα ρύθμιση. Αρνητικό Δ = λιγότερη κατανάλωση στον χειρότερο κόμβο.</p>
+    <div class="tw"><table><thead><tr><th>Βελτίωση</th><th>Κατηγορία</th><th>χειρότερος mAh/ημ.</th><th>Δ %</th><th>ζωή δικτύου ημ.</th><th>φύλλο mAh/ημ.</th><th>latency s</th><th>PDR</th><th>παραδίδουν</th><th>✕</th><th>Σημείωση</th></tr></thead><tbody>` +
+    rows.map(r => { const d = r.worst_delta_pct, good = d < 0, wBar = 60 * Math.abs(d) / maxAbs;
+      return `<tr><td class="txt">${esc(r.label)}</td><td class="txt">${esc(r.category)}</td><td>${fmt(r.worst_mah_day, 2)}</td>
+      <td class="${d < -0.05 ? "good-t" : d > 0.05 ? "bad-t" : ""}">${d > 0 ? "+" : ""}${fmt(d, 1)}<span class="dbar" style="width:${wBar}px;background:var(${good ? "--good" : "--crit"})"></span></td>
+      <td>${fmt(r.lifetime_dark_days, 1)}</td><td>${fmt(r.leaf_mah_day, 2)}</td><td>${fmt(r.latency_max_s, 1)}</td><td>${fmt(r.pdr_ontime_mean, 3)}</td>
+      <td class="${r.delivered_nodes > base.delivered_nodes ? "good-t" : ""}">${r.delivered_nodes}</td><td>${r.checks_failed}</td><td class="txt" style="min-width:200px">${esc(r.caveat)}</td></tr>`; }).join("") +
+    `</tbody></table></div></div>`;
+}
+function renderDes(){
+  const d = S.des;
+  if (!d) { $("#p-des").innerHTML = `<div class="card empty">${S.mode === "live" ? "Πάτα «Προσομοίωση (DES)» για προσομοίωση γεγονότων με τις τρέχουσες ρυθμίσεις (μικρά σενάρια: δευτερόλεπτα)." : "Διάλεξε ένα έτοιμο παράδειγμα ή εισήγαγε results.json από <code>python -m meshsim des</code> στο tab Runs."}</div>`; return; }
+  const s = d.summary, pr = d.per_rank, calc = d.plan.per_rank, xs = pr.map(x => x.rank);
+  const tile = (l, v, u, cap) => `<div class="card tile"><div class="l">${l}</div><div class="v num">${v}<small>${u}</small></div><div class="c">${cap}</div></div>`;
+  $("#p-des").innerHTML =
+    `<div class="tiles">` +
+    tile("Παράδοση (settled)", s.pdr_settled === null ? "—" : fmt(100 * s.pdr_settled, 1), "%", `εντός ορίζοντα ${fmt(100 * s.pdr, 1)} % · ${s.cycles} κύκλοι`) +
+    tile("Σύγκρουση / προσπάθεια", fmt(100 * s.p_collision_per_attempt, 1), "%", `${fmt(s.tx_attempts, 0)} προσπάθειες εκπομπής`) +
+    tile("Καθυστέρηση διάμεση", fmt(s.latency_median_s, 2), "s", `p95 ${fmt(s.latency_p95_s, 1)} s`) +
+    tile("Διπλότυπα στο Pi", s.duplicates_at_pi, "", `γέφυρα: max ουρά ${s.bridge_queue_max}, απορρ. ${s.bridge_rejects}`) +
+    `</div><div class="grid2">` +
+    chartCard("Ενέργεια: DES έναντι calculator", "mAh/ημέρα ανά rank · γραμμή = calculator, κουκκίδες = DES", lineChart({xs, unit: "mAh/ημ.", series: [
+      {name: "calculator", color: "--s1", pts: calc.map(x => ({y: x.mah_day}))},
+      {name: "DES", color: "--s2", dotsOnly: true, pts: pr.map(x => ({y: x.mah_day}))}]}), legend([["calculator", "--s1"], ["DES", "--s2"]])) +
+    chartCard("Παράδοση: DES έναντι calculator", "DES: ποσοστό μετρήσεων που έφτασαν · calculator: on-time ανά κύκλο", lineChart({xs, unit: "PDR", ymax: 1, series: [
+      {name: "calculator", color: "--s1", pts: calc.map(x => ({y: x.p_ontime}))},
+      {name: "DES", color: "--s2", dotsOnly: true, pts: pr.map(x => ({y: x.pdr}))}]}), legend([["calculator", "--s1"], ["DES", "--s2"]])) +
+    chartCard("Συγκρούσεις ανά rank", "πιθανότητα σύγκρουσης ανά προσπάθεια εκπομπής (DES)", barChart({items: pr.map(x => ({x: x.rank, y: x.p_collision_per_attempt, color: "--s8", tip: `rank ${x.rank}: ${fmt(100 * x.p_collision_per_attempt, 1)} %`})), unit: "P"})) +
+    chartCard("Ουρά γέφυρας στον χρόνο", `frames στην ουρά RX (όριο ${S.cfg ? S.cfg["bridge.ingress_queue"] : "—"})`, queueChart(d.series.bridge_queue)) +
+    `</div>` +
+    chartCard("Timeline καταστάσεων (1ος κύκλος)", "κάθε γραμμή ένας κόμβος (για >60 κόμβους: ένας ανά rank) · ανοιχτό = ξύπνιος, σκούρο = εκπομπή", `<canvas class="gantt" id="gantt" height="10"></canvas>`, legend([["ξύπνιος", "--seq-light"], ["εκπομπή", "--s2"]])) +
+    tableCard("Όλα ανά rank (DES)", ["rank","gen","παραδ.","PDR","lat μέση s","p95 s","mAh/ημ.","calc","awake s","on-air ms","P(coll)","P(PER)","sync miss","own buf","relay buf","util","drops"],
+      pr.map(x => [x.rank, x.gen, x.delivered, fmt(x.pdr, 3), fmt(x.latency_mean_s, 2), fmt(x.latency_p95_s, 2), fmt(x.mah_day, 2), fmt(calc[x.rank - 1].mah_day, 2), fmt(x.awake_s_per_cycle, 2), fmt(x.time_on_air_ms_per_cycle, 2), fmt(x.p_collision_per_attempt, 3), fmt(x.p_per_per_attempt, 4), fmt(x.sync_miss_rate, 3), `${fmt(x.own_buffer_mean, 2)} / ${x.own_buffer_max}`, `${fmt(x.relay_buffer_mean, 2)} / ${x.relay_buffer_max}`, fmt(x.relay_buffer_util_max, 2), Object.entries(x.drops).filter(([, v]) => v).map(([k, v]) => `${k}=${v}`).join(", ") || "—"]));
+  requestAnimationFrame(() => drawGantt(d.trace));
+}
+function queueChart(series){
+  if (!series || !series.length) return `<div class="empty">Καμία κίνηση στη γέφυρα.</div>`;
+  const w = 640, h = 200, m = {l: 48, r: 14, t: 22, b: 30};
+  const t0 = series[0][0], t1 = series[series.length - 1][0] || t0 + 1;
+  const span = Math.max(1e-6, t1 - t0), ymax = niceMax(Math.max(...series.map(p => p[1]), 1));
+  const xOf = t => m.l + (w - m.l - m.r) * (t - t0) / span, yOf = v => h - m.b - (h - m.t - m.b) * v / ymax;
+  let s = svgEl(w, h) + frame(w, h, m, ymax, "frames"), pts = [], prev = null;
+  for (const [t, v] of series) { if (prev !== null) pts.push(`${xOf(t)},${yOf(prev)}`); pts.push(`${xOf(t)},${yOf(v)}`); prev = v; }
+  s += `<polyline points="${pts.join(" ")}" fill="none" stroke="var(--s1)" stroke-width="2"/>`;
+  for (const f of [0, 0.5, 1]) s += `<text x="${m.l + (w - m.l - m.r) * f}" y="${h - m.b + 15}" text-anchor="middle" font-size="11" fill="var(--muted)" font-family="var(--f-mono)">${fmt(t0 + span * f, 1)} s</text>`;
+  return s + "</svg>";
+}
+function drawGantt(trace){
+  const cv = document.getElementById("gantt"); if (!cv || !trace || !trace.length) return;
+  const nodes = [...new Set(trace.map(t => t.node))].sort((a, b) => a - b);
+  const rankOf = Object.fromEntries(trace.map(t => [t.node, t.rank]));
+  const awake = trace.filter(t => t.state === "awake");
+  const t0 = Math.min(...trace.map(t => t.t0)), t1 = Math.max(...(awake.length ? awake : trace).map(t => t.t1));
+  const rowH = nodes.length > 40 ? 8 : 14, m = {l: 64, r: 12, t: 6, b: 22};
+  const W = cv.clientWidth || 640, H = m.t + m.b + nodes.length * rowH, dpr = devicePixelRatio || 1;
+  cv.width = W * dpr; cv.height = H * dpr; cv.style.height = H + "px";
+  const g = cv.getContext("2d"); g.scale(dpr, dpr);
+  const xOf = t => m.l + (W - m.l - m.r) * (t - t0) / Math.max(1e-9, t1 - t0);
+  const row = Object.fromEntries(nodes.map((n, i) => [n, i]));
+  g.font = `10px ${css("--f-mono")}`; g.fillStyle = css("--muted"); g.textAlign = "right";
+  let lastRank = null;
+  nodes.forEach((n, i) => { if (rankOf[n] !== lastRank) { g.fillText(`r${rankOf[n]}`, m.l - 6, m.t + i * rowH + rowH - 2); lastRank = rankOf[n]; } });
+  g.fillStyle = css("--seq-light");
+  for (const t of awake) g.fillRect(xOf(t.t0), m.t + row[t.node] * rowH + 1, Math.max(1, xOf(t.t1) - xOf(t.t0)), rowH - 2);
+  g.fillStyle = css("--s2");
+  for (const t of trace) if (t.state === "tx") g.fillRect(xOf(t.t0), m.t + row[t.node] * rowH + 1, Math.max(1.5, xOf(t.t1) - xOf(t.t0)), rowH - 2);
+  g.fillStyle = css("--muted"); g.textAlign = "center";
+  for (const f of [0, 0.25, 0.5, 0.75, 1]) g.fillText(`${fmt(t0 + (t1 - t0) * f, 2)} s`, xOf(t0 + (t1 - t0) * f), H - 6);
+  cv.onmousemove = e => { const rc = cv.getBoundingClientRect(), y = e.clientY - rc.top, x = e.clientX - rc.left;
+    const i = Math.floor((y - m.t) / rowH), n = nodes[i]; if (n === undefined || x < m.l) { cv.removeAttribute("data-tip"); return; }
+    const t = t0 + (x - m.l) / (W - m.l - m.r) * (t1 - t0);
+    const tx = trace.filter(z => z.node === n && z.state === "tx").length;
+    cv.setAttribute("data-tip", `κόμβος ${n} · rank ${rankOf[n]}\nt = ${fmt(t, 3)} s · ${tx} εκπομπές`); };
+}
+
+/* ── runs ─────────────────────────────────────────────────── */
+function remember(kind){
+  const hist = load("history", []);
+  const s = kind === "des" ? S.des.summary : S.calc.summary;
+  hist.unshift({time: new Date().toLocaleString("el-GR"), kind, preset: $("#preset").value, over: S.mode === "live" ? overrides() : {}, label: S.label,
+    worst: s.worst_mah_day, life: s.worst_autonomy_dark_days ?? s.network_lifetime_dark_days, pdr: s.pdr_settled ?? s.pdr_ontime_mean, tech: s.technique});
+  store("history", hist.slice(0, 40));
+}
+async function renderRuns(){
+  const hist = load("history", []);
+  let local = "";
+  try { const r = await fetch("runs/index.csv", {cache: "no-store"}); if (r.ok) local = await r.text(); } catch (e) {}
+  const rows = local ? local.trim().split(/\r?\n/).map(l => splitCsv(l)) : [];
+  const head = rows.shift() || [];
+  const idx = k => head.indexOf(k);
+  $("#p-runs").innerHTML =
+    (rows.length ? `<div class="card pad"><h3 style="font-size:14px">Runs από το CLI (<code>sim/runs/index.csv</code>)</h3><div class="tw" style="margin-top:8px;max-height:360px"><table><thead><tr><th>χρόνος</th><th>είδος</th><th>όνομα</th><th>τεχνική</th><th>ranks×W</th><th>T</th><th>χειρότ. mAh/ημ.</th><th>ζωή ημ.</th><th>PDR</th><th></th></tr></thead><tbody>` +
+      rows.slice().reverse().map(r => `<tr><td>${esc(r[idx("time")])}</td><td class="txt">${esc(r[idx("kind")])}</td><td class="txt">${esc(r[idx("label")])}</td><td class="txt">${esc(r[idx("technique")])}</td><td>${esc(r[idx("ranks")])}×${esc(r[idx("per_rank")])}</td><td>${esc(r[idx("T_s")])}</td><td>${fmt(r[idx("worst_mah_day")], 2)}</td><td>${fmt(r[idx("worst_autonomy_dark_days")], 1)}</td><td>${fmt(r[idx("pdr_ontime_mean")], 3)}</td><td><button class="btn" data-open="${esc(r[idx("dir")])}" data-kind="${esc(r[idx("kind")])}">Άνοιγμα</button></td></tr>`).join("") +
+      `</tbody></table></div></div>` : "") +
+    `<div class="card pad"><h3 style="font-size:14px">Ιστορικό αυτής της σελίδας</h3><p class="note" style="margin:4px 0 8px">Αποθηκεύεται μόνο σε αυτόν τον browser. Τα πλήρη αρχεία κάθε run γράφονται από το CLI στο <code>sim/runs/</code>.</p>` +
+    (hist.length ? `<div class="tw"><table><thead><tr><th>χρόνος</th><th>είδος</th><th>preset</th><th>τεχνική</th><th>αλλαγές</th><th>χειρότ. mAh/ημ.</th><th>ζωή ημ.</th><th>PDR</th></tr></thead><tbody>` +
+      hist.map(h => `<tr><td>${esc(h.time)}</td><td class="txt">${esc(h.kind)}</td><td class="txt">${esc(h.preset)}</td><td class="txt">${esc(h.tech)}</td><td class="txt">${esc(Object.entries(h.over || {}).map(([k, v]) => k + "=" + v).join(", ") || h.label || "—")}</td><td>${fmt(h.worst, 2)}</td><td>${fmt(h.life, 1)}</td><td>${fmt(h.pdr, 3)}</td></tr>`).join("") + `</tbody></table></div>` : `<div class="note">Κανένα run ακόμα.</div>`) + `</div>` +
+    `<div class="card pad" style="display:grid;gap:8px"><h3 style="font-size:14px">Εισαγωγή / εξαγωγή</h3>
+      <p class="note" style="margin:0">Εισαγωγή <code>results.json</code> από <code>python -m meshsim calc</code> ή <code>des</code> (αρχείο ή επικόλληση).</p>
+      <input type="file" id="imp-file" accept=".json,application/json">
+      <textarea id="imp-text" placeholder='επικόλληση JSON…'></textarea>
+      <div class="btns"><button class="btn" id="imp-go">Εισαγωγή</button><button class="btn" id="exp-go">Αντιγραφή αποτελεσμάτων ως JSON</button></div>
+      <div class="note" id="imp-msg"></div></div>`;
+  document.querySelectorAll("[data-open]").forEach(b => b.onclick = () => openRun(b.dataset.open, b.dataset.kind));
+  $("#imp-file").onchange = async e => { const f = e.target.files[0]; if (f) importJson(await f.text()); };
+  $("#imp-go").onclick = () => importJson($("#imp-text").value);
+  $("#exp-go").onclick = async () => { const txt = JSON.stringify({config: S.cfg, calc: S.calc, des: S.des});
+    try { await navigator.clipboard.writeText(txt); $("#imp-msg").textContent = "Αντιγράφηκε στο πρόχειρο."; }
+    catch (e) { $("#imp-text").value = txt; $("#imp-text").select(); $("#imp-msg").textContent = "Το πρόχειρο δεν επιτρέπεται εδώ· το JSON είναι επιλεγμένο στο πλαίσιο."; } };
+}
+function splitCsv(line){ const out = []; let cur = "", q = false;
+  for (let i = 0; i < line.length; i++) { const c = line[i];
+    if (q) { if (c === '"' && line[i + 1] === '"') { cur += '"'; i++; } else if (c === '"') q = false; else cur += c; }
+    else if (c === '"') q = true; else if (c === ",") { out.push(cur); cur = ""; } else cur += c; }
+  out.push(cur); return out; }
+async function openRun(dir, kind){
+  try {
+    const [res, cfg] = await Promise.all([fetch(`runs/${dir}/results.json`).then(r => r.json()), fetch(`runs/${dir}/config.json`).then(r => r.json())]);
+    S.cfg = cfg; S.label = dir;
+    if (kind === "des") { S.des = res; S.calc = S.calc && S.calc.summary.nodes === res.summary.nodes ? S.calc : null; if (!S.calc) S.calc = planAsCalc(res); }
+    else { S.calc = res; S.des = null; }
+    renderAll(); selectTab(kind === "des" ? "des" : "energy");
+  } catch (e) { alertMsg("Δεν διαβάστηκε το run: " + e.message); }
+}
+function planAsCalc(d){ return {summary: d.plan.summary, per_rank: d.plan.per_rank, checks: d.plan.checks, scheme: d.plan.scheme, sync: {}, gateway: {}, radio: {}, collisions: {}, limits: {}, improvements: null}; }
+function importJson(txt){
+  try {
+    const j = JSON.parse(txt);
+    if (j.calc || j.des) { S.cfg = j.config || S.cfg; S.calc = j.calc || (j.des ? planAsCalc(j.des) : null); S.des = j.des || null; }
+    else if (j.plan) { S.des = j; S.calc = planAsCalc(j); }
+    else if (j.per_rank && j.checks) { S.calc = j; S.des = null; }
+    else throw new Error("άγνωστη μορφή");
+    S.cfg = S.cfg || {}; S.label = "εισαγωγή";
+    renderAll(); $("#imp-msg") && ($("#imp-msg").textContent = "Εισήχθη.");
+  } catch (e) { $("#imp-msg").textContent = "Δεν αναγνωρίστηκε: " + e.message; }
+}
+function alertMsg(m){ busy(m); setTimeout(() => busy(""), 4000); }
+
+/* ── actions ─────────────────────────────────────────────── */
+function selectTab(t){ S.tab = t; document.querySelectorAll(".tab").forEach(b => b.setAttribute("aria-selected", b.dataset.t === t));
+  for (const p of ["energy", "net", "imp", "des", "runs"]) document.getElementById("p-" + p).hidden = p !== t;
+  if (t === "des" && S.des) requestAnimationFrame(() => drawGantt(S.des.trace)); store("tab", t); }
+$("#tabs").onclick = e => { const b = e.target.closest(".tab"); if (b) selectTab(b.dataset.t); };
+async function runCalc(){
+  if (S.mode !== "live") return;
+  busy("Υπολογισμός…"); await new Promise(r => setTimeout(r, 20));
+  try { const o = await S.api.calc($("#preset").value, overrides());
+    S.cfg = o.config; S.calc = o.calc; S.label = o.run_dir ? "καταγράφηκε: sim/runs/" + o.run_dir : ""; S.des = null; renderAll(); remember("calc"); }
+  catch (e) { alertMsg("Σφάλμα: " + String(e.message || e).split("\n").slice(-2).join(" ")); return; }
+  busy("");
+}
+async function runDes(){
+  if (S.mode !== "live") return;
+  const o = overrides(); const n = (o["net.ranks"] ?? S.base["net.ranks"]) * (o["net.per_rank"] ?? S.base["net.per_rank"]);
+  busy(`Προσομοίωση ${n} κόμβων…`); await new Promise(r => setTimeout(r, 20));
+  try { const c = await S.api.calc($("#preset").value, o, false);
+    const d = await S.api.des($("#preset").value, o);
+    S.cfg = d.config; S.calc = c.calc; S.des = d.des; S.label = d.run_dir ? "καταγράφηκε: sim/runs/" + d.run_dir : ""; renderAll(); selectTab("des"); remember("des"); }
+  catch (e) { alertMsg("Σφάλμα: " + String(e.message || e).split("\n").slice(-2).join(" ")); return; }
+  busy("");
+}
+$("#runCalc").onclick = runCalc;
+$("#runDes").onclick = runDes;
+$("#reset").onclick = () => applyPreset($("#preset").value);
+$("#preset").onchange = async e => { if (S.mode === "live") { await applyPreset(e.target.value); runCalc(); } };
+$("#example").onchange = e => showExample(Number(e.target.value));
+function showExample(i){ const x = S.examples[i]; if (!x) return;
+  S.cfg = x.config; S.calc = x.calc; S.des = x.des || null; S.label = "παράδειγμα: " + x.label; renderAll(); store("example", i); }
+
+function loadScript(src){ return new Promise((ok, no) => { const s = document.createElement("script"); s.src = src; s.onload = ok; s.onerror = () => no(new Error("script " + src)); document.head.appendChild(s); }); }
+const serverApi = {
+  async call(name, body){
+    const r = await fetch("api/" + name, {method: "POST", headers: {"Content-Type": "application/json"}, body: JSON.stringify(body || {})});
+    const j = await r.json(); if (!r.ok) throw new Error(j.error || r.status); return j; },
+  meta(){ return this.call("meta"); }, resolve(p){ return this.call("resolve", {preset: p}); },
+  calc(p, o, log = true){ return this.call("calc", {preset: p, overrides: o, log}); }, des(p, o){ return this.call("des", {preset: p, overrides: o}); },
+};
+function pyodideApi(py){
+  const f = n => (...a) => JSON.parse(py.globals.get(n)(...a));
+  return {meta: async () => f("api_meta")(), resolve: async p => f("api_resolve")(p),
+    calc: async (p, o) => f("api_calc")(p, JSON.stringify(o)), des: async (p, o) => f("api_des")(p, JSON.stringify(o))};
+}
+async function connect(){
+  try { const r = await fetch("api/meta", {method: "POST", body: "{}"}); if (r.ok) return ["server", serverApi]; } catch (e) {}
+  return ["pyodide", pyodideApi(await bootPython())];
+}
+async function bootPython(){
+  const local = await fetch("pyodide/pyodide.js", {method: "HEAD"}).then(r => r.ok).catch(() => false);
+  const base = local ? "pyodide/" : "https://cdn.jsdelivr.net/npm/pyodide@0.26.4/full/";
+  await loadScript(base + "pyodide.js");
+  const py = await loadPyodide({indexURL: base});
+  py.FS.mkdirTree("/home/pyodide/meshsim");
+  for (const f of PY_FILES) { const r = await fetch("meshsim/" + f); if (!r.ok) throw new Error("λείπει meshsim/" + f); py.FS.writeFile("/home/pyodide/meshsim/" + f, await r.text()); }
+  py.runPython(PY_BOOT);
+  return py;
+}
+async function main(){
+  try { const r = await fetch("examples.json"); if (r.ok) S.examples = await r.json(); } catch (e) {}
+  $("#example").innerHTML = S.examples.map((x, i) => `<option value="${i}">${esc(x.label)}</option>`).join("");
+  $("#exWrap").hidden = !S.examples.length;
+  try {
+    const [kind, api] = await Promise.race([connect(), new Promise((_, no) => setTimeout(() => no(new Error("timeout")), 45000))]);
+    S.api = api;
+    const meta = await S.api.meta();
+    S.keys = meta.keys; S.presets = meta.presets;
+    setMode("live", kind === "server" ? "Τοπικός server (CPython) · κάθε run καταγράφεται στο sim/runs" : "Python στο browser (Pyodide) · όλες οι μεταβλητές ζωντανά");
+    $("#preset").innerHTML = Object.keys(S.presets).map(p => `<option>${p}</option>`).join("");
+    $("#preset").value = load("preset", "greenhouse") in S.presets ? load("preset", "greenhouse") : "greenhouse";
+    await applyPreset($("#preset").value);
+    await runCalc();
+  } catch (e) {
+    setMode("view", "Προβολή: έτοιμα παραδείγματα + εισαγωγή JSON (για ζωντανούς υπολογισμούς: python -m meshsim serve)");
+    $("#preset").innerHTML = `<option>—</option>`; $("#preset").disabled = true;
+    $("#runCalc").disabled = $("#runDes").disabled = $("#reset").disabled = true;
+    $("#paramCard").innerHTML = `<div class="pad note">Οι ρυθμίσεις ενεργοποιούνται όταν φορτώσει ο Python engine (τοπικά με <code>python -m meshsim serve</code>). Εδώ φαίνονται οι ρυθμίσεις του επιλεγμένου παραδείγματος στο tab «Runs» → αντιγραφή JSON.</div>`;
+    const i = load("example", 0); $("#example").value = String(i); showExample(Number(i) || 0);
+  }
+  selectTab(load("tab", "energy"));
+}
+main();
+</script>

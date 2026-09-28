@@ -439,6 +439,14 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `energy.i_light_sleep_ma` | 0.13 | light sleep chip |  |
 | `energy.i_active_lumped_ma` | 86.5 | lumped: ενιαίο ρεύμα awake |  |
 | `energy.phase1_lumped_awake_s` | 2.5 | lumped phase1: awake του repo |  |
+| `des.cycles` | 3 | κύκλοι που προσομοιώνονται |  |
+| `des.seed` | 1 | seed (ίδιο seed → ίδιο αποτέλεσμα) |  |
+| `des.seeds` | 1 | πόσα seeds (>1 → μέσος όρος ± 95 % CI) |  |
+| `des.trace_cycles` | 1 | κύκλοι που καταγράφονται στο timeline (Gantt) |  |
+| `des.shadow_sigma_db` | 4 | shadowing ανά link (dB) |  |
+| `des.window_s` | — | T2: μήκος παραθύρου (None = από τον calculator) |  |
+| `des.clock_burnin` | 64 | κύκλοι προθέρμανσης ρολογιών πριν την προσομοίωση |  |
+| `des.sweep_energy` | expected | ενέργεια sweeps: αναμενόμενη (μοντέλο) ή παρατηρημένη | expected \| observed |
 | `req.lifetime_days` | 365 | στόχος αυτονομίας χωρίς ήλιο (ημέρες) |  |
 | `req.latency_s` | 900 | μέγιστη αποδεκτή καθυστέρηση μέτρησης (s) |  |
 | `req.pdr` | 0.99 | ελάχιστο ποσοστό παράδοσης ανά κύκλο |  |
