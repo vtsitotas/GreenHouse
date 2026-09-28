@@ -11,6 +11,16 @@
 > `cart1` (one sleepy hop) as the stepping stone. Scaling fixes come from scheduling,
 > TTL/ACK design, bridge throughput and depth — never from powered relays.
 
+> **Addendum (user, 2026-09-28): simulator + calculator.** Every variable is tweakable per run
+> (`sim/meshsim/config.py`, `--set key=value`, presets), every run is logged in full
+> (`sim/runs/<run>/` + `index.csv`), and a deterministic calculator
+> (`calculator.py`) answers questions like "edge-node autonomy for these parameters" with a
+> per-state energy breakdown, feasibility checks and theoretical limits. A hardware component
+> library (`hardware.py`: boards, dividers, RTC clock, SHT40/BME280/DHT22, batteries, solar) and an
+> improvements table (`improvements.py`) show what each hardware/firmware/gateway change buys.
+> The DES engine (below) validates the calculator's stochastic terms. Usage:
+> `docs/simulator/README.md`.
+
 
 ## Context
 

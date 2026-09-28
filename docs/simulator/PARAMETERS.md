@@ -284,3 +284,170 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `RELAY_FLUSH_TIME_S_AT_MIN` | 0.0849 | s | B × UNICAST_DATA_MEAN | derived | έναντι MESH_WAKE_MAX_AWAKE_MS = 10000 ms |
 | `BACK_TO_BACK_TX_LIMIT` | 32 | frames | dynamic TX buffers | derived | flush > 32 χωρίς αναμονή callback → ESP_ERR_ESPNOW_NO_MEM |
 
+## I. Μητρώο εξαρτημάτων (επιλογές hardware για το calculator)
+
+### Πλακέτα / sleep floor (`boards`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `supermini_stock` | sleep_ma=3.05 | `docs/EDGE_NODE_POWER_OPTIMIZATION.md:39` | repo-doc | πλακέτα όπως έρχεται: power LED (~3 mA) + LDO + idle αισθητήρες |
+| `supermini_led_removed` | sleep_ma=0.055 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:137` | repo-doc | LED αφαιρεμένο· 55 µA = RTC + LDO quiescent (εκτίμηση, ΔΕΝ έχει μετρηθεί) |
+| `supermini_ldo_bypass` | sleep_ma=0.01 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:266-270 + ESP32-C3 Datasheet (Espressif) Table 5-9` | unverified | LiFePO4 κατευθείαν στο 3V3 (χωρίς LDO quiescent): chip 5 µA + ~5 µA διαρροές πλακέτας — εκτίμηση, πρέπει να μετρηθεί (PPK2/µCurrent) |
+| `bare_chip_ideal` | sleep_ma=0.005 | ESP32-C3 Datasheet (Espressif), Table 5-9 | datasheet | θεωρητικό όριο: μόνο το chip σε deep sleep (RTC timer + RTC memory) |
+
+### Divider μπαταρίας (`dividers`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `220k_x2` | sleep_ma=0.0075 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:46` | repo-doc | 3,3 V / 440 kΩ, πάντα ON (σημερινό) |
+| `1M_x2` | sleep_ma=0.00165 | `3,3 V / 2 MΩ (Ohm)` | derived | χρειάζεται πυκνωτή 100 nF στο ADC pin για σωστή ανάγνωση |
+| `switched` | sleep_ma=0.0001 | P-MOSFET high-side switch (εκτίμηση διαρροής) | unverified | ρεύμα μόνο κατά την ανάγνωση (16 ms)· +1 εξάρτημα |
+| `none` | sleep_ma=0 | — | model | χωρίς μέτρηση μπαταρίας |
+
+### Ρολόι RTC (`rtc_clocks`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `rc136k` | sleep_ma=0 | sdkconfig CONFIG_RTC_CLK_SRC_INT_RC | toolchain | σημερινό· drift 0,17 % (Gate 0 run 1) |
+| `rc_fast_d256` | sleep_ma=0.005 | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §2` | datasheet | +5 µA, καλύτερη σταθερότητα (Gate 0 run 2 θα το μετρήσει) |
+
+### Αισθητήρας αέρα (`climate_sensors`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `dht22` | active_ma=1.5, settle_s=2, read_s=0.006 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:44 + firmware SENSOR_WARMUP_MS` | repo-doc | σημερινό· το 2 s warm-up είναι το 80 % του ξύπνιου χρόνου |
+| `sht40` | active_ma=0.32, settle_s=0.001, read_s=0.0083 | `Sensirion SHT4x datasheet v6.4 (Nov 2023), Table 3/4` | datasheet | power-up ≤1 ms, μέτρηση high repeatability ≤8,3 ms @ 320 µA· I²C |
+| `bme280` | active_ma=0.714, settle_s=0.002, read_s=0.0093 | Bosch BME280 datasheet BST-BME280-DS001-23 rev 1.23, Table 1 + §9.1 | datasheet | forced mode T+P+H ×1: ≤9,3 ms· 714 µA (χειρότερη φάση)· + βαρομετρική πίεση |
+
+### Αισθητήρας εδάφους (`soil_sensors`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `capacitive_v12` | active_ma=5, settle_s=0.1 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:45` | unverified | 5 mA (repo)· χρόνος σταθεροποίησης 0,1 s ΔΕΝ είναι μετρημένος (σήμερα 'κρύβεται' στα 2 s του DHT22) |
+| `none` | active_ma=0, settle_s=0 | — | model |  |
+
+### MCU στο warm-up (`warmup_modes`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `radio_on` |  |  | firmware | σημερινό firmware: ESP-NOW ανοιχτό κατά το warm-up (I_RX) |
+| `cpu_idle` |  |  | datasheet | radio κλειστό, CPU σε delay (modem-sleep idle) |
+| `light_sleep` |  |  | datasheet | light sleep με GPIO hold στους αισθητήρες (130 µA chip) |
+
+### Μπαταρία (`batteries`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `lifepo4_18650_1500` | mah=1500, v=3.2, dod=0.8, self_discharge_pct_month=3 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:47,167` | repo-doc | σημερινό· αυτοεκφόρτιση 3 %/μήνα = τυπική LiFePO4 (μη μετρημένη) |
+| `lifepo4_26650_3000` | mah=3000, v=3.2, dod=0.8, self_discharge_pct_month=3 | τυπική χωρητικότητα αγοράς 26650 LiFePO4 | unverified | ίδια χημεία/τάση → ίδιο firmware, μεγαλύτερη θήκη |
+
+### Ηλιακό πάνελ (`solar_panels`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `none` | w=0 | — | model |  |
+| `6v_2w` | w=2 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:222-231` | repo-doc | σημερινό |
+| `5v_1w` | w=1 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:49` | repo-doc | 5 V: κίνδυνος να πέσει κάτω από το dropout του TP5000 σε ζέστη |
+
+### Ηλιοφάνεια (`sun`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `athens_winter` | psh=2 | `docs/SENSOR_NODE_POWER_AND_SOLAR.md:224-226` | repo-doc |  |
+| `athens_summer` | psh=6.5 | τυπική τιμή PVGIS για Αθήνα (Ιούλιος) — προσέγγιση | unverified |  |
+| `indoor_shade` | psh=0.3 | `υπόθεση: σκιά φυλλώματος/εσωτερικό θερμοκηπίου` | model |  |
+
+### Pi (`pi`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `pi_zero_w` | wh_day=30 | `docs/HARDWARE_PARTS_LIST.md:182` | repo-doc | ~30 Wh/ημέρα ≈ 1,25 W μέσος όρος |
+
+### Γέφυρα (`bridge_board`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `esp32c3_supermini` | i_ma=84, v=5 | ESP32-C3 Datasheet (Espressif), Table 5-7 (RX) | datasheet | πάντα σε RX· τροφοδοσία από τα 5 V του Pi μέσω LDO (ίδιο ρεύμα) |
+
+### Off-grid gateway (`offgrid`)
+
+| επιλογή | τιμές | πηγή | kind | σημείωση |
+|---|---|---|---|---|
+| `pack_12v_lifepo4_6ah` | wh=76.8 | `docs/HARDWARE_PARTS_LIST.md:182` | repo-doc |  |
+| `pack_12v_lifepo4_12ah` | wh=153.6 | `docs/HARDWARE_PARTS_LIST.md:182` | repo-doc |  |
+| `panel_20w` | w=20 | `docs/HARDWARE_PARTS_LIST.md:190` | repo-doc |  |
+
+## J. Μεταβλητές run (`--set key=value`)
+
+Κάθε run: defaults ← preset ← `--set`. Όλα καταγράφονται στο `sim/runs/<run>/config.json`.
+
+| key | default | περιγραφή | επιλογές |
+|---|---|---|---|
+| `net.ranks` | 50 | βάθος δικτύου (ranks) |  |
+| `net.per_rank` | 10 | κόμβοι ανά rank (ισορροπημένο layered δέντρο) |  |
+| `net.max_children` | 3 | χειρότερος relay: παιδιά στον πιο φορτωμένο parent (για συγκρούσεις) |  |
+| `net.hidden_frac` | 0.3 | ποσοστό ζευγών αδελφών που δεν ακούγονται (hidden terminals) |  |
+| `timing.T_s` | 900 | κύκλος αφύπνισης (s)· standards 900 / 1800 |  |
+| `timing.report_every` | 1 | αποστολή κάθε k μετρήσεις (batching· >1 θέλει αλλαγή πακέτου) |  |
+| `timing.t_boot_s` | 0.2 | deep sleep → app (140–230 ms, repo) |  |
+| `timing.radio_init_s` | 0.1 | WiFi/ESP-NOW init (ΜΗ μετρημένο) |  |
+| `timing.awake_cap_s` | 10 | σκληρό όριο αφύπνισης (firmware) |  |
+| `timing.app_ack_wait_s` | 2 | αναμονή app-ACK (firmware) |  |
+| `scheme.technique` | T1-ladder | τεχνική | phase1 \| T1-ladder \| T2-window |
+| `scheme.t2_ack` | unicast | T2: πώς γυρίζει το ACK | flood \| unicast \| aggregate |
+| `scheme.t1_hop_ack` | per_frame | T1: ACK ανά frame ή ένα ανά ριπή | per_frame \| batch |
+| `scheme.max_ttl` | 16 | MESH_MAX_TTL (firmware 16) |  |
+| `scheme.ttl_margin` | 2 | MESH_TTL_MARGIN |  |
+| `scheme.relay_buffer` | 50 | buffer parent/relay (frames)· άνω όριο RTC από §H |  |
+| `scheme.own_buffer` | 10 | buffer δικών μετρήσεων |  |
+| `sync.bias` | 0.0017 | σχετικό bias ρολογιού ζεύγους (0,17 % μετρημένο) |  |
+| `sync.step_per_300s` | 0.0001 | innovation ρυθμού ανά κύκλο 300 s (∝ T) |  |
+| `sync.policy` | margin | guard policy | margin \| aimd |
+| `sync.g_min_s` | 0.25 | ελάχιστο guard |  |
+| `sync.g_max_s` | — | μέγιστο guard (None = από τον κανόνα) |  |
+| `sync.g_max_rule` | cart_v2 | κανόνας G_max: cart_v2 = 2·|b|·T·1,3 · bias_wander = + ±zσ περιπλάνησης | cart_v2 \| bias_wander |
+| `sync.cycles` | 20000 | κύκλοι Monte Carlo για τα στατιστικά συγχρονισμού |  |
+| `sync.z` | 3 | σ-περιθώριο για συσσωρευμένη απόκλιση (T2) |  |
+| `radio.link_margin_db` | 10 | RSSI πάνω από την ευαισθησία σε κάθε link |  |
+| `radio.mac_retry` | 5 | MAC retransmissions (μη τεκμηριωμένο) |  |
+| `radio.cw` | 31 | contention window (slots) |  |
+| `radio.jitter_s` | 0.1 | jitter αποστολής μέσα στο slot (J) |  |
+| `radio.attempts` | 3 | app-level προσπάθειες ανά slot |  |
+| `radio.hop_proc_s` | 0.002 | επεξεργασία ανά hop (CMAC verify, callback) — μοντέλο |  |
+| `bridge.baud` | 115200 | UART baud γέφυρας ↔ Pi |  |
+| `bridge.framing` | hex_json | μορφή γραμμής UART | hex_json \| binary |
+| `bridge.usb_echo` | False | USB debug echo (με host που δεν διαβάζει: έως ~2 s block) |  |
+| `bridge.ingress_queue` | 40 | ουρά εισόδου γέφυρας (frames) |  |
+| `pi.process_s` | 0.02 | Pi επεξεργασία ανά frame (ΜΗ μετρημένο) |  |
+| `hw.board` | supermini_led_removed | πλακέτα / sleep floor | supermini_stock \| supermini_led_removed \| supermini_ldo_bypass \| bare_chip_ideal |
+| `hw.divider` | 220k_x2 | divider μπαταρίας | 220k_x2 \| 1M_x2 \| switched \| none |
+| `hw.rtc_clock` | rc136k | πηγή RTC ρολογιού | rc136k \| rc_fast_d256 |
+| `hw.climate_sensor` | dht22 | αισθητήρας αέρα | dht22 \| sht40 \| bme280 |
+| `hw.soil_sensor` | capacitive_v12 | αισθητήρας εδάφους | capacitive_v12 \| none |
+| `hw.warmup_mode` | radio_on | τι κάνει το MCU στο warm-up | radio_on \| cpu_idle \| light_sleep |
+| `hw.battery` | lifepo4_18650_1500 | μπαταρία | lifepo4_18650_1500 \| lifepo4_26650_3000 |
+| `hw.battery_mah` | — | override χωρητικότητας (None = από τη μπαταρία) |  |
+| `hw.solar` | 6v_2w | ηλιακό πάνελ | none \| 6v_2w \| 5v_1w |
+| `hw.sun` | athens_winter | ηλιοφάνεια (peak sun hours) | athens_winter \| athens_summer \| indoor_shade |
+| `hw.solar_derate` | 0.5 | απώλειες σύννεφα/σκόνη/γωνία/θερμοκρασία |  |
+| `hw.charger_eff` | 0.7 | απόδοση TP5000 |  |
+| `energy.model` | per_state | ενεργειακό μοντέλο | per_state \| lumped |
+| `energy.i_tx_ma` | 335 | TX (datasheet @21 dBm = άνω φράγμα) |  |
+| `energy.i_rx_ma` | 84 | RX / radio ανοιχτό |  |
+| `energy.i_cpu_ma` | 23 | CPU run, radio off |  |
+| `energy.i_cpu_idle_ma` | 16 | CPU idle, radio off |  |
+| `energy.i_light_sleep_ma` | 0.13 | light sleep chip |  |
+| `energy.i_active_lumped_ma` | 86.5 | lumped: ενιαίο ρεύμα awake |  |
+| `energy.phase1_lumped_awake_s` | 2.5 | lumped phase1: awake του repo |  |
+| `req.lifetime_days` | 365 | στόχος αυτονομίας χωρίς ήλιο (ημέρες) |  |
+| `req.latency_s` | 900 | μέγιστη αποδεκτή καθυστέρηση μέτρησης (s) |  |
+| `req.pdr` | 0.99 | ελάχιστο ποσοστό παράδοσης ανά κύκλο |  |
+
+### Presets
+
+- **`firmware_today`** — Baseline: ό,τι τρέχει σήμερα στο bench (Phase 1, 3 αισθητήρες, T = 60 s test): `net.ranks=1`, `net.per_rank=3`, `timing.T_s=60`, `scheme.technique=phase1`
+- **`stress_50x10`** — Το stress-test: 50 ranks × 10 κόμβοι, όλοι sleepy + relay, 15′: `net.ranks=50`, `net.per_rank=10`, `timing.T_s=900`, `scheme.technique=T1-ladder`
+- **`greenhouse`** — Θερμοκήπιο: ~40 κόμβοι, 4 hops, 15′ (αρχικό σημείο — επιβεβαίωση από γεωπόνο): `net.ranks=4`, `net.per_rank=10`, `timing.T_s=900`, `scheme.technique=T2-window`, `req.latency_s=900`
+- **`nursery`** — Φυτώριο: πυκνό, ρηχό (3 hops × 15), 15′: `net.ranks=3`, `net.per_rank=15`, `timing.T_s=900`, `scheme.technique=T2-window`, `req.pdr=0.995`
+- **`field`** — Χωράφι: αραιό, αργή δυναμική εδάφους, 30′ (μεγάλες αποστάσεις → LoRa ανά τμήμα): `net.ranks=2`, `net.per_rank=10`, `timing.T_s=1800`, `scheme.technique=T2-window`, `req.latency_s=1800`, `hw.sun=athens_winter`
+

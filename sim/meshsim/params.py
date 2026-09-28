@@ -426,7 +426,41 @@ def to_markdown(c):
         for p in rows:
             P(f"| `{p.key}` | {_fmt(p.value)} | {p.unit} | {_code(p.source)} | {p.kind} | {p.note} |")
         P("")
+    _hardware_md(P)
+    _config_md(P, c)
     return "\n".join(out)
+
+
+def _hardware_md(P):
+    from . import hardware
+    P("## I. Μητρώο εξαρτημάτων (επιλογές hardware για το calculator)\n")
+    titles = {"boards": "Πλακέτα / sleep floor", "dividers": "Divider μπαταρίας", "rtc_clocks": "Ρολόι RTC",
+              "climate_sensors": "Αισθητήρας αέρα", "soil_sensors": "Αισθητήρας εδάφους",
+              "warmup_modes": "MCU στο warm-up", "batteries": "Μπαταρία", "solar_panels": "Ηλιακό πάνελ",
+              "sun": "Ηλιοφάνεια", "pi": "Pi", "bridge_board": "Γέφυρα", "offgrid": "Off-grid gateway"}
+    for group, entries in hardware.library().items():
+        P(f"### {titles.get(group, group)} (`{group}`)\n")
+        P("| επιλογή | τιμές | πηγή | kind | σημείωση |\n|---|---|---|---|---|")
+        for name, e in entries.items():
+            vals = ", ".join(f"{k}={_fmt(v)}" for k, v in e.items() if k not in ("source", "kind", "note"))
+            P(f"| `{name}` | {vals} | {_code(e.get('source', ''))} | {e.get('kind', '')} | {e.get('note', '')} |")
+        P("")
+
+
+def _config_md(P, c):
+    from . import config
+    P("## J. Μεταβλητές run (`--set key=value`)\n")
+    P("Κάθε run: defaults ← preset ← `--set`. Όλα καταγράφονται στο `sim/runs/<run>/config.json`.\n")
+    P("| key | default | περιγραφή | επιλογές |\n|---|---|---|---|")
+    for row in config.describe(c):
+        ch = " \\| ".join(map(str, row["choices"])) if row["choices"] else ""
+        P(f"| `{row['key']}` | {_fmt(row['default'])} | {row['desc']} | {ch} |")
+    P("")
+    P("### Presets\n")
+    for name, p in config.PRESETS.items():
+        sets = ", ".join(f"`{k}={v}`" for k, v in p.items() if not k.startswith("_"))
+        P(f"- **`{name}`** — {p['_doc']}: {sets}")
+    P("")
 
 
 def _fmt(v):
