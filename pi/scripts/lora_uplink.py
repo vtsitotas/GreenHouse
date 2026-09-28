@@ -87,6 +87,15 @@ class AlertLimiter:
         return True
 
 
+def alert_uplink(severity, rule_id, limiter, now):
+    """(fPort, payload) for a local alert, or None if rate-limited. Keyed by
+    severity as well as rule: a hazard escalating (frost warning -> critical)
+    minutes after it was first raised must still go out."""
+    if not limiter.allow((rule_id, severity), now):
+        return None
+    return lp.PORT_ALERT, lp.encode_alert(severity, rule_id)
+
+
 def command_publication(evt):
     if evt.get('type') != 'rx' or evt.get('port') != lp.PORT_COMMAND:
         return None
@@ -136,9 +145,9 @@ def run() -> None:
     while True:
         try:
             while alerts:
-                severity, rule_id = alerts.pop(0)
-                if limiter.allow(rule_id, time.monotonic()):
-                    dev.send(lp.PORT_ALERT, lp.encode_alert(severity, rule_id))
+                uplink = alert_uplink(*alerts.pop(0), limiter, time.monotonic())
+                if uplink:
+                    dev.send(*uplink)
             if time.monotonic() >= next_report:
                 for msg in lp.encode_summaries(agg.summaries()):
                     dev.send(lp.PORT_SUMMARY, msg)

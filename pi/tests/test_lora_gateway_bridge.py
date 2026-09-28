@@ -5,6 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'scripts'))
+import hazards
 import lora_gateway_bridge as gb
 import lora_payload as lp
 
@@ -41,6 +42,20 @@ def test_alert_becomes_site_alert(monkeypatch):
                                             'rssi': -100, 'snr': 1}, now=1)
     assert any(t == 'greenhouse/sites/north/weather/alert' for t, _p, _r in pubs)
     assert pushed and 'north' in pushed[0][0]
+
+
+def test_hazard_alert_from_a_remote_site_gets_a_readable_push(monkeypatch):
+    pushed = []
+    monkeypatch.setattr(gb, '_push', lambda title, body: pushed.append((title, body)))
+    pubs = gb.uplink_publications('north', {'fport': 2, 'data': lp.encode_alert('critical', 'fire-zone3'),
+                                            'rssi': -100, 'snr': 1}, now=5)
+    alert = json.loads(dict((t, p) for t, p, _r in pubs)['greenhouse/sites/north/weather/alert'])
+    assert alert['type'] == 'hazard-fire'
+    assert alert['zone'] == 'zone3'
+    assert alert['severity'] == 'critical'
+    [(title, body)] = pushed
+    assert title == hazards.title('fire') + ' — north / zone3'
+    assert 'Rule' not in body and 'critical' in body
 
 
 def test_site_command_becomes_chirpstack_downlink():

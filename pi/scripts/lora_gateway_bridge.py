@@ -15,6 +15,7 @@ import time
 import paho.mqtt.client as mqtt
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'shared'))
+import hazards
 import lora_payload as lp
 
 CONFIG_PATH = '/etc/greenhouse/lora_sites.json'
@@ -53,6 +54,20 @@ def parse_uplink(topic, raw):
         return None
 
 
+def site_alert(site, a, now):
+    """A decoded LoRa alert -> (site alert JSON, push title, push body).
+    Hazard ids ('fire-zone3') get the same type/zone/wording the local
+    hazard service uses; anything else is a user rule."""
+    alert = {**a, 'site': site, 'ts': int(now)}
+    hz = hazards.parse_rule_id(a['rule_id'])
+    if hz is None:
+        return alert, f'Greenhouse {site}', f'Rule {a["rule_id"]} ({a["severity"]})'
+    kind, zone = hz
+    message = f'{hazards.title(kind)} in {zone} at {site} ({a["severity"]})'
+    alert.update(type=f'hazard-{kind}', zone=zone, message=message)
+    return alert, f'{hazards.title(kind)} — {site} / {zone}', message
+
+
 def uplink_publications(site, up, now):
     base = f'greenhouse/sites/{site}'
     pubs = [(f'{base}/lora', json.dumps({'rssi': up['rssi'], 'snr': up['snr'], 'ts': int(now)}), True)]
@@ -64,9 +79,9 @@ def uplink_publications(site, up, now):
                     if v is not None:
                         pubs.append((f'{base}/zone{z.zone}/{suffix}', f'{v:.1f}', True))
         elif up['fport'] == lp.PORT_ALERT:
-            a = lp.decode_alert(up['data'])
-            pubs.append((f'{base}/weather/alert', json.dumps({**a, 'site': site, 'ts': int(now)}), False))
-            _push(f'Greenhouse {site}', f'Rule {a["rule_id"]} ({a["severity"]})')
+            alert, title, body = site_alert(site, lp.decode_alert(up['data']), now)
+            pubs.append((f'{base}/weather/alert', json.dumps(alert), False))
+            _push(title, body)
         # any other fPort: only the /lora status publish above -- unknown
         # ports are silently ignored rather than treated as an error.
     except (ValueError, TypeError) as exc:

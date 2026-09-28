@@ -37,6 +37,21 @@ def test_alert_limiter_allows_one_per_rule_per_900s():
     assert lim.allow('r2', 10)
 
 
+def test_critical_hazard_alert_is_sent_as_severity_2():
+    lim = lu.AlertLimiter(900)
+    port, data = lu.alert_uplink('critical', 'fire-zone1', lim, 0)
+    assert port == lp.PORT_ALERT
+    assert data[1] == 2
+    assert lp.decode_alert(data) == {'severity': 'critical', 'rule_id': 'fire-zone1'}
+
+
+def test_escalated_alert_is_not_swallowed_by_the_rate_limit():
+    lim = lu.AlertLimiter(900)
+    assert lu.alert_uplink('warning', 'frost-zone1', lim, 0)
+    assert lu.alert_uplink('warning', 'frost-zone1', lim, 60) is None
+    assert lu.alert_uplink('critical', 'frost-zone1', lim, 120)
+
+
 def test_class_c_command_becomes_a_local_actuator_publish():
     evt = {'type': 'rx', 'port': lp.PORT_COMMAND, 'payload': lp.encode_command('pump1', True)}
     assert lu.command_publication(evt) == ('greenhouse/actuators/pump1/set', 'ON')
