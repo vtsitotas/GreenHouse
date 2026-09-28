@@ -510,11 +510,19 @@ class _RecentAlertsCardState extends ConsumerState<_RecentAlertsCard> {
           ..._recent.take(5).map((a) => ListTile(
                 dense: true,
                 leading: Icon(
-                  a.isWarning ? Icons.warning_amber_rounded : Icons.info_outline,
-                  color: a.isWarning ? AppColors.warning : AppColors.brand,
+                  a.isCritical
+                      ? Icons.report_rounded
+                      : a.isWarning ? Icons.warning_amber_rounded : Icons.info_outline,
+                  color: a.isCritical
+                      ? AppColors.critical
+                      : a.isWarning ? AppColors.warning : AppColors.brand,
                   size: 20,
                 ),
-                title: Text(a.title, style: const TextStyle(fontWeight: FontWeight.w600, fontSize: 13)),
+                title: Text(a.site == null ? a.title : '${a.title} · ${a.site}',
+                    style: TextStyle(
+                        fontWeight: FontWeight.w600,
+                        fontSize: 13,
+                        color: a.isCritical ? AppColors.critical : null)),
                 subtitle: Text(a.message, maxLines: 2, overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 12)),
               )),
@@ -570,6 +578,13 @@ class _AlertSettingsCard extends ConsumerWidget {
       margin: const EdgeInsets.fromLTRB(8, 4, 8, 8),
       child: Column(
         children: [
+          SwitchListTile(
+            key: const Key('alert-settings-hazard-switch'),
+            title: const Text('Hazard alerts'),
+            subtitle: const Text('Fire, flood, frost, heat, drought'),
+            value: settings.hazardAlerts,
+            onChanged: (v) => publish(settings.copyWith(hazardAlerts: v)),
+          ),
           SwitchListTile(
             key: const Key('alert-settings-frost-switch'),
             title: const Text('Frost forecast alerts'),

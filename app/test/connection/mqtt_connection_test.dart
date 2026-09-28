@@ -36,6 +36,13 @@ void main() {
       expect(MqttConnection.isActuatorStateTopic('greenhouse/actuators/pump1/set'), isFalse);
     });
 
+    test('isWeatherAlertTopic accepts local and remote-site alerts only', () {
+      expect(MqttConnection.isWeatherAlertTopic('greenhouse/weather/alert'), isTrue);
+      expect(MqttConnection.isWeatherAlertTopic('greenhouse/sites/north/weather/alert'), isTrue);
+      expect(MqttConnection.isWeatherAlertTopic('greenhouse/sites/north/zone1/weather/alert'), isFalse);
+      expect(MqttConnection.isWeatherAlertTopic('greenhouse/weather/forecast'), isFalse);
+    });
+
     test('extractNodeId returns the node segment', () {
       expect(MqttConnection.extractNodeId('greenhouse/nodes/node1/status'), 'node1');
     });

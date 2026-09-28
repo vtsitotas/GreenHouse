@@ -394,7 +394,7 @@ void main() {
 
     verify(() => conn.publishRaw(
           'greenhouse/settings/notifications',
-          '{"frost_forecast":false,"daily_summary":true}',
+          '{"frost_forecast":false,"daily_summary":true,"hazard_alerts":true}',
           retain: true,
         )).called(1);
   });

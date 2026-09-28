@@ -240,7 +240,11 @@ class MqttConnection implements GreenhouseConnection {
   }
 
   // ── Static routing helpers ──────────────────────────────────────────────
-  static bool isWeatherAlertTopic(String t) => t == 'greenhouse/weather/alert';
+  // Remote sites' alerts arrive over LoRa at the gateway, which republishes
+  // them as greenhouse/sites/<site>/weather/alert.
+  static final _siteAlertTopic = RegExp(r'^greenhouse/sites/[^/]+/weather/alert$');
+  static bool isWeatherAlertTopic(String t) =>
+      t == 'greenhouse/weather/alert' || _siteAlertTopic.hasMatch(t);
   static bool isWeatherForecastTopic(String t) => t == 'greenhouse/weather/forecast';
   static bool isRulesCurrentTopic(String t) => t == 'greenhouse/rules/current';
   static bool isNotificationSettingsTopic(String t) => t == 'greenhouse/settings/notifications/current';

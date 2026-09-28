@@ -96,6 +96,7 @@ void main() {
     await tester.tap(find.text('Rules'));
     await tester.pumpAndSettle();
 
+    expect(find.byKey(const Key('alert-settings-hazard-switch')), findsOneWidget);
     final frostSwitch = find.byKey(const Key('alert-settings-frost-switch'));
     expect(frostSwitch, findsOneWidget);
     await tester.tap(frostSwitch);

@@ -15,6 +15,7 @@ class AppColors {
   // Node/metric status
   static const online  = Color(0xFF43A047);
   static const warning = Color(0xFFFB8C00);
+  static const critical = Color(0xFFD32F2F);
   static const pending = Color(0xFF9E9E9E);
 
   // Card surfaces
