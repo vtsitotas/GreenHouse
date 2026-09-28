@@ -1,6 +1,6 @@
 # Greenhouse IoT — Session Handoff
 
-**Last updated:** 2026-09-27 (Pi rebuilt on a new SD card; first CART Gate 0 drift bench run -- see the first TL;DR). Previously 2026-09-24 (everything merged to `main` and deployed; three
+**Last updated:** 2026-09-28 (hazard alerts: fire/flood/frost/heat/drought, branch `feat/hazard-alerts`). Before that 2026-09-27 (Pi rebuilt on a new SD card; first CART Gate 0 drift bench run -- see the first TL;DR). Previously 2026-09-24 (everything merged to `main` and deployed; three
 sensors enrolled via the app; five live bugs in add/delete/provisioning fixed --
 see the first TL;DR below). Session 2026-09-16..23: mesh ACK, report Ch. 21,
 CART prerequisites + LoRa software. Session before that 2026-09-14 (multi-site LoRaWAN + cellular gateway —
@@ -60,6 +60,25 @@ reports 45/45.
 > `feature/cart-prereqs-lora-software`) — the 2×24 h bench (plan Task B4) is next.
 
 ---
+
+## TL;DR of this session (2026-09-28 — hazard alerts)
+
+- **New:** per-zone hazard alerts for fire, flood, frost, heat and drought, from the existing sensors.
+  - Plan: `docs/superpowers/plans/2026-09-28-hazard-alerts.md`. Usage and tuning: INSTRUCTIONS.md "Hazard alerts".
+  - Branch `feat/hazard-alerts`, not merged or pushed yet.
+- **Pi:** new `greenhouse-hazards.service`, wired into `install.sh` and `selftest.sh`.
+  - It evaluates every live reading, publishes on `greenhouse/weather/alert`, runs the flood action (pump1 OFF) and pushes.
+  - Push is gated by the new `hazard_alerts` notification setting, which `weather.py` now keeps.
+- **LoRa:** hazard alerts ride the existing fPort 2 alert.
+  - The uplink rate limit is now keyed by rule+severity, so an escalation still goes out.
+  - The gateway turns `fire-zone3` into a hazard-typed site alert and a readable push.
+- **App:**
+  - hazard titles and a `critical` severity (red);
+  - remote-site alerts (`greenhouse/sites/<site>/weather/alert`) now show in Recent alerts;
+  - a "Hazard alerts" switch in the Rules tab.
+- **Not deployed:** the Pi was unplugged. On the next deploy, run `install.sh`, then check `systemctl is-active greenhouse-hazards`.
+  - The bench's fake sensors random-walk, and 9DB0's soil was seen at 10 %, so expect drought alerts. Disable drought in `/etc/greenhouse/hazards.json` if that is noise.
+- **Tests:** Pi 363 passed (the only failure is the known Windows-only `test_nodes` 0600 test). App analyze clean, 372 passed.
 
 ## TL;DR of this session (2026-09-25 → 2026-09-27 — SD card died, Pi rebuilt, first drift bench run)
 

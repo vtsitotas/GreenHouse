@@ -239,6 +239,54 @@ settings still relevant to this deployment mode are:
 
 ---
 
+## Hazard alerts (fire, flood, frost, heat, drought)
+
+`greenhouse-hazards.service` (`pi/scripts/hazard_monitor.py`, logic in
+`pi/shared/hazards.py`) watches every live zone reading and raises an alert the
+moment a hazard holds. It does not wait for the weather service's 30-minute
+rule loop.
+
+| Hazard | Raises when (default) | Clears when | Severity | Action |
+|---|---|---|---|---|
+| fire | temp ≥ 55 °C, **or** within 10 min temp +8 °C **and** humidity −15 points | temp < 45 °C and no fast rise | critical | — |
+| flood | soil ≥ 95 % for 30 min | soil < 90 % | warning | pump1 OFF |
+| frost | temp ≤ 2 °C (≤ 0 °C: critical) | temp > 3 °C | warning/critical | — |
+| heat | temp ≥ 40 °C for 10 min | temp < 38 °C | critical | — |
+| drought | soil ≤ 15 % for 60 min | soil > 20 % | warning | — |
+
+Each hazard is announced once when it starts and again when it escalates. It
+is repeated every 6 h while it lasts. Clearing is silent.
+
+**Where alerts go:**
+- `greenhouse/weather/alert`, which the app shows under Weather → Recent alerts.
+- A phone push. The app's Rules tab has a "Hazard alerts" switch that turns the push off; the alert still appears in the app.
+- On a remote LoRa site, `greenhouse-lora-uplink` sends it within seconds. The gateway republishes it as `greenhouse/sites/<site>/weather/alert` with a readable push, e.g. "🔥 Possible fire — north / zone3".
+
+**Tuning:** put overrides in `/etc/greenhouse/hazards.json`. Only the keys you
+list change. Then run `sudo systemctl restart greenhouse-hazards`:
+
+```json
+{ "heat": { "temp_c": 38, "for_min": 15 },
+  "flood": { "action": null },
+  "drought": { "enabled": false },
+  "renotify_h": 12 }
+```
+
+> These are detections from the sensors we already have, not certified
+> safety sensors. "Fire" means an abnormal heat event (very high temperature,
+> or a fast temperature rise with falling humidity). "Flood" means
+> waterlogged soil. Real smoke or water-level sensors would need a new
+> reading type in the firmware.
+>
+> The fake/bench sensors random-walk, so they can trip drought or flood
+> alerts on the bench. On a demo unit, disable those in `hazards.json`.
+
+Check it on the Pi: `systemctl is-active greenhouse-hazards` and
+`journalctl -u greenhouse-hazards -f`. Every raised hazard is logged as
+`[hazards] critical: …`.
+
+---
+
 ## Passwords & access reference
 
 | What | Value |
