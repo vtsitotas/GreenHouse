@@ -48,6 +48,7 @@ firmware/test/host/layout_vectors
 firmware/test/host/inflight_test
 firmware/test/host/sched_tests
 firmware/test/host/framing_tests
+firmware/test/host/sht4x_tests
 
 # Arduino CLI build output
 firmware/**/build/

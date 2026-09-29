@@ -2,7 +2,7 @@
  "defines": {
   "BATT_ADC_PIN": {
    "comment": "GPIO3 / ADC1_CH3",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:32",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:55",
    "value": 3
   },
   "BRIDGE_UART_BINARY": {
@@ -15,14 +15,24 @@
    "src": "firmware/bridge_esp32/bridge_esp32.ino:32",
    "value": 0
   },
+  "CLIMATE_SENSOR": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:18",
+   "value": 1
+  },
+  "CLIMATE_WARMUP_MS": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:67",
+   "value": 2000
+  },
   "DHT_DATA_PIN": {
    "comment": "GPIO6 — moved away from JTAG pins",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:22",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:43",
    "value": 6
   },
   "DHT_PWR_PIN": {
-   "comment": "",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:24",
+   "comment": "powers the climate sensor, DHT22 or SHT40",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:45",
    "value": 5
   },
   "MESH_AAD_LEN": {
@@ -87,7 +97,7 @@
   },
   "MESH_CART_ATTEMPTS": {
    "comment": "L2 send attempts per frame per window",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:95",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:98",
    "value": 3
   },
   "MESH_CART_ENABLE": {
@@ -97,7 +107,7 @@
   },
   "MESH_CART_JITTER_MS": {
    "comment": "random send delay after a catch (meshsim:",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:93",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:96",
    "value": 300
   },
   "MESH_CART_RTC_MAGIC": {
@@ -112,42 +122,42 @@
   },
   "MESH_CYCLE_MAX_MS": {
    "comment": "",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:110",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:113",
    "value": 3600000
   },
   "MESH_CYCLE_MIN_MS": {
    "comment": "sanity bounds on a parent's advertised period",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:109",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:112",
    "value": 30000
   },
   "MESH_DATA_BUFFER_SIZE": {
    "comment": "own readings buffered while isolated",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:131",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:134",
    "value": 10
   },
   "MESH_DEDUP_CACHE_SIZE": {
    "comment": "(origin_mac, seq) ring — drops route-flap dupes.",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:113",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:116",
    "value": 128
   },
   "MESH_DEDUP_WINDOW_MS": {
    "comment": "how long a (mac, seq) counts as \"already",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:119",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:122",
    "value": 30000
   },
   "MESH_DRIFT_BIAS_PPM": {
    "comment": "Gate 0 run 1: worst pair relative bias",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:98",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:101",
    "value": 1700
   },
   "MESH_DRIFT_STEP_PPM_300S": {
    "comment": "Gate 0: per-cycle wander step (planning value)",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:99",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:102",
    "value": 100
   },
   "MESH_EXPECTED_REPORT_INTERVAL_MS": {
    "comment": "matches SEND_INTERVAL_MS on edges",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:154",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:157",
    "value": 5000
   },
   "MESH_FIXED_CHANNEL": {
@@ -177,22 +187,22 @@
   },
   "MESH_GUARD_CAP_MS": {
    "comment": "hard ceiling for G_max",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:100",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:103",
    "value": 20000
   },
   "MESH_GUARD_K_DEN": {
    "comment": "1.3 % miss per hop compounds to 56 % on-time",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:102",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:105",
    "value": 2
   },
   "MESH_GUARD_K_NUM": {
    "comment": "guard margin k = NUM/DEN = 2.5: at 1.5 a",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:101",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:104",
    "value": 5
   },
   "MESH_GUARD_PAD_MS": {
    "comment": "fixed pad on top of 2·k·max|err|",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:104",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:107",
    "value": 50
   },
   "MESH_HEADER_LEN": {
@@ -247,7 +257,7 @@
   },
   "MESH_NEIGHBOR_SLOTS": {
    "comment": "neighbor ring (RAM). A node hears ~3 ranks of",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:117",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:120",
    "value": 32
   },
   "MESH_NETTAG_LEN": {
@@ -262,7 +272,7 @@
   },
   "MESH_OFFLINE_AFTER": {
    "comment": "x expected report interval",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:153",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:156",
    "value": 3
   },
   "MESH_ORPHAN_FRESH_MS": {
@@ -317,7 +327,7 @@
   },
   "MESH_RELAY_BUFFER_SIZE": {
    "comment": "relayed frames kept in RTC across sleep. A",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:105",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:108",
    "value": 110
   },
   "MESH_RELAY_RTC_MAGIC": {
@@ -337,7 +347,7 @@
   },
   "MESH_RX_BEACON_PERIOD_MS": {
    "comment": "RX_OPEN beacon cadence inside the window",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:96",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:99",
    "value": 100
   },
   "MESH_SCHED_HIST": {
@@ -407,7 +417,7 @@
   },
   "MESH_WAKE_GUARD_MIN_MS": {
    "comment": "radio/boot jitter floor",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:97",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:100",
    "value": 250
   },
   "MESH_WAKE_MAX_AWAKE_MS": {
@@ -422,32 +432,57 @@
   },
   "SEND_INTERVAL_MS": {
    "comment": "must match MESH_EXPECTED_REPORT_INTERVAL_MS",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:39",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:62",
    "value": 5000
   },
+  "SENSOR_DHT22": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:15",
+   "value": 1
+  },
+  "SENSOR_SHT40": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:16",
+   "value": 2
+  },
   "SENSOR_WARMUP_MS": {
-   "comment": "sensor power-up settle time",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:40",
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:72",
    "value": 2000
+  },
+  "SHT_SCL_PIN": {
+   "comment": "SHT40 SCL (free; GPIO8 = LED/strapping, GPIO9 = BOOT)",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:47",
+   "value": 7
+  },
+  "SHT_SDA_PIN": {
+   "comment": "SHT40 SDA on the old DHT data pin",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:46",
+   "value": 6
   },
   "SOIL_DATA_PIN": {
    "comment": "ADC1_CH1 — NOT GPIO2: that's an ESP32-C3 strapping",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:18",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:39",
    "value": 1
   },
   "SOIL_DRY_VAL": {
    "comment": "",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:35",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:58",
    "value": 3163
   },
   "SOIL_PWR_PIN": {
    "comment": "",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:23",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:44",
    "value": 4
+  },
+  "SOIL_WARMUP_MS": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:71",
+   "value": 100
   },
   "SOIL_WET_VAL": {
    "comment": "",
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:36",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:59",
    "value": 1529
   },
   "UART_BAUD": {
@@ -468,11 +503,11 @@
  },
  "literals": {
   "BATT_ADC_SAMPLES": {
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:99",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:158",
    "value": 8
   },
   "BATT_ADC_SAMPLE_DELAY_MS": {
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:101",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:160",
    "value": 2
   },
   "BRIDGE_FRAME_FORMAT": {
@@ -484,7 +519,7 @@
    "value": "println"
   },
   "COLD_BOOT_USB_WAIT_MS": {
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:287",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:344",
    "value": 1500
   },
   "G_MAX_FACTOR_X10": {
@@ -572,7 +607,7 @@
     {
      "dims": [],
      "name": "g_unconfirmedWakes",
-     "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:63",
+     "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:122",
      "type": "uint8_t"
     }
    ]
@@ -582,11 +617,11 @@
    "value": 3
   },
   "UNCONFIRMED_WAKES_CAP": {
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:261",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:318",
    "value": 250
   },
   "UNCONFIRMED_WAKES_RESCAN": {
-   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:175",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:233",
    "value": 2
   }
  },

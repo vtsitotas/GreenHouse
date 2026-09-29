@@ -3,7 +3,28 @@
 #include <WiFi.h>
 #include <esp_wifi.h>
 #include <esp_sleep.h>
+
+// ── Climate sensor (air temperature + humidity) ───────────────────────────────
+// SENSOR_DHT22: today's board. Needs 2 s after power-up (datasheet: ≥ 1 s, and a
+//   2 s minimum sampling period) — 80 % of a node's awake time.
+// SENSOR_SHT40: I²C, ready ≤ 1 ms after power-up, measures in ≤ 8.3 ms at
+//   ~320 µA, ±0.2 °C / ±1.8 %RH. Same power pin; SDA = the old DHT data pin.
+//   meshsim: worst node 9.3 → 7.3 mAh/day and the CART slot can shrink from
+//   2500 to 800 ms (docs/simulator/WORLD_GREENHOUSE_100x50.md).
+// Build for the SHT40 with  --build-property "compiler.cpp.extra_flags=-DCLIMATE_SENSOR=2"
+#define SENSOR_DHT22  1
+#define SENSOR_SHT40  2
+#ifndef CLIMATE_SENSOR
+#define CLIMATE_SENSOR SENSOR_DHT22
+#endif
+#if CLIMATE_SENSOR == SENSOR_DHT22
 #include <DHT.h>
+#elif CLIMATE_SENSOR == SENSOR_SHT40
+#include <Wire.h>
+#include "sht4x.h"
+#else
+#error "CLIMATE_SENSOR must be SENSOR_DHT22 or SENSOR_SHT40"
+#endif
 #include "mesh_config.h"
 #include "mesh_node.h"
 #include "mesh_cart.h"
@@ -21,7 +42,9 @@
                             // sensor output (found via sensor_pin_test.ino).
 #define DHT_DATA_PIN   6   // GPIO6 — moved away from JTAG pins
 #define SOIL_PWR_PIN   4
-#define DHT_PWR_PIN    5
+#define DHT_PWR_PIN    5   // powers the climate sensor, DHT22 or SHT40
+#define SHT_SDA_PIN    6   // SHT40 SDA on the old DHT data pin
+#define SHT_SCL_PIN    7   // SHT40 SCL (free; GPIO8 = LED/strapping, GPIO9 = BOOT)
 
 // Battery divider: battery+ ── 220 kΩ ── ADC pin ── 220 kΩ ── GND. ~7.5 µA
 // constant drain (accepted per spec: 14% of the 55 µA sleep floor, avoids a
@@ -37,9 +60,45 @@
 
 // ── Timing ────────────────────────────────────────────────────────────────────
 #define SEND_INTERVAL_MS  5000   // must match MESH_EXPECTED_REPORT_INTERVAL_MS
-#define SENSOR_WARMUP_MS  2000   // sensor power-up settle time
+// Sensor power-up settle time: the slower of the climate sensor and the soil
+// probe. The capacitive probe's 100 ms is NOT measured (today it hides inside
+// the DHT22's 2 s) — check it on the bench before trusting SHT40 numbers.
+#if CLIMATE_SENSOR == SENSOR_DHT22
+#define CLIMATE_WARMUP_MS 2000
+#else
+#define CLIMATE_WARMUP_MS (SHT4X_POWERUP_MS + 1)
+#endif
+#define SOIL_WARMUP_MS    100
+#define SENSOR_WARMUP_MS  (CLIMATE_WARMUP_MS > SOIL_WARMUP_MS ? CLIMATE_WARMUP_MS : SOIL_WARMUP_MS)
 
+#if CLIMATE_SENSOR == SENSOR_DHT22
 DHT dht(DHT_DATA_PIN, DHT22);
+
+static void climateBegin() { dht.begin(); }
+
+// One temperature + humidity reading; NAN on failure (same contract as the DHT library).
+static void climateRead(float* t, float* h) {
+  *t = dht.readTemperature();
+  *h = dht.readHumidity();
+}
+#else
+static void climateBegin() {}
+
+static void climateRead(float* t, float* h) {
+  *t = *h = NAN;
+  Wire.begin(SHT_SDA_PIN, SHT_SCL_PIN);       // after power-up: the bus pins float while off
+  Wire.beginTransmission(SHT4X_ADDR);
+  Wire.write(SHT4X_CMD_MEASURE_HP);
+  if (Wire.endTransmission() != 0) { Wire.end(); return; }
+  delay(SHT4X_MEASURE_MS);
+  uint8_t b[6];
+  if (Wire.requestFrom((uint8_t)SHT4X_ADDR, (uint8_t)6) == 6) {
+    for (int i = 0; i < 6; i++) b[i] = (uint8_t)Wire.read();
+    sht4xParse(b, t, h);                      // leaves NAN on a CRC error
+  }
+  Wire.end();                                 // release the pins before the sensor is powered off
+}
+#endif
 
 enum SensorPhase { PHASE_IDLE, PHASE_WARMUP };
 SensorPhase phase        = PHASE_IDLE;
@@ -155,11 +214,10 @@ static void cartSensorsPower(bool on) {
 }
 
 static void cartReadSensors(SensorReading* r) {
-  r->temperature   = dht.readTemperature();
-  r->humidity      = dht.readHumidity();
+  climateRead(&r->temperature, &r->humidity);
   r->soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
   if (isnan(r->temperature) || isnan(r->humidity))
-    Serial.println("[sensor] DHT read failed — check pull-up resistor");
+    Serial.println("[sensor] climate sensor read failed — check wiring / pull-ups (GPIO6/7)");
   meshSetBatteryMv(readBatteryMv());
 }
 #endif
@@ -210,15 +268,14 @@ void runSleepyCycle() {
   while (millis() - warmupStart < SENSOR_WARMUP_MS && millis() < deadline) delay(10);
 
   SensorReading r;
-  r.temperature   = dht.readTemperature();
-  r.humidity      = dht.readHumidity();
+  climateRead(&r.temperature, &r.humidity);
   r.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
 
   digitalWrite(SOIL_PWR_PIN, LOW);
   digitalWrite(DHT_PWR_PIN,  LOW);
 
   if (isnan(r.temperature) || isnan(r.humidity)) {
-    Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO6");
+    Serial.println("[sensor] climate sensor read failed — check wiring / pull-ups (GPIO6/7)");
   } else {
     Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
                   r.temperature, r.humidity, r.soil_moisture);
@@ -291,7 +348,7 @@ void setup() {
   digitalWrite(SOIL_PWR_PIN, LOW);
   digitalWrite(DHT_PWR_PIN,  LOW);
 
-  dht.begin();
+  climateBegin();
 
   WiFi.mode(WIFI_STA);
   WiFi.disconnect();
@@ -382,8 +439,7 @@ void loop() {
     case PHASE_WARMUP:
       if (now - phaseStartMs >= SENSOR_WARMUP_MS) {
         SensorReading r;
-        r.temperature   = dht.readTemperature();
-        r.humidity      = dht.readHumidity();
+        climateRead(&r.temperature, &r.humidity);
         r.soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
 
         digitalWrite(SOIL_PWR_PIN, LOW);
@@ -394,7 +450,7 @@ void loop() {
         meshSetBatteryMv(readBatteryMv());
 
         if (isnan(r.temperature) || isnan(r.humidity)) {
-          Serial.println("[sensor] DHT read failed — check pull-up resistor on GPIO6");
+          Serial.println("[sensor] climate sensor read failed — check wiring / pull-ups (GPIO6/7)");
         } else {
           Serial.printf("[sensor] T=%.1f H=%.1f Soil=%.0f%%\n",
                         r.temperature, r.humidity, r.soil_moisture);

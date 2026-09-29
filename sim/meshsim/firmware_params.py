@@ -66,6 +66,9 @@ _BINOPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
            ast.Mod: lambda a, b: a % b, ast.LShift: lambda a, b: a << b,
            ast.RShift: lambda a, b: a >> b, ast.BitOr: lambda a, b: a | b,
            ast.BitAnd: lambda a, b: a & b}
+_CMPOPS = {ast.Gt: lambda a, b: int(a > b), ast.Lt: lambda a, b: int(a < b),
+           ast.GtE: lambda a, b: int(a >= b), ast.LtE: lambda a, b: int(a <= b),
+           ast.Eq: lambda a, b: int(a == b), ast.NotEq: lambda a, b: int(a != b)}
 
 
 def _src(rel, line):
@@ -94,6 +97,8 @@ def safe_eval(expr, env):
             return env[n.id]
         if isinstance(n, ast.IfExp):
             return ev(n.body) if ev(n.test) else ev(n.orelse)
+        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in _CMPOPS:
+            return _CMPOPS[type(n.ops[0])](ev(n.left), ev(n.comparators[0]))
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub):
             return -ev(n.operand)
         if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div):

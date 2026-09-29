@@ -89,7 +89,10 @@
 #define MESH_FLAG_RELAY_CAP       0x04      // beacon: sender accepts children
 #define MESH_FLAG_BUF_FULL        0x08      // beacon: relay buffer full, keep your frames
 #define MESH_CART_SLOT_MS         2500UL    // receive window per node; >= sensor warm-up
-                                            // (2000 ms) so the own reading is ready to send
+                                            // (2000 ms) so the own reading is ready to send.
+                                            // Network-wide: an all-SHT40 fleet (edge sketch
+                                            // CLIMATE_SENSOR=SENSOR_SHT40) can use 800 —
+                                            // meshsim best, ~20 % less energy per node
 #define MESH_CART_JITTER_MS       300UL     // random send delay after a catch (meshsim:
                                             // 100 ms -> ~50 % collisions at 10 nodes/rank)
 #define MESH_CART_ATTEMPTS        3         // L2 send attempts per frame per window
