@@ -16,11 +16,12 @@
                                    // parent-rank drift while the packet is in
                                    // flight, without capping how deep the mesh
                                    // can physically grow
-#define MESH_MAX_TTL        64     // ceiling/fallback only: used when a reading
-                                   // (was 16, which silently capped delivery at
-                                   // rank 17 because meshTxTtl() clamps rank+2 to
-                                   // it — see spec 2026-09-28-cart-depth-n. Must
-                                   // match ACK_TTL_MAX in pi/scripts/serial_bridge.py.)
+#define MESH_MAX_TTL        128    // ceiling/fallback only: used when a reading
+                                   // (was 16 → rank 17, then 64 → rank 65; 128
+                                   // reaches rank 129 — meshsim 100×50 study,
+                                   // docs/simulator/WORLD_GREENHOUSE_100x50.md.
+                                   // Must match ACK_TTL_MAX in
+                                   // pi/scripts/serial_bridge.py.)
                                    // is buffered while unrouted (rank not known
                                    // yet, see meshSendReading()) and as a hard
                                    // backstop against runaway forwarding. Loops
@@ -61,7 +62,10 @@
 // ── Deep sleep (Phase 1: leaf sleep — spec 2026-07-26-mesh-deep-sleep) ────────
 #define MESH_FLAG_SLEEPY          0x01      // beacon/data flags bit: sender is a
                                             // battery node — NEVER adopt as parent
-#define MESH_SLEEP_INTERVAL_MS    60000UL   // 1 min test duty cycle (change back to 900000UL for 15 min production)
+#define MESH_SLEEP_INTERVAL_MS    900000UL  // 15 min production cycle. meshsim: 15 min beats
+                                            // 30 min per DAY, not only per reading (the
+                                            // clock-wander guard grows ~T², §5 of MODEL.md).
+                                            // Bench tests: 60000UL.
 #define MESH_WAKE_DISCOVERY_MS    5000UL    // orphaned-wake listen window before
                                             // giving up and buffering the reading
 #define MESH_TX_CONFIRM_WAIT_MS   500UL     // wait for the ESP-NOW send callback
@@ -94,13 +98,24 @@
 #define MESH_DRIFT_BIAS_PPM       1700UL    // Gate 0 run 1: worst pair relative bias
 #define MESH_DRIFT_STEP_PPM_300S  100UL     // Gate 0: per-cycle wander step (planning value)
 #define MESH_GUARD_CAP_MS         20000UL   // hard ceiling for G_max
-#define MESH_RELAY_BUFFER_SIZE    50        // relayed frames kept in RTC across sleep
-                                            // (50 x 61 B = 3050 B of the 8 KB RTC FAST)
+#define MESH_GUARD_K_NUM          5         // guard margin k = NUM/DEN = 2.5: at 1.5 a
+#define MESH_GUARD_K_DEN          2         // 1.3 % miss per hop compounds to 56 % on-time
+                                            // PDR at depth 100; 2.5 keeps it >= 99 % (meshsim)
+#define MESH_GUARD_PAD_MS         50        // fixed pad on top of 2·k·max|err|
+#define MESH_RELAY_BUFFER_SIZE    110       // relayed frames kept in RTC across sleep. A
+                                            // rank-1 relay carries R−1 frames/cycle (99 at
+                                            // 100 ranks); 110 x 61 B = 6710 B of the 8 KB
+                                            // RTC FAST — meshsim RTC budget caps it at 121
 #define MESH_CYCLE_MIN_MS         30000UL   // sanity bounds on a parent's advertised period
 #define MESH_CYCLE_MAX_MS         3600000UL
 
 // ── Buffers ───────────────────────────────────────────────────────────────────
-#define MESH_DEDUP_CACHE_SIZE  32   // (origin_mac, seq) ring — drops route-flap dupes
+#define MESH_DEDUP_CACHE_SIZE  128  // (origin_mac, seq) ring — drops route-flap dupes.
+                                    // RAM, not RTC. A rank-1 relay sees ~R distinct
+                                    // frames per window (100 at 100 ranks); 32 let
+                                    // duplicates slip through
+#define MESH_NEIGHBOR_SLOTS    32   // neighbor ring (RAM). A node hears ~3 ranks of
+                                    // neighbours; 16 thrashed at 10+/rank
 #define MESH_DEDUP_WINDOW_MS   30000UL  // how long a (mac, seq) counts as "already
                                     // seen". seq only identifies a reading while its
                                     // origin keeps RTC state across sleep; any power
@@ -125,6 +140,14 @@ static_assert(MESH_DEDUP_WINDOW_MS > MESH_WAKE_MAX_AWAKE_MS,
 static_assert(MESH_DEDUP_WINDOW_MS < MESH_SLEEP_INTERVAL_MS,
               "MESH_DEDUP_WINDOW_MS must expire before a restarted node's next wake, "
               "or that node's recycled seq is dropped as a duplicate forever");
+
+// Scale limits of the on-air / RTC types (uint8_t TTL, relay head/count).
+static_assert(MESH_MAX_TTL <= 255, "TTL is a uint8_t on air");
+static_assert(MESH_RELAY_BUFFER_SIZE <= 255, "meshRelayHead/meshRelayCount are uint8_t");
+static_assert(MESH_RELAY_BUFFER_SIZE * 61 <= 7000,
+              "relay buffer must leave room in the 8 KB RTC FAST memory (meshsim: <= 121 frames)");
+static_assert(MESH_GUARD_K_NUM > 0 && MESH_GUARD_K_DEN > 0 && MESH_GUARD_K_NUM <= 255 &&
+              MESH_GUARD_K_DEN <= 255, "guard margin k = NUM/DEN, both uint8_t");
 
 // ── Bridge offline detection ──────────────────────────────────────────────────
 #define MESH_OFFLINE_AFTER               3       // x expected report interval

@@ -17,7 +17,7 @@
 
 typedef struct {
   uint16_t gMinMs, gMaxMs, padMs;
-  uint8_t  kNum, kDen;                   // margin factor k = kNum/kDen (1.5)
+  uint8_t  kNum, kDen;                   // margin factor k = kNum/kDen (2.5)
 } MeshSchedCfg;
 
 typedef struct {

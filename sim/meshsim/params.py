@@ -233,10 +233,10 @@ def build(fw=None):
             fwd("A7", key, unit, note)
         else:
             c.add("A7", key, PL[key]["value"], unit, PL[key]["src"], note, "planned")
-    kn, kd = L["GUARD_K_NUM"], L["GUARD_K_DEN"]
+    kn, kd = D["MESH_GUARD_K_NUM"], D["MESH_GUARD_K_DEN"]
     c.add("A7", "GUARD_MARGIN_K", kn["value"] / kd["value"], "", kn["src"],
           f"k = kNum/kDen = {kn['value']}/{kd['value']}· G = clamp(2·k·max|err| + pad, G_min, G_max)", "firmware")
-    lit("A7", "GUARD_PAD_MS", "ms")
+    c.add("A7", "GUARD_PAD_MS", D["MESH_GUARD_PAD_MS"]["value"], "ms", D["MESH_GUARD_PAD_MS"]["src"], "", "firmware")
     f10 = L["G_MAX_FACTOR_X10"]
     c.add("A7", "G_MAX_FACTOR", f10["value"] / 10, "", f10["src"], "G_max ≥ 2·|b|·T·1,3", "firmware")
     lit("A7", "G_MAX_WANDER_Z", "σ", "G_max ≥ z·σ_wander, σ = T·step/√(1−0,98²)")

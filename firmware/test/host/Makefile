@@ -9,7 +9,7 @@ layout_vectors: layout_vectors.cpp ../../libraries/GreenhouseMesh/mesh_packet.h
 inflight_test: inflight_test.cpp ../../libraries/GreenhouseMesh/mesh_inflight.h ../../libraries/GreenhouseMesh/mesh_packet.h
 	$(CXX) $(CXXFLAGS) -o $@ inflight_test.cpp
 
-sched_tests: sched_tests.cpp ../../libraries/GreenhouseMesh/mesh_sched.h
+sched_tests: sched_tests.cpp ../../libraries/GreenhouseMesh/mesh_sched.h ../../libraries/GreenhouseMesh/mesh_config.h
 	$(CXX) $(CXXFLAGS) -o $@ sched_tests.cpp
 
 .PHONY: all clean
