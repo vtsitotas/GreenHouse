@@ -41,7 +41,13 @@ app/android/.gradle/
 
 # Git worktrees (scratch, not tracked)
 .worktrees/
+
+# Host-test binaries (built by firmware/test/host/Makefile)
+firmware/test/host/*.exe
 firmware/test/host/layout_vectors
-firmware/test/host/layout_vectors.exe
 firmware/test/host/inflight_test
-firmware/test/host/inflight_test.exe
+firmware/test/host/sched_tests
+firmware/test/host/framing_tests
+
+# Arduino CLI build output
+firmware/**/build/
