@@ -1,0 +1,677 @@
+{
+ "defines": {
+  "BATT_ADC_PIN": {
+   "comment": "GPIO3 / ADC1_CH3",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:31",
+   "value": 3
+  },
+  "DHT_DATA_PIN": {
+   "comment": "GPIO6 — moved away from JTAG pins",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:21",
+   "value": 6
+  },
+  "DHT_PWR_PIN": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:23",
+   "value": 5
+  },
+  "MESH_AAD_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:22",
+   "value": 15
+  },
+  "MESH_ACK_DEDUP_CACHE_SIZE": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:135",
+   "value": 8
+  },
+  "MESH_ACK_MARKER": {
+   "comment": "'A' — distinct from MESH_JOIN_MARKER (0x4A)",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:75",
+   "value": 65
+  },
+  "MESH_ACK_OK": {
+   "comment": "0 is deliberately unused: an all-zero or",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_inflight.h:17",
+   "value": 1
+  },
+  "MESH_ACK_REJECTED": {
+   "comment": "uninitialized status is never mistaken",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_inflight.h:18",
+   "value": 2
+  },
+  "MESH_ACK_TTL": {
+   "comment": "flood hop budget; generous relative to",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:77",
+   "value": 6
+  },
+  "MESH_APPTAG_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:19",
+   "value": 16
+  },
+  "MESH_APP_ACK_WAIT_MS": {
+   "comment": "wait for the Pi's real accept/reject",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:65",
+   "value": 2000
+  },
+  "MESH_BEACON_INTERVAL_MAX_MS": {
+   "comment": "trickle ceiling",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:30",
+   "value": 60000
+  },
+  "MESH_BEACON_INTERVAL_MIN_MS": {
+   "comment": "trickle floor — reset target",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:29",
+   "value": 2000
+  },
+  "MESH_BODY_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:18",
+   "value": 21
+  },
+  "MESH_BRIDGE_BEACON_INTERVAL_MS": {
+   "comment": "bridge is mains-powered: fixed,",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:31",
+   "value": 2000
+  },
+  "MESH_DATA_BUFFER_SIZE": {
+   "comment": "own readings buffered while isolated",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:89",
+   "value": 10
+  },
+  "MESH_DEDUP_CACHE_SIZE": {
+   "comment": "(origin_mac, seq) ring — drops route-flap dupes",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:76",
+   "value": 32
+  },
+  "MESH_DEDUP_WINDOW_MS": {
+   "comment": "how long a (mac, seq) counts as \"already",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:77",
+   "value": 30000
+  },
+  "MESH_EXPECTED_REPORT_INTERVAL_MS": {
+   "comment": "matches SEND_INTERVAL_MS on edges",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:104",
+   "value": 5000
+  },
+  "MESH_FIXED_CHANNEL": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:55",
+   "value": 1
+  },
+  "MESH_FLAG_SLEEPY": {
+   "comment": "beacon/data flags bit: sender is a",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:58",
+   "value": 1
+  },
+  "MESH_HEADER_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:16",
+   "value": 16
+  },
+  "MESH_INFLIGHT_MAX": {
+   "comment": "full flush + the new reading",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_inflight.h:22",
+   "value": 11
+  },
+  "MESH_INFLIGHT_PENDING": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_inflight.h:21",
+   "value": 0
+  },
+  "MESH_JOIN_BEACON_INTERVAL_MS": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:60",
+   "value": 3000
+  },
+  "MESH_JOIN_MARKER": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:58",
+   "value": 74
+  },
+  "MESH_JOIN_MARKER_CAPS": {
+   "comment": "same shape; sender understands provisioning bit1",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:59",
+   "value": 75
+  },
+  "MESH_MAGIC": {
+   "comment": "'G' — v1 magic (old packets, now rejected)",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:11",
+   "value": 71
+  },
+  "MESH_MAGIC_V2": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:15",
+   "value": 72
+  },
+  "MESH_MAX_TTL": {
+   "comment": "ceiling/fallback only: used when a reading",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:19",
+   "value": 16
+  },
+  "MESH_MIN_SLEEP_MS": {
+   "comment": "floor after subtracting awake time",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:72",
+   "value": 1000
+  },
+  "MESH_NEIGHBOR_SLOTS": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:126",
+   "value": 16
+  },
+  "MESH_NETTAG_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:17",
+   "value": 8
+  },
+  "MESH_NETTAG_LEN_BEACON": {
+   "comment": "same 8-byte truncated CMAC",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:33",
+   "value": 8
+  },
+  "MESH_OFFLINE_AFTER": {
+   "comment": "x expected report interval",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:103",
+   "value": 3
+  },
+  "MESH_ORPHAN_FRESH_MS": {
+   "comment": "an UNROUTED beacon from a MAC not",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:41",
+   "value": 60000
+  },
+  "MESH_ORPHAN_RESET_MIN_GAP_MS": {
+   "comment": "at most one orphan-triggered",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:43",
+   "value": 10000
+  },
+  "MESH_PACKET_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_packet.h:20",
+   "value": 61
+  },
+  "MESH_PARENT_TIMEOUT_FACTOR": {
+   "comment": "parent lost after 3x its",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:33",
+   "value": 3
+  },
+  "MESH_PROVISION_AAD": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_crypto.h:12",
+   "value": "greenhouse-provision-v1"
+  },
+  "MESH_PROVISION_AAD_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_crypto.h:13",
+   "value": 23
+  },
+  "MESH_PROVISION_LEN": {
+   "comment": "16-byte NetKey + 1 flags byte + 16-byte tag",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_crypto.h:14",
+   "value": 33
+  },
+  "MESH_PROV_FLAG_LEAF_ONLY": {
+   "comment": "enrolled as \"never relay for others\"",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_crypto.h:17",
+   "value": 2
+  },
+  "MESH_PROV_FLAG_SLEEPY": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_crypto.h:16",
+   "value": 1
+  },
+  "MESH_RANK_UNROUTED": {
+   "comment": "sentinel: node has no valid parent",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:13",
+   "value": 255
+  },
+  "MESH_RESCAN_AFTER_MS": {
+   "comment": "unrouted this long → re-scan the",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:38",
+   "value": 60000
+  },
+  "MESH_RTC_MAGIC": {
+   "comment": "'GSLQ' — bumped from v1's GSLP on format change",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:590",
+   "value": 1196641361
+  },
+  "MESH_SLEEP_INTERVAL_MS": {
+   "comment": "1 min test duty cycle (change back to 900000UL for 15 min production)",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:60",
+   "value": 60000
+  },
+  "MESH_TTL_MARGIN": {
+   "comment": "adaptive TTL = origin's own rank + this margin",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:14",
+   "value": 2
+  },
+  "MESH_TX_CONFIRM_WAIT_MS": {
+   "comment": "wait for the ESP-NOW send callback",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:63",
+   "value": 500
+  },
+  "MESH_WAKE_DISCOVERY_MS": {
+   "comment": "orphaned-wake listen window before",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:61",
+   "value": 5000
+  },
+  "MESH_WAKE_MAX_AWAKE_MS": {
+   "comment": "hard backstop: persist state and",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:70",
+   "value": 10000
+  },
+  "MESH_WINDOW_DURATION_MS": {
+   "comment": "shared wake window, bridge-",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:35",
+   "value": 3000
+  },
+  "SEND_INTERVAL_MS": {
+   "comment": "must match MESH_EXPECTED_REPORT_INTERVAL_MS",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:38",
+   "value": 5000
+  },
+  "SENSOR_WARMUP_MS": {
+   "comment": "sensor power-up settle time",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:39",
+   "value": 2000
+  },
+  "SOIL_DATA_PIN": {
+   "comment": "ADC1_CH1 — NOT GPIO2: that's an ESP32-C3 strapping",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:17",
+   "value": 1
+  },
+  "SOIL_DRY_VAL": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:34",
+   "value": 3163
+  },
+  "SOIL_PWR_PIN": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:22",
+   "value": 4
+  },
+  "SOIL_WET_VAL": {
+   "comment": "",
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:35",
+   "value": 1529
+  },
+  "UART_BAUD": {
+   "comment": "",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:15",
+   "value": 115200
+  },
+  "UART_RX_PIN": {
+   "comment": "",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:13",
+   "value": 5
+  },
+  "UART_TX_PIN": {
+   "comment": "",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:14",
+   "value": 4
+  }
+ },
+ "literals": {
+  "BATT_ADC_SAMPLES": {
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:98",
+   "value": 8
+  },
+  "BATT_ADC_SAMPLE_DELAY_MS": {
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:100",
+   "value": 2
+  },
+  "BRIDGE_FRAME_FORMAT": {
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:153",
+   "value": "{\"type\":\"frame\",\"data\":\"%s\"}"
+  },
+  "BRIDGE_UART_WRITE": {
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:37",
+   "value": "println"
+  },
+  "BRIDGE_USB_ECHO": {
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:38",
+   "value": "Serial.printf"
+  },
+  "COLD_BOOT_USB_WAIT_MS": {
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:248",
+   "value": 1500
+  },
+  "RTC_VARS": {
+   "src": "RTC_DATA_ATTR declarations",
+   "value": [
+    {
+     "name": "meshRtcState",
+     "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:605",
+     "type": "MeshRtcState"
+    },
+    {
+     "name": "g_unconfirmedWakes",
+     "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:62",
+     "type": "uint8_t"
+    }
+   ]
+  },
+  "TX_FAIL_DROP_COUNT": {
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:392",
+   "value": 3
+  },
+  "UNCONFIRMED_WAKES_CAP": {
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:222",
+   "value": 250
+  },
+  "UNCONFIRMED_WAKES_RESCAN": {
+   "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:145",
+   "value": 2
+  }
+ },
+ "planned": {
+  "MESH_CART_ATTEMPTS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:984",
+   "value": 3
+  },
+  "MESH_CART_JITTER_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:983",
+   "value": 100
+  },
+  "MESH_CART_PER_CHILD_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:985",
+   "value": 150
+  },
+  "MESH_CART_RTC_MAGIC": {
+   "comment": "'CART'",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:1306",
+   "value": 1128354388
+  },
+  "MESH_CHILD_TTL_CYCLES": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:978",
+   "value": 3
+  },
+  "MESH_CYCLE_MAX_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:989",
+   "value": 3600000
+  },
+  "MESH_CYCLE_MIN_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:988",
+   "value": 30000
+  },
+  "MESH_FLAG_RELAY_CAP": {
+   "comment": "beacon: sleepy sender accepts children",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:976",
+   "value": 4
+  },
+  "MESH_FLAG_RX_OPEN": {
+   "comment": "beacon: relay's receptive window open",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:975",
+   "value": 2
+  },
+  "MESH_KNOCK_WINDOW_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:986",
+   "value": 500
+  },
+  "MESH_MAX_SLEEPY_CHILDREN": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:977",
+   "value": 6
+  },
+  "MESH_ORPHAN_FRESH_MS": {
+   "comment": "an UNROUTED beacon from a MAC not",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:44",
+   "value": 60000
+  },
+  "MESH_ORPHAN_RESET_MIN_GAP_MS": {
+   "comment": "at most one orphan-triggered",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:46",
+   "value": 10000
+  },
+  "MESH_PROV_FLAG_LEAF_ONLY": {
+   "comment": "enrolled as \"never relay for others\"",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:220",
+   "value": 2
+  },
+  "MESH_PROV_FLAG_SLEEPY": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:219",
+   "value": 1
+  },
+  "MESH_RELAY_ACK_LINGER_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:987",
+   "value": 300
+  },
+  "MESH_RX_BEACON_PERIOD_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:979",
+   "value": 100
+  },
+  "MESH_SCHED_HIST": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:865",
+   "value": 16
+  },
+  "MESH_SLEEPY_RELAY_DEPTH_MAX": {
+   "comment": "0 = exactly Phase 1 (rollback)",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:974",
+   "value": 1
+  },
+  "MESH_WAKE_GUARD_MIN_MS": {
+   "comment": "",
+   "src": "docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:981",
+   "value": 250
+  }
+ },
+ "python": {
+  "ACK_TTL_MARGIN": {
+   "src": "pi/scripts/serial_bridge.py:469",
+   "value": 2
+  },
+  "ACK_TTL_MAX": {
+   "src": "pi/scripts/serial_bridge.py:470",
+   "value": 16
+  },
+  "BAUD": {
+   "src": "pi/scripts/serial_bridge.py:43",
+   "value": 115200
+  },
+  "BRIDGE_MESH_REFRESH_S": {
+   "src": "pi/scripts/serial_bridge.py:87",
+   "value": 60.0
+  },
+  "HEARTBEAT_INTERVAL_S": {
+   "src": "pi/scripts/serial_bridge.py:55",
+   "value": 2.0
+  },
+  "HEARTBEAT_OFFLINE_AFTER": {
+   "src": "pi/scripts/serial_bridge.py:59",
+   "value": 3
+  },
+  "MQTT_PORT": {
+   "src": "pi/scripts/serial_bridge.py:45",
+   "value": 1883
+  },
+  "OFFLINE_CHECK_INTERVAL_S": {
+   "src": "pi/scripts/serial_bridge.py:64",
+   "value": 1.0
+  },
+  "PROVISION_RESEND_S": {
+   "src": "pi/scripts/serial_bridge.py:397",
+   "value": 10.0
+  },
+  "PROVISION_WARN_AFTER": {
+   "src": "pi/scripts/serial_bridge.py:398",
+   "value": 6
+  },
+  "SERIAL_SILENCE_RESTART_S": {
+   "src": "pi/scripts/serial_bridge.py:71",
+   "value": 30.0
+  },
+  "_LIFEPO4_CURVE": {
+   "src": "pi/scripts/serial_bridge.py:255",
+   "value": [
+    [
+     3400,
+     100.0
+    ],
+    [
+     3350,
+     90.0
+    ],
+    [
+     3320,
+     80.0
+    ],
+    [
+     3300,
+     70.0
+    ],
+    [
+     3280,
+     60.0
+    ],
+    [
+     3260,
+     50.0
+    ],
+    [
+     3250,
+     40.0
+    ],
+    [
+     3220,
+     30.0
+    ],
+    [
+     3200,
+     20.0
+    ],
+    [
+     3000,
+     10.0
+    ],
+    [
+     2800,
+     0.0
+    ]
+   ]
+  },
+  "_MESH_PAYLOAD_KEYS": {
+   "src": "pi/scripts/serial_bridge.py:95",
+   "value": [
+    "parent",
+    "rank",
+    "rssi",
+    "sleepy",
+    "battery_mv",
+    "zone"
+   ]
+  }
+ },
+ "structs": {
+  "MeshAck": {
+   "align": 1,
+   "packed": true,
+   "size": 20,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:91"
+  },
+  "MeshAckDedupEntry": {
+   "align": 4,
+   "packed": false,
+   "size": 16,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:136"
+  },
+  "MeshBeacon": {
+   "align": 1,
+   "packed": true,
+   "size": 27,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:50"
+  },
+  "MeshDedupEntry": {
+   "align": 4,
+   "packed": false,
+   "size": 16,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:130"
+  },
+  "MeshInFlightEntry": {
+   "align": 2,
+   "packed": false,
+   "size": 64,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_inflight.h:28"
+  },
+  "MeshJoinBeacon": {
+   "align": 1,
+   "packed": true,
+   "size": 8,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:66"
+  },
+  "MeshNeighbor": {
+   "align": 4,
+   "packed": false,
+   "size": 16,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:127"
+  },
+  "MeshRtcState": {
+   "align": 4,
+   "packed": false,
+   "size": 632,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:603"
+  },
+  "SensorReading": {
+   "align": 4,
+   "packed": false,
+   "size": 12,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_node.h:520"
+  }
+ },
+ "toolchain": {
+  "CONFIG_BOOTLOADER_RESERVE_RTC_SIZE": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:389",
+   "value": 16
+  },
+  "CONFIG_ESP_DEFAULT_CPU_FREQ_MHZ": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1758",
+   "value": 160
+  },
+  "CONFIG_ESP_PHY_MAX_WIFI_TX_POWER": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1706",
+   "value": 20
+  },
+  "CONFIG_ESP_WIFI_DYNAMIC_RX_BUFFER_NUM": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1840",
+   "value": 32
+  },
+  "CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1844",
+   "value": 32
+  },
+  "CONFIG_ESP_WIFI_MGMT_SBUF_NUM": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1856",
+   "value": 32
+  },
+  "CONFIG_ESP_WIFI_STATIC_RX_BUFFER_NUM": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1839",
+   "value": 8
+  },
+  "CONFIG_FREERTOS_HZ": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1992",
+   "value": 1000
+  },
+  "CONFIG_RTC_CLK_SRC_INT_RC": {
+   "src": "Arduino15/packages/esp32/tools/esp32c3-libs/3.3.11/sdkconfig:1614",
+   "value": true
+  },
+  "HWSERIAL_RX_BUFFER_DEFAULT": {
+   "src": "Arduino15/packages/esp32/hardware/esp32/3.3.11/cores/esp32/HardwareSerial.cpp:142",
+   "value": 256
+  },
+  "HWSERIAL_TX_BUFFER_DEFAULT": {
+   "src": "Arduino15/packages/esp32/hardware/esp32/3.3.11/cores/esp32/HardwareSerial.cpp:142",
+   "value": 0
+  }
+ }
+}

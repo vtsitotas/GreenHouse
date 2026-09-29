@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "meshsim-dashboard",
+      "runtimeExecutable": "python",
+      "runtimeArgs": ["-m", "meshsim", "serve", "--port", "8765", "--no-browser"],
+      "cwd": "sim",
+      "port": 8765
+    }
+  ]
+}

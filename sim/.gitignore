@@ -1,0 +1,3 @@
+runs/
+__pycache__/
+web/pyodide/
