@@ -467,7 +467,7 @@ def send_provision(ser, mac: str, blob: bytes) -> None:
 
 
 ACK_TTL_MARGIN = 2   # mirrors MESH_TTL_MARGIN; spec 2026-09-23 §3.6
-ACK_TTL_MAX = 16     # mirrors MESH_MAX_TTL
+ACK_TTL_MAX = 64     # mirrors MESH_MAX_TTL (was 16: capped ACK reach at rank 17)
 
 
 def send_ack(ser, mac: str, seq: int, ok: bool, ttl=None) -> None:

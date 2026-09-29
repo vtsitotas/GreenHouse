@@ -6,6 +6,7 @@
 #include <DHT.h>
 #include "mesh_config.h"
 #include "mesh_node.h"
+#include "mesh_cart.h"
 #include "node_key.h"   // this board's AppKey -- see node_key.h.example
 
 // ── Pin definitions (ESP32 WROOM-32) ─────────────────────────────────────────
@@ -126,6 +127,35 @@ bool sendWithConfirm(const SensorReading* r, uint32_t deadline) {
   return (g_lastTxStatus == 1 && meshHasParent());
 }
 
+#if MESH_CART_ENABLE
+// ── CART depth N (spec 2026-09-28-cart-depth-n): hooks + explicit-length sleep ──
+static_assert(MESH_CART_SLOT_MS >= SENSOR_WARMUP_MS + 200,
+              "CART slot must cover the sensor warm-up: the own reading is sent at the end of it");
+
+void goToSleepFor(uint8_t channel, uint32_t sleepMs) {
+  digitalWrite(SOIL_PWR_PIN, LOW);
+  digitalWrite(DHT_PWR_PIN,  LOW);
+  meshRtcPersist(channel);
+  Serial.flush();
+  esp_sleep_enable_timer_wakeup((uint64_t)sleepMs * 1000ULL);
+  esp_deep_sleep_start();
+}
+
+static void cartSensorsPower(bool on) {
+  digitalWrite(SOIL_PWR_PIN, on ? HIGH : LOW);
+  digitalWrite(DHT_PWR_PIN,  on ? HIGH : LOW);
+}
+
+static void cartReadSensors(SensorReading* r) {
+  r->temperature   = dht.readTemperature();
+  r->humidity      = dht.readHumidity();
+  r->soil_moisture = soilPercent(analogRead(SOIL_DATA_PIN));
+  if (isnan(r->temperature) || isnan(r->humidity))
+    Serial.println("[sensor] DHT read failed — check pull-up resistor");
+  meshSetBatteryMv(readBatteryMv());
+}
+#endif
+
 void runSleepyCycle() {
   const uint32_t deadline = MESH_WAKE_MAX_AWAKE_MS;
 
@@ -157,6 +187,15 @@ void runSleepyCycle() {
   // exists for.
   bool restored = meshRtcRestore();
   Serial.printf("[wake] rtc restore: %s\n", restored ? "parent hint" : "none (cold/invalid)");
+
+#if MESH_CART_ENABLE
+  // Every node sleeps and relays: one ladder cycle, then sleep (never returns).
+  {
+    static const MeshCartHooks hooks = { cartSensorsPower, cartReadSensors, SENSOR_WARMUP_MS };
+    uint32_t sleepMs = meshCartCycle(&hooks, esp_sleep_get_wakeup_cause() == ESP_SLEEP_WAKEUP_TIMER);
+    goToSleepFor(ch, sleepMs);
+  }
+#endif
 
   meshSendBeaconNow(meshMyRank, MESH_SLEEP_INTERVAL_MS);
 

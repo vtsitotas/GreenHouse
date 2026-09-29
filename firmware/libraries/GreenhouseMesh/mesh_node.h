@@ -122,6 +122,17 @@ static uint32_t meshWindowDurationMs  = MESH_WINDOW_DURATION_MS;
 
 static uint32_t meshLastOrphanResetMs = 0;
 
+// ── CART depth N state (spec 2026-09-28-cart-depth-n) ─────────────────────────
+static bool              meshParentSleepy  = false;  // parent is a sleepy relay (ladder)
+static volatile bool     meshRxWindowOpen  = false;  // our receive window is open now
+static uint32_t          meshRxOpenedMs    = 0;
+static volatile bool     meshCatchSeen     = false;  // parent's RX_OPEN beacon heard
+static volatile uint32_t meshCatchOpenMs   = 0;      // when the parent's window opened
+static volatile bool     meshCatchBufFull  = false;  // ... and it asked us to hold frames
+static volatile int8_t   meshLastTxStatus  = -1;     // last send callback: -1 / 0 / 1
+static bool              meshCartActive    = false;  // inside a CART cycle
+static uint16_t          meshRelayDropped  = 0;      // frames lost to a full relay buffer
+
 // Fixed-size neighbor ring: no longer depends on compile-time fleet size.
 #define MESH_NEIGHBOR_SLOTS 16
 typedef struct { uint8_t mac[6]; uint32_t lastHeardMs; bool used; } MeshNeighbor;
@@ -152,6 +163,39 @@ static uint16_t meshDataSeq  = 0;
 static int      meshTxFailCount = 0;
 
 static uint16_t meshBatteryMv = 0;
+
+// Relay buffer: frames received from children in our window, forwarded in the
+// parent's window. Lives in RTC FAST memory so a missed parent window keeps
+// them for the next cycle. Validated by magic; cleared on any non-timer boot.
+#define MESH_RELAY_RTC_MAGIC 0x524C4159UL   // 'RLAY'
+RTC_DATA_ATTR static uint32_t meshRelayMagic;
+RTC_DATA_ATTR static uint8_t  meshRelayBuf[MESH_RELAY_BUFFER_SIZE][MESH_PACKET_LEN];
+RTC_DATA_ATTR static uint8_t  meshRelayCount;
+RTC_DATA_ATTR static uint8_t  meshRelayHead;
+
+static void meshRelayBegin(bool timerWake) {
+  if (meshRelayMagic != MESH_RELAY_RTC_MAGIC || !timerWake ||
+      meshRelayCount > MESH_RELAY_BUFFER_SIZE || meshRelayHead >= MESH_RELAY_BUFFER_SIZE) {
+    meshRelayCount = meshRelayHead = 0;
+    meshRelayMagic = MESH_RELAY_RTC_MAGIC;
+  }
+}
+
+static bool meshRelayFull() { return meshRelayCount >= MESH_RELAY_BUFFER_SIZE; }
+
+static bool meshRelayPush(const uint8_t* pkt) {
+  if (meshRelayFull()) { meshRelayDropped++; return false; }
+  int tail = (meshRelayHead + meshRelayCount) % MESH_RELAY_BUFFER_SIZE;
+  memcpy(meshRelayBuf[tail], pkt, MESH_PACKET_LEN);
+  meshRelayCount++;
+  return true;
+}
+
+static void meshRelayPop() {
+  if (!meshRelayCount) return;
+  meshRelayHead = (uint8_t)((meshRelayHead + 1) % MESH_RELAY_BUFFER_SIZE);
+  meshRelayCount--;
+}
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 static bool meshMacEqual(const uint8_t* a, const uint8_t* b) {
@@ -203,6 +247,7 @@ static void meshClearParent() {
   memset(meshParentMac, 0, 6);
   meshMyRank = MESH_RANK_UNROUTED;
   meshParentRank = MESH_RANK_UNROUTED;
+  meshParentSleepy = false;
 }
 
 static bool meshSetParent(const uint8_t* mac, uint8_t rank, uint32_t intervalMs) {
@@ -255,7 +300,11 @@ static void meshTrickleReset() {
   meshBeaconIntervalMs = MESH_BEACON_INTERVAL_MIN_MS;
 }
 
-static void meshSendBeaconNow(uint8_t rank, uint32_t advertisedIntervalMs) {
+// extraFlags may carry MESH_FLAG_RX_OPEN (then window_duration_ms = ms since
+// our receive window opened, so a child can recover the exact open instant),
+// MESH_FLAG_RELAY_CAP and MESH_FLAG_BUF_FULL. Beacon stays 27 bytes.
+static void meshSendBeaconEx(uint8_t rank, uint32_t advertisedIntervalMs,
+                             uint8_t extraFlags, uint32_t rxElapsedMs) {
   if (!meshLoadKeys()) return;  // no NetKey yet — cannot sign
   MeshBeacon b;
   b.magic               = MESH_MAGIC_V2;
@@ -263,11 +312,15 @@ static void meshSendBeaconNow(uint8_t rank, uint32_t advertisedIntervalMs) {
   b.rank               = rank;
   b.seq                = meshBeaconSeq++;
   b.beacon_interval_ms = advertisedIntervalMs;
-  b.window_duration_ms = meshWindowDurationMs;
-  b.flags              = meshIsSelfSleepy() ? MESH_FLAG_SLEEPY : 0;
+  b.window_duration_ms = (extraFlags & MESH_FLAG_RX_OPEN) ? rxElapsedMs : meshWindowDurationMs;
+  b.flags              = (uint8_t)((meshIsSelfSleepy() ? MESH_FLAG_SLEEPY : 0) | extraFlags);
   meshCmacTruncated(meshNetKey, (const uint8_t*)&b,
                     sizeof(MeshBeacon) - MESH_NETTAG_LEN, b.tag);
   esp_now_send(MESH_BCAST, (const uint8_t*)&b, sizeof(b));
+}
+
+static void meshSendBeaconNow(uint8_t rank, uint32_t advertisedIntervalMs) {
+  meshSendBeaconEx(rank, advertisedIntervalMs, 0, 0);
 }
 
 // Edge-node beacon scheduler: send when due, then double the interval (capped).
@@ -298,6 +351,14 @@ static void meshAdoptParent(const uint8_t* mac, const MeshBeacon* b, int rssi, u
   meshParentRssi        = rssi;
   meshTxFailCount       = 0;
   meshTrickleReset();
+  meshParentSleepy = (b->flags & MESH_FLAG_SLEEPY) != 0;
+  // Adopting a sleepy relay from inside its open window IS a catch: anchor on
+  // it instead of paying a full-cycle sweep next wake.
+  if (meshParentSleepy && (b->flags & MESH_FLAG_RX_OPEN)) {
+    meshCatchOpenMs  = now - b->window_duration_ms;
+    meshCatchBufFull = (b->flags & MESH_FLAG_BUF_FULL) != 0;
+    meshCatchSeen    = true;
+  }
   char m[13]; meshFormatMac(mac, m);
   Serial.printf("[mesh] parent=%s (rank %d, rssi %d) — my rank now %d\n",
                 m, b->rank, rssi, meshMyRank);
@@ -340,18 +401,30 @@ static void meshHandleBeacon(const uint8_t* srcMac, const MeshBeacon* b,
     meshLastBeaconMs = now;
   }
 
-  // Phase 1 (current, shipped) restriction, NOT a permanent design choice:
-  // every field-deployed node other than the Pi/bridge is meant to run on
-  // battery+solar and relay for its neighbors when needed -- this hard
-  // rejection is what's currently in the way of that for a sleepy node.
-  // The fix is already fully designed (CART, docs/superpowers/specs/
-  // 2026-08-17-mesh-phase2-synced-wake-design.md) but blocked on a mandatory
-  // real-hardware drift-measurement bench step that hasn't been run yet.
-  if (b->flags & MESH_FLAG_SLEEPY) {
-    if (meshHasParent_ && meshMacEqual(meshParentMac, srcMac))
-      meshDropParent("parent became sleepy");
+  bool senderSleepy = (b->flags & MESH_FLAG_SLEEPY) != 0;
+  bool fromParent   = meshHasParent_ && meshMacEqual(meshParentMac, srcMac);
+
+#if MESH_CART_ENABLE
+  // CART depth N: a sleepy node is a valid parent while its receive window is
+  // open and it offers to relay. Its RX_OPEN beacon is also our catch signal.
+  if (fromParent && senderSleepy && (b->flags & MESH_FLAG_RX_OPEN)) {
+    meshCatchOpenMs  = now - b->window_duration_ms;
+    meshCatchBufFull = (b->flags & MESH_FLAG_BUF_FULL) != 0;
+    meshCatchSeen    = true;
+  }
+  if (senderSleepy) {
+    bool usable = (b->flags & MESH_FLAG_RX_OPEN) && (b->flags & MESH_FLAG_RELAY_CAP);
+    if (!usable && !fromParent) return;      // asleep soon / full / leaf-only
+    // Prefer an always-on parent of the same or better rank.
+    if (!fromParent && meshHasParent_ && !meshParentSleepy && b->rank >= meshParentRank) return;
+  }
+#else
+  // Phase 1: a sleepy node is never a parent (leaf-only).
+  if (senderSleepy) {
+    if (fromParent) meshDropParent("parent became sleepy");
     return;
   }
+#endif
 
   if (meshHasParent_ && meshMacEqual(meshParentMac, srcMac)) {
     // Current parent: refresh liveness
@@ -388,7 +461,11 @@ static void meshCheckParentTimeout(uint32_t now) {
 
 // Backstop for a parent that dies mid-trickle: 3 consecutive tx failures drop it.
 static void meshNotifyTxStatus(bool ok) {
+  meshLastTxStatus = ok ? 1 : 0;
   if (ok) return;
+  // Inside a CART cycle collisions are expected and the parent's liveness is
+  // judged by catching its window, not by L2 failures.
+  if (meshCartActive) return;
   if (++meshTxFailCount >= 3) {
     meshTxFailCount = 0;
     if (meshHasParent_) meshDropParent("3 consecutive tx failures");
@@ -476,7 +553,8 @@ static void meshHandleAck(const uint8_t* data, int len) {
     meshInFlightAnswer(&meshInFlight, a.seq, a.status);
   }
 
-  if (!meshIsSelfSleepy() && a.ttl > 0) {
+  // A sleepy node re-floods only while its receive window is open (CART gate).
+  if ((!meshIsSelfSleepy() || meshRxWindowOpen) && a.ttl > 0) {
     uint8_t fwd[sizeof(MeshAck)];
     memcpy(fwd, data, sizeof(fwd));
     fwd[11] = a.ttl - 1;   // ttl is byte offset 11 — see the MeshAck layout above
@@ -587,7 +665,7 @@ static bool meshHandleProvision(const uint8_t* data, int len) {
 }
 
 // ── RTC-persistent state (deep-sleep wake cycles) ─────────────────────────────
-#define MESH_RTC_MAGIC 0x47534C51UL  // 'GSLQ' — bumped from v1's GSLP on format change
+#define MESH_RTC_MAGIC 0x47534C52UL  // 'GSLR' — bumped from GSLQ: + parentSleepy
 
 typedef struct {
   uint32_t magic;
@@ -597,6 +675,7 @@ typedef struct {
   uint8_t  parentMac[6];   // MAC-based parent hint (replaces index)
   uint8_t  parentRank;
   uint8_t  channel;
+  bool     parentSleepy;   // CART: parent is a sleepy relay (ladder timing)
   uint8_t  bufCount;
   uint8_t  bufHead;
   uint8_t  buf[MESH_DATA_BUFFER_SIZE][MESH_PACKET_LEN];  // sealed packets
@@ -632,6 +711,7 @@ static bool meshRtcRestore() {
     if (meshSetParent(meshRtcState.parentMac, meshRtcState.parentRank,
                       MESH_BEACON_INTERVAL_MAX_MS)) {
       meshParentRssi = -128;   // unknown until a fresh beacon is heard
+      meshParentSleepy = meshRtcState.parentSleepy;
       return true;
     }
   }
@@ -646,6 +726,7 @@ static void meshRtcPersist(uint8_t channel) {
   memcpy(meshRtcState.parentMac, meshParentMac, 6);
   meshRtcState.parentRank = meshParentRank;
   meshRtcState.channel    = channel;
+  meshRtcState.parentSleepy = meshParentSleepy;
   meshRtcState.bufCount   = (uint8_t)meshBufCount;
   meshRtcState.bufHead    = (uint8_t)meshBufHead;
   memcpy(meshRtcState.buf, meshBuf, sizeof(meshBuf));
@@ -695,7 +776,16 @@ static void meshRelayData(const uint8_t* srcMac, const uint8_t* data, int len) {
   uint8_t fwd[MESH_PACKET_LEN];
   memcpy(fwd, data, MESH_PACKET_LEN);
   fwd[15]--;
-  meshUnicastToParent(fwd);
   char m[13]; meshFormatMac(originMac, m);
+#if MESH_CART_ENABLE
+  // Sleepy relay (ladder): take custody now, forward in the parent's window.
+  if (meshIsSelfSleepy()) {
+    bool kept = meshRelayPush(fwd);
+    Serial.printf("[cart] %s frame from %s (%u in relay buffer)\n",
+                  kept ? "stored" : "DROPPED (buffer full)", m, meshRelayCount);
+    return;
+  }
+#endif
+  meshUnicastToParent(fwd);
   Serial.printf("[mesh] relayed packet from %s (ttl now %d)\n", m, fwd[15]);
 }
