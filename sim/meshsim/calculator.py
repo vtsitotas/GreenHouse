@@ -188,6 +188,37 @@ def _t1_slots(cfg, R, W, rad, gw):
     return D, per_frame
 
 
+def window_beacon_air(cfg, cat, rad):
+    """Air time of the RX_OPEN beacons one node sends while its window is open."""
+    slot = cfg["scheme.t1_slot_s"]
+    beacons = slot / cfg["scheme.rx_beacon_period_s"]
+    return beacons * (rad["t_beacon_air"] + (an.DIFS_US + an.mean_backoff_slots(cfg["radio.cw"]) * an.SLOT_US) / 1e6)
+
+
+def fw_node_timeline(cfg, cat, I, rad, s_out, sync_extra, wait_s):
+    """One node's cycle on the firmware ladder: boot, a receive window of SLOT
+    with the sensors warming up inside it, [catching a sleeping parent:
+    sync_extra, None if the parent is the always-on bridge], waiting for its
+    turn in the parent's window, then s_out data frames. Shared by the layered
+    calculator and the geometric model."""
+    slot = cfg["scheme.t1_slot_s"]
+    clim = hw.CLIMATE_SENSORS[cfg["hw.climate_sensor"]]
+    soil = hw.SOIL_SENSORS[cfg["hw.soil_sensor"]]
+    settle = max(clim["settle_s"], soil["settle_s"])
+    read = clim["read_s"] + cat["BATT_ADC_SAMPLES"] * cat["BATT_ADC_SAMPLE_DELAY_MS"] / 1000
+    i_sens = clim["active_ma"] + soil["active_ma"]
+    tl = Timeline()
+    tl.add("boot", cfg["timing.t_boot_s"], I["cpu"])
+    tl.add("sensor", min(settle, slot), I["rx"] + i_sens)          # warm-up inside the window
+    tl.add("cpu", read, I["rx"] + i_sens)
+    tl.add("rx_window", max(0.0, slot - settle - read), I["rx"])
+    if sync_extra is not None:
+        tl.add("sync_listen", sync_extra, I["rx"])
+    tl.add("radio_other", max(0.0, wait_s), I["rx"])
+    _add_tx(tl, s_out, rad, I)
+    return tl
+
+
 def _scheme_t1_firmware(cfg, cat, R, W, rad, gw, I, sync):
     """The ladder exactly as firmware/libraries/GreenhouseMesh/mesh_cart.h runs it:
     every node opens a fixed receive window of SLOT (sensors warm up inside it),
@@ -222,26 +253,16 @@ def _scheme_t1_firmware(cfg, cat, R, W, rad, gw, I, sync):
     share = (k + 1) / (2 * k)
     # Channel occupancy of one hearing domain (ranks r−1, r, r+1 × W nodes) over a
     # cycle: every node's RX_OPEN beacons for the whole window + its data frames.
-    beacons = slot / (cat["MESH_RX_BEACON_PERIOD_MS"] / 1000) if "MESH_RX_BEACON_PERIOD_MS" in cat else slot / 0.1
-    per_node_air = beacons * (rad["t_beacon_air"] + (an.DIFS_US + an.mean_backoff_slots(cfg["radio.cw"])
-                                                     * an.SLOT_US) / 1e6)
+    per_node_air = window_beacon_air(cfg, cat, rad)
     busiest = max(range(1, R + 1), key=lambda r: sum(R - j + 1 for j in range(max(1, r - 1), min(R, r + 1) + 1)))
     frames = sum(R - j + 1 for j in range(max(1, busiest - 1), min(R, busiest + 1) + 1))
     util = W * (min(3, R) * per_node_air + frames * per_frame) / Tc
     rows = []
     for r in range(1, R + 1):
-        tl = Timeline()
         s = R - r + 1
-        tl.add("boot", cfg["timing.t_boot_s"], I["cpu"])
-        tl.add("sensor", min(settle, slot), I["rx"] + i_sens)          # warm-up inside the window
-        tl.add("cpu", read, I["rx"] + i_sens)
-        tl.add("rx_window", max(0.0, slot - settle - read), I["rx"])
-        if r >= 2:
-            tl.add("sync_listen", extra, I["rx"])
         horizon = r1_budget if r == 1 else slot
         wait = min(need[r] * horizon / slot, horizon) * share - s * per_frame
-        tl.add("radio_other", max(0.0, wait), I["rx"])
-        _add_tx(tl, s, rad, I)
+        tl = fw_node_timeline(cfg, cat, I, rad, s, extra if r >= 2 else None, wait)
         rows.append({"rank": r, "tl": tl, "routed": True, "latency_s": r * slot + gw["t_gw"],
                      "buffer_peak": R - r, "sync_hops": max(0, r - 1),
                      "rx_frames": R - r, "tx_frames": s})
