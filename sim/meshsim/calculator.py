@@ -137,8 +137,10 @@ def _sync(cfg, cat, Tc):
     step = clock.step_for(Tc, cfg["sync.step_per_300s"])
     g_min = cfg["sync.g_min_s"]
     g_max = cfg["sync.g_max_s"] or clock.g_max_rule(cfg["sync.g_max_rule"], bias, step, Tc,
-                                                     cat["G_MAX_FACTOR"], g_min, cfg["sync.z"])
-    st = clock.pair_stats(Tc, bias, step, cfg["sync.policy"], g_min, g_max, cfg["sync.cycles"])
+                                                     cat["G_MAX_FACTOR"], g_min, cfg["sync.z"],
+                                                     cfg["sync.g_cap_s"])
+    st = clock.pair_stats(Tc, bias, step, cfg["sync.policy"], g_min, g_max, cfg["sync.cycles"],
+                          k=cfg["sync.margin_k"])
     return dict(st, step=step, g_max=g_max, g_min=g_min, bias=bias,
                 wander_std=clock.wander_std_s(step, Tc), rule=cfg["sync.g_max_rule"])
 
@@ -186,7 +188,73 @@ def _t1_slots(cfg, R, W, rad, gw):
     return D, per_frame
 
 
+def _scheme_t1_firmware(cfg, cat, R, W, rad, gw, I, sync):
+    """The ladder exactly as firmware/libraries/GreenhouseMesh/mesh_cart.h runs it:
+    every node opens a fixed receive window of SLOT (sensors warm up inside it),
+    then catches its parent's window and forwards own + relayed frames, custody
+    = the parent's L2 ACK. Rows are assumed to be in phase (worst case for
+    contention: every column's rank-r nodes use the same slot)."""
+    slot, J = cfg["scheme.t1_slot_s"], cfg["radio.jitter_s"]
+    per_frame = rad["t_frame"] + (rad["t_ack_exch"] if cfg["scheme.t1_hop_ack"] == "per_frame" else 0.0)
+    clim = hw.CLIMATE_SENSORS[cfg["hw.climate_sensor"]]
+    soil = hw.SOIL_SENSORS[cfg["hw.soil_sensor"]]
+    settle = max(clim["settle_s"], soil["settle_s"])
+    read = clim["read_s"] + cat["BATT_ADC_SAMPLES"] * cat["BATT_ADC_SAMPLE_DELAY_MS"] / 1000
+    i_sens = clim["active_ma"] + soil["active_ma"]
+    # How many columns (branches under different rank-1 nodes) share a slot:
+    # in phase = all W (worst case); firmware reality = rank-1 nodes free-run on
+    # their own clocks, so another column's window overlaps ours (ranks r−1..r+1
+    # all hear us) with probability ≈ 3·2·slot/T.
+    Tc = cfg["timing.T_s"] * cfg["timing.report_every"]
+    k = W if cfg["net.phase_sync"] else 1 + (W - 1) * min(1.0, 6 * slot / Tc)
+    need = {}
+    # Rank 1 sends to the always-on bridge: its flush budget can exceed the slot
+    # (firmware today: SLOT; `scheme.rank1_flush_s` models a longer budget).
+    r1_budget = cfg.get("scheme.rank1_flush_s") or slot
+    for r in range(1, R + 1):
+        row = k * (R - r + 1) * per_frame + J
+        if r == 1:                         # rank-1 flushes land on the one gateway
+            row = max(row, k * R * gw["t_gw"]) * slot / r1_budget   # normalised to the slot
+        need[r] = row
+    g = sync["guard_mean"]
+    early = max(0.0, g / 2 - slot)
+    extra = max(0.0, early + sync["listen"] - g / 2)   # awake beyond our own window to catch the parent
+    share = (k + 1) / (2 * k)
+    # Channel occupancy of one hearing domain (ranks r−1, r, r+1 × W nodes) over a
+    # cycle: every node's RX_OPEN beacons for the whole window + its data frames.
+    beacons = slot / (cat["MESH_RX_BEACON_PERIOD_MS"] / 1000) if "MESH_RX_BEACON_PERIOD_MS" in cat else slot / 0.1
+    per_node_air = beacons * (rad["t_beacon_air"] + (an.DIFS_US + an.mean_backoff_slots(cfg["radio.cw"])
+                                                     * an.SLOT_US) / 1e6)
+    busiest = max(range(1, R + 1), key=lambda r: sum(R - j + 1 for j in range(max(1, r - 1), min(R, r + 1) + 1)))
+    frames = sum(R - j + 1 for j in range(max(1, busiest - 1), min(R, busiest + 1) + 1))
+    util = W * (min(3, R) * per_node_air + frames * per_frame) / Tc
+    rows = []
+    for r in range(1, R + 1):
+        tl = Timeline()
+        s = R - r + 1
+        tl.add("boot", cfg["timing.t_boot_s"], I["cpu"])
+        tl.add("sensor", min(settle, slot), I["rx"] + i_sens)          # warm-up inside the window
+        tl.add("cpu", read, I["rx"] + i_sens)
+        tl.add("rx_window", max(0.0, slot - settle - read), I["rx"])
+        if r >= 2:
+            tl.add("sync_listen", extra, I["rx"])
+        horizon = r1_budget if r == 1 else slot
+        wait = min(need[r] * horizon / slot, horizon) * share - s * per_frame
+        tl.add("radio_other", max(0.0, wait), I["rx"])
+        _add_tx(tl, s, rad, I)
+        rows.append({"rank": r, "tl": tl, "routed": True, "latency_s": r * slot + gw["t_gw"],
+                     "buffer_peak": R - r, "sync_hops": max(0, r - 1),
+                     "rx_frames": R - r, "tx_frames": s})
+    return rows, {"slots_s": {r: slot for r in range(1, R + 1)}, "ladder_span_s": R * slot,
+                  "per_frame_s": per_frame, "slot_need_s": max(need.values()), "columns_in_slot": k,
+                  "channel_util": util,
+                  "slot_fill": max(need.values()) / slot, "sensor_settle_s": settle + read,
+                  "note": "σκάλα όπως στο firmware: σταθερό παράθυρο, custody με L2 ACK"}
+
+
 def _scheme_t1(cfg, cat, R, W, rad, gw, I, sync):
+    if cfg.get("scheme.t1_slot_s"):
+        return _scheme_t1_firmware(cfg, cat, R, W, rad, gw, I, sync)
     # A child wakes G/2 early by its own clock and listens *before* the parent's slot
     # starts, catching the parent's RX_OPEN beacon at the true start — so slots need no
     # guard, and a relay's pre-listen overlaps the receive window it is holding for
@@ -426,8 +494,17 @@ def _checks(cfg, cat, R, W, N, Tc, tech, per_rank, scheme, sync, gw, ceiling, wo
         chk("ladder_span", scheme["ladder_span_s"] <= Tc,
             f"σκάλα {scheme['ladder_span_s']:.1f} s vs κύκλος {Tc} s")
         chk("tx_burst", max(x["tx_frames"] for x in per_rank) <= cat["CONFIG_ESP_WIFI_DYNAMIC_TX_BUFFER_NUM"]
-            or cfg["scheme.t1_hop_ack"] == "per_frame",
+            or cfg["scheme.t1_hop_ack"] in ("per_frame", "l2"),
             "ριπή χωρίς αναμονή callback > 32 dyn TX buffers → ESP_ERR_ESPNOW_NO_MEM")
+        if "slot_need_s" in scheme:
+            slot = cfg["scheme.t1_slot_s"]
+            chk("slot_capacity", scheme["slot_need_s"] <= slot,
+                f"η πιο φορτωμένη σειρά θέλει {scheme['slot_need_s']:.2f} s μέσα σε παράθυρο {slot} s")
+            chk("channel_util", scheme["channel_util"] <= cfg["radio.max_util"],
+                f"κανάλι ανά περιοχή ακρόασης {100 * scheme['channel_util']:.1f} % (beacons RX_OPEN + δεδομένα) "
+                f"vs όριο {100 * cfg['radio.max_util']:.0f} %")
+            chk("slot_covers_sensor", scheme["sensor_settle_s"] + 0.2 <= slot,
+                f"warm-up + ανάγνωση {scheme['sensor_settle_s']:.2f} s (+0,2) μέσα σε παράθυρο {slot} s")
     if tech == "T2-window":
         chk("app_ack_wait", scheme["window_core_s"] <= cfg["timing.app_ack_wait_s"],
             f"το ACK φτάνει σε ~{scheme['window_core_s']:.2f} s vs αναμονή firmware {cfg['timing.app_ack_wait_s']} s "

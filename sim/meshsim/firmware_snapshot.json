@@ -426,6 +426,26 @@
    "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:287",
    "value": 1500
   },
+  "GUARD_K_DEN": {
+   "src": "firmware/libraries/GreenhouseMesh/mesh_cart.h:49",
+   "value": 2
+  },
+  "GUARD_K_NUM": {
+   "src": "firmware/libraries/GreenhouseMesh/mesh_cart.h:49",
+   "value": 3
+  },
+  "GUARD_PAD_MS": {
+   "src": "firmware/libraries/GreenhouseMesh/mesh_cart.h:49",
+   "value": 50
+  },
+  "G_MAX_FACTOR_X10": {
+   "src": "firmware/libraries/GreenhouseMesh/mesh_sched.h:40",
+   "value": 13
+  },
+  "G_MAX_WANDER_Z": {
+   "src": "firmware/libraries/GreenhouseMesh/mesh_sched.h:42",
+   "value": 6
+  },
   "RTC_VARS": {
    "src": "RTC_DATA_ATTR declarations",
    "value": [
