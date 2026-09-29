@@ -6,7 +6,7 @@ so a discrete-event run can be compared with an exact expectation.
 import json
 import math
 
-# ── PHY: IEEE 802.11 DSSS (Clause 16) + ESP-NOW vendor action frame ──────────
+# ── PHY: IEEE 802.11-2020 DSSS (Clause 15) + ESP-NOW vendor action frame ──────────
 # ESP-IDF "ESP-NOW frame format": MAC header 24, category 1, OUI 3, random 4,
 # vendor-specific element header 7 (id 1, len 1, OUI 3, type 1, version 1), FCS 4.
 ESPNOW_OVERHEAD = {"mac_header": 24, "category_code": 1, "oui": 3, "random": 4,

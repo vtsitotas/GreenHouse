@@ -60,7 +60,8 @@ def _apply(cat, base_cfg, overrides):
         Tc = cfg["timing.T_s"] * cfg["timing.report_every"]
         step = clock.step_for(Tc, cfg["sync.step_per_300s"])
         g = cfg["sync.g_max_s"] or clock.g_max_rule(cfg["sync.g_max_rule"], cfg["sync.bias"], step, Tc,
-                                                    cat["G_MAX_FACTOR"], cfg["sync.g_min_s"], cfg["sync.z"])
+                                                    cat["G_MAX_FACTOR"], cfg["sync.g_min_s"], cfg["sync.z"],
+                                                    cfg["sync.g_cap_s"])
         cfg["sync.g_max_s"] = g * factor
     return cfg
 

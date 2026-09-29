@@ -30,7 +30,7 @@ def wander_std_s(step, T_s, rho=RHO):
     return T_s * step / math.sqrt(1 - rho * rho)
 
 
-def g_max_rule(rule, bias, step, T_s, factor=1.3, g_min=0.25, z=3.0):
+def g_max_rule(rule, bias, step, T_s, factor=1.3, g_min=0.25, z=3.0, cap=None):
     """cart_v2: bias only (spec 2026-09-23 §3.3).
     bias_wander (proposed here): also cover ±z σ of the temperature wander, which the
     bias rule ignores — at T = 900 s with the planning step the bias rule gives 3.98 s
@@ -38,6 +38,8 @@ def g_max_rule(rule, bias, step, T_s, factor=1.3, g_min=0.25, z=3.0):
     g = g_max_for(bias, T_s, factor, g_min)
     if rule == "bias_wander":
         g = max(g, 2 * z * wander_std_s(step, T_s))
+    if cap:                                    # firmware MESH_GUARD_CAP_MS, never below G_min
+        g = max(g_min, min(g, cap))
     return g
 
 
@@ -96,9 +98,9 @@ def run_policy(T, bias, step, policy, cycles=100000, seed=7, g_min=0.25,
 
 
 @lru_cache(maxsize=256)
-def pair_stats(T, bias, step, policy, g_min, g_max, cycles, seed=7):
+def pair_stats(T, bias, step, policy, g_min, g_max, cycles, seed=7, k=1.5):
     """Cached run_policy for the calculator (deterministic, so safe to cache)."""
-    return run_policy(T, bias, step, policy, cycles=cycles, seed=seed, g_min=g_min, g_max=g_max)
+    return run_policy(T, bias, step, policy, cycles=cycles, seed=seed, g_min=g_min, g_max=g_max, k=k)
 
 
 def accumulated_offset_std(err_std, hops):

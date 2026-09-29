@@ -21,7 +21,7 @@ GROUPS = [
     ("A4", "Firmware — buffers και μνήμη"),
     ("A5", "Firmware — κύκλος αφύπνισης (sleepy κόμβος)"),
     ("A6", "Γέφυρα (bridge) και Pi"),
-    ("A7", "CART v2 Part C (σχεδιασμένο, όχι υλοποιημένο)"),
+    ("A7", "CART depth N: όλοι κοιμούνται και κάνουν relay (firmware + σχεδιασμένες τιμές)"),
     ("B", "Hardware ESP32-C3 (datasheet) και toolchain (sdkconfig)"),
     ("C", "Πλακέτα, ενέργεια, μπαταρία, ηλιακό"),
     ("D", "PHY/MAC: IEEE 802.11 DSSS + ESP-NOW frame"),
@@ -50,7 +50,7 @@ SNP = "docs/SENSOR_NODE_POWER_AND_SOLAR.md"
 CARTV2 = "docs/superpowers/specs/2026-09-23-cart-v2-revision.md"
 RES = "docs/analysis/cart_sim_results.txt"
 ESPNOW_DOC = "ESP-IDF ESP-NOW guide (frame format, default rate)"
-IEEE = "IEEE 802.11-2020 Clause 16 (DSSS PHY)"
+IEEE = "IEEE 802.11-2020 Clause 15 (DSSS PHY)"
 
 
 @dataclass
@@ -233,9 +233,13 @@ def build(fw=None):
             fwd("A7", key, unit, note)
         else:
             c.add("A7", key, PL[key]["value"], unit, PL[key]["src"], note, "planned")
-    c.add("A7", "GUARD_MARGIN_K", 1.5, "", f"{CARTV2} §3.3", "G = clamp(2·k·max|err| + pad, G_min, G_max)", "planned")
-    c.add("A7", "GUARD_PAD_MS", 50, "ms", f"{CARTV2} §3.3", "", "planned")
-    c.add("A7", "G_MAX_FACTOR", 1.3, "", f"{CARTV2} §3.3", "G_max = 2·|b|·T·1.3", "planned")
+    kn, kd = L["GUARD_K_NUM"], L["GUARD_K_DEN"]
+    c.add("A7", "GUARD_MARGIN_K", kn["value"] / kd["value"], "", kn["src"],
+          f"k = kNum/kDen = {kn['value']}/{kd['value']}· G = clamp(2·k·max|err| + pad, G_min, G_max)", "firmware")
+    lit("A7", "GUARD_PAD_MS", "ms")
+    f10 = L["G_MAX_FACTOR_X10"]
+    c.add("A7", "G_MAX_FACTOR", f10["value"] / 10, "", f10["src"], "G_max ≥ 2·|b|·T·1,3", "firmware")
+    lit("A7", "G_MAX_WANDER_Z", "σ", "G_max ≥ z·σ_wander, σ = T·step/√(1−0,98²)")
     c.add("A7", "DRIFT_BIAS_PLANNING", 0.006, "", f"{CARTV2} §2", "0,6 % σχετικό bias", "repo-doc")
     c.add("A7", "DRIFT_BIAS_MEASURED", 0.0017, "", f"{CARTV2} §5 (Gate 0 run 1)",
           "χειρότερο ζεύγος, robust stats — run 2 εκκρεμεί", "measured")

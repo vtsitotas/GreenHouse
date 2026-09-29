@@ -6,7 +6,9 @@ Model (see the spec for the reasoning behind each choice)
             Nodes hear ranks r−1, r, r+1; a fraction `net.hidden_frac` of same-rank
             pairs cannot hear each other (hidden terminals). Ranks r−1 and r+1 never
             hear each other, so hidden terminals also appear across a receiver.
-  link      RSSI = sensitivity + link_margin + N(0, shadow σ), fixed per link;
+  link      RSSI = sensitivity + link_margin + N(0, shadow σ), fixed per link; the
+            parent link is the best of `des.parent_candidates` draws (firmware keeps the
+            best-RSSI parent among those it hears, and re-parents after 3 tx fails);
             per-attempt PER from the same SINR→BER(DBPSK)→PER model as the catalogue.
   MAC       CSMA/CA: DIFS + uniform backoff in [0, CW] slots, CW doubling per retry,
             carrier sense of transmitters in range, unicast L2 ACK (SIFS + 304 µs),
@@ -148,6 +150,18 @@ class DES:
         tl = calculator.Timeline()
         calculator._sensor_phase(tl, cfg, cat, self.I, radio_needed=True)
         self.wake_s, self.wake_mas = tl.awake_s, sum(tl.mas_by_state().values())
+        # Firmware ladder: sensors warm up inside the receive window, so the radio-on
+        # time is already the awake interval; only boot + sensor current are extra.
+        self.fw_slot = cfg.get("scheme.t1_slot_s") if self.tech == "T1-ladder" else None
+        self.l2_custody = self.tech == "T1-ladder" and cfg["scheme.t1_hop_ack"] == "l2"
+        if self.fw_slot:
+            from . import hardware as hwlib
+            clim = hwlib.CLIMATE_SENSORS[cfg["hw.climate_sensor"]]
+            soil = hwlib.SOIL_SENSORS[cfg["hw.soil_sensor"]]
+            i_sens = clim["active_ma"] + soil["active_ma"]
+            settle = max(clim["settle_s"], soil["settle_s"]) + clim["read_s"]
+            self.wake_s = cfg["timing.t_boot_s"]
+            self.wake_mas = cfg["timing.t_boot_s"] * self.I["cpu"] + min(settle, self.fw_slot) * i_sens
         self.nodes = [Node((r - 1) * W + j, r, j, cfg) for r in range(1, R + 1) for j in range(W)]
         self.max_ttl, self.margin = cfg["scheme.max_ttl"], cfg["scheme.ttl_margin"]
         # hearing: |Δrank| ≤ 1, except hidden same-rank pairs
@@ -176,8 +190,10 @@ class DES:
         g_min = cfg["sync.g_min_s"]
         step = clk.step_for(self.Tc, cfg["sync.step_per_300s"])
         g_max = cfg["sync.g_max_s"] or clk.g_max_rule(cfg["sync.g_max_rule"], cfg["sync.bias"], step, self.Tc,
-                                                      cat["G_MAX_FACTOR"], g_min, cfg["sync.z"])
-        self.clocks = [PairClock(random.Random(self.rng.random()), self.Tc, cfg["sync.bias"], step, g_min, g_max)
+                                                      cat["G_MAX_FACTOR"], g_min, cfg["sync.z"],
+                                                      cfg["sync.g_cap_s"])
+        self.clocks = [PairClock(random.Random(self.rng.random()), self.Tc, cfg["sync.bias"], step, g_min, g_max,
+                                 k=cfg["sync.margin_k"])
                        for _ in self.nodes]
         for ck in self.clocks:                       # start every pair in steady state
             for _ in range(cfg["des.clock_burnin"]):
@@ -225,12 +241,21 @@ class DES:
     def per(self, src, dst, length):
         key = (min(src, dst), max(src, dst))
         if key not in self._rssi:
-            self._rssi[key] = self._sens + self._margin + self.rng.gauss(0, self._sigma)
+            # firmware parent choice: lowest rank, then best RSSI among the candidates it hears
+            c = self.cfg["des.parent_candidates"] if self.is_parent_link(src, dst) else 1
+            self._rssi[key] = self._sens + self._margin + max(self.rng.gauss(0, self._sigma)
+                                                              for _ in range(max(1, c)))
         rssi = round(self._rssi[key], 1)
         k2 = (rssi, length)
         if k2 not in self._per_cache:
             self._per_cache[k2] = an.frame_error_rate(rssi, length, self._sens)
         return self._per_cache[k2]
+
+    def is_parent_link(self, a, b):
+        for x, y in ((a, b), (b, a)):
+            if x != BRIDGE and self.parent(self.nodes[x]) == y:
+                return True
+        return False
 
     def parent(self, n):
         return BRIDGE if n.rank == 1 else n.id - self.W
@@ -572,16 +597,27 @@ class DES:
     # T1 ──────────────────────────────────────────────────────────────────
     def cycle_t1(self, c):
         D = {int(k): v for k, v in self.plan["scheme"]["slots_s"].items()}
-        start, t = {}, self.now
+        start, t = {}, self.now + (D[self.R] if self.fw_slot else 0.0)
         for r in range(self.R, 0, -1):
             start[r] = t
             t += D[r]
         self.t1_start, self.t1_D = start, D
+        # Columns = branches under different rank-1 nodes. In phase (worst case) or,
+        # like the firmware, each rank-1 node free-running with its own fixed phase.
+        if not hasattr(self, "col_phase"):
+            span = t - self.now
+            room = max(0.0, self.Tc - span)
+            self.col_phase = [0.0 if self.cfg["net.phase_sync"] else self.rng.uniform(0, room)
+                              for _ in range(self.W)]
         for n in self.nodes:
-            wake_at = start[n.rank + 1] if n.rank < self.R else start[n.rank]
-            self.at(wake_at, self.t1_wake, n)
-            self.at(start[n.rank], self.t1_tx_slot, n)
-            self.at(start[n.rank] + D[n.rank], self.t1_slot_end, n)
+            ph = self.col_phase[n.col]
+            if n.rank < self.R:
+                wake_at = start[n.rank + 1]
+            else:                            # firmware: even a leaf opens its window
+                wake_at = start[n.rank] - (D[n.rank] if self.fw_slot else 0.0)
+            self.at(wake_at + ph, self.t1_wake, n)
+            self.at(start[n.rank] + ph, self.t1_tx_slot, n)
+            self.at(start[n.rank] + D[n.rank] + ph, self.t1_slot_end, n)
 
     def t1_wake(self, n):
         self.wake(n)
@@ -590,8 +626,12 @@ class DES:
     def t1_tx_slot(self, n):
         """The child woke G/2 early and listened *before* this instant; a relay was
         already awake for its own children, so only listening beyond that costs extra."""
+        g = self.clocks[n.id].g
         hit, listen = self.sync_step(n)
-        if n.rank >= 2:
+        if n.rank >= 2 and self.fw_slot:     # awake beyond our own window: early + lateness
+            early = max(0.0, g / 2 - self.fw_slot)
+            n.listen += max(0.0, early + listen - g / 2)
+        elif n.rank >= 2:
             held = self.t1_D[n.rank + 1] if n.rank < self.R else 0.0
             n.listen += max(0.0, listen - held)
         if not hit:
@@ -610,10 +650,14 @@ class DES:
             self.sleep(n)
             return
         f = q[0]
+        par = self.parent(n)
+        if par != BRIDGE and len(self.nodes[par].relay) >= self.cfg["scheme.relay_buffer"]:
+            return                           # parent beacons BUF_FULL: hold for next cycle
         g = dict(f, ttl=f.get("ttl_left", self.tx_ttl(n)) if f["origin"] != n.id else self.tx_ttl(n))
         n.awaiting_hopack = (f["origin"], f["seq"])
-        self.send(n, self.parent(n), g)
-        self.at(self.now + 0.05, self.t1_hopack_timeout, n, n.awaiting_hopack)
+        self.send(n, par, g)
+        if not self.l2_custody:
+            self.at(self.now + 0.05, self.t1_hopack_timeout, n, n.awaiting_hopack)
 
     def t1_hopack_timeout(self, n, key):
         if n.awaiting_hopack == key:
@@ -638,11 +682,18 @@ class DES:
 
     # ── MAC callbacks ────────────────────────────────────────────────────
     def on_sent(self, n, dst, frame):
-        pass
+        # Firmware custody: the parent's L2 ACK hands the frame over.
+        if self.l2_custody and frame["kind"] == "data" and \
+                n.awaiting_hopack == (frame["origin"], frame["seq"]):
+            self.t1_release(n, n.awaiting_hopack)
 
     def on_fail(self, n, dst, frame):
         if frame["kind"] == "data" and frame["origin"] != n.id and self.tech != "T1-ladder":
             n.st["relay_lost"] += 1           # cut-through relay: nothing keeps it
+        if self.l2_custody and frame["kind"] == "data" and \
+                n.awaiting_hopack == (frame["origin"], frame["seq"]):
+            n.awaiting_hopack = None          # keep the frame; retry after a jitter
+            self.at(self.now + self.rng.uniform(0, self.cfg["radio.jitter_s"]), self.t1_send_next, n)
 
     def on_receive(self, rid, src, frame):
         kind = frame["kind"]
@@ -650,7 +701,8 @@ class DES:
             if kind == "data":
                 if self.tech == "T1-ladder":
                     self.bridge_rx(frame)
-                    self.bridge_ucast(self.nodes[src], {"kind": "hopack", "key": (frame["origin"], frame["seq"])})
+                    if not self.l2_custody:
+                        self.bridge_ucast(self.nodes[src], {"kind": "hopack", "key": (frame["origin"], frame["seq"])})
                 else:
                     self.bridge_rx(frame)
             return
@@ -659,7 +711,8 @@ class DES:
             key = (frame["origin"], frame["seq"])
             if self.tech == "T1-ladder":
                 if any((f["origin"], f["seq"]) == key for f in n.relay):
-                    self.send(n, src, {"kind": "hopack", "key": key}, front=True)   # re-ACK a resend
+                    if not self.l2_custody:
+                        self.send(n, src, {"kind": "hopack", "key": key}, front=True)   # re-ACK a resend
                     return
                 if frame["ttl"] == 0:
                     n.st["ttl_drop"] += 1
@@ -669,7 +722,8 @@ class DES:
                     return
                 n.relay.append(dict(frame, ttl_left=frame["ttl"] - 1))
                 n.lvl_relay.set(self.now, len(n.relay))
-                self.send(n, src, {"kind": "hopack", "key": key}, front=True)
+                if not self.l2_custody:
+                    self.send(n, src, {"kind": "hopack", "key": key}, front=True)
                 return
             if self.dedup_seen(n, key):
                 n.st["dedup_drop"] += 1

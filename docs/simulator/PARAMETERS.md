@@ -124,7 +124,7 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `_LIFEPO4_CURVE` | 3400→100 · 3350→90 · 3320→80 · 3300→70 · 3280→60 · 3260→50 · 3250→40 · 3220→30 · 3200→20 · 3000→10 · 2800→0 mV → % | Πίνακας που μετατρέπει την τάση μπαταρίας σε ποσοστό. | Η καμπύλη εκφόρτισης της LiFePO4, που είναι πολύ επίπεδη γύρω στα 3,2–3,3 V. | `pi/scripts/serial_bridge.py:255` | firmware | SoC πίνακας (piecewise linear) |
 | `PI_PROCESS_MS` | 20 ms | Πόσο χρόνο θέλει το Pi για να επεξεργαστεί ένα μήνυμα. | 20 ms είναι εκτίμηση (δεν έχει μετρηθεί): ανάγνωση αρχείου, αποκρυπτογράφηση, αποστολή MQTT. | `pi/scripts/serial_bridge.py:303` | model | reload nodes.json + AES-GCM + ≤6 MQTT publish ανά frame — ΜΗ μετρημένο, εύρος 5–300 |
 
-## A7. CART v2 Part C (σχεδιασμένο, όχι υλοποιημένο)
+## A7. CART depth N: όλοι κοιμούνται και κάνουν relay (firmware + σχεδιασμένες τιμές)
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
@@ -144,9 +144,10 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `MESH_KNOCK_WINDOW_MS` | 500 ms | Χρόνος για νέο παιδί που «χτυπά την πόρτα». | 500 ms: αρκετό για να ακουστεί ένα νέο παιδί. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:986` | planned |  |
 | `MESH_RELAY_ACK_LINGER_MS` | 300 ms | Πόσο μένει ξύπνιος ο relay μετά για να περάσουν οι τελευταίες επιβεβαιώσεις. | 300 ms: η επιβεβαίωση από το Pi έρχεται σε 50–300 ms. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:987` | planned |  |
 | `MESH_SCHED_HIST` | 16 catches | Πόσες πρόσφατες αποκλίσεις ρολογιού θυμάται ο κόμβος. | 16: αρκετές για να εκτιμήσει σωστά πόσο «χορεύει» το ρολόι. | `firmware/libraries/GreenhouseMesh/mesh_sched.h:16` | firmware | margin policy window |
-| `GUARD_MARGIN_K` | 1.5  | Συντελεστής ασφαλείας του περιθωρίου αφύπνισης. | 1,5× η μεγαλύτερη πρόσφατη απόκλιση: σπάνια χάνει ραντεβού χωρίς πολύ περιττό ξύπνημα. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §3.3` | planned | G = clamp(2·k·max|err| + pad, G_min, G_max) |
-| `GUARD_PAD_MS` | 50 ms | Σταθερό επιπλέον περιθώριο. | 50 ms για μικρές τυχαίες καθυστερήσεις του radio. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §3.3` | planned |  |
-| `G_MAX_FACTOR` | 1.3  | Συντελεστής ασφαλείας του μέγιστου περιθωρίου. | 1,3: 30 % πάνω από το θεωρητικό ελάχιστο. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §3.3` | planned | G_max = 2·|b|·T·1.3 |
+| `GUARD_MARGIN_K` | 1.5  | Συντελεστής ασφαλείας του περιθωρίου αφύπνισης. | 1,5× η μεγαλύτερη πρόσφατη απόκλιση: αρκεί για λίγα hops. Σε βάθος 100 χρειάζεται 2,5 (οι αστοχίες αθροίζονται ανά hop — βλ. WORLD_GREENHOUSE_100x50.md). | `firmware/libraries/GreenhouseMesh/mesh_cart.h:49` | firmware | k = kNum/kDen = 3/2· G = clamp(2·k·max|err| + pad, G_min, G_max) |
+| `GUARD_PAD_MS` | 50 ms | Σταθερό επιπλέον περιθώριο. | 50 ms για μικρές τυχαίες καθυστερήσεις του radio. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:49` | firmware |  |
+| `G_MAX_FACTOR` | 1.3  | Συντελεστής ασφαλείας του μέγιστου περιθωρίου. | 1,3: 30 % πάνω από το θεωρητικό ελάχιστο. | `firmware/libraries/GreenhouseMesh/mesh_sched.h:40` | firmware | G_max ≥ 2·|b|·T·1,3 |
+| `G_MAX_WANDER_Z` | 6 σ | Πόσες τυπικές αποκλίσεις της «περιπλάνησης» του ρολογιού καλύπτει το μέγιστο περιθώριο. | 6σ συνολικό εύρος (±3σ): σχεδόν ποτέ δεν ξεφεύγει ο parent από το παράθυρο. | `firmware/libraries/GreenhouseMesh/mesh_sched.h:42` | firmware | G_max ≥ z·σ_wander, σ = T·step/√(1−0,98²) |
 | `DRIFT_BIAS_PLANNING` | 0.006  | Πόσο διαφέρουν τα ρολόγια δύο κόμβων (αρχική εκτίμηση). | 0,6 %: από δημοσιευμένες μετρήσεις σε ESP32, πριν μετρήσουμε. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §2` | repo-doc | 0,6 % σχετικό bias |
 | `DRIFT_BIAS_MEASURED` | 0.0017  | Πόσο διαφέρουν τα ρολόγια δύο κόμβων (μετρημένο). | 0,17 %: μετρήθηκε στο bench (Gate 0 run 1), 3,5× καλύτερο από την εκτίμηση. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §5 (Gate 0 run 1)` | measured | χειρότερο ζεύγος, robust stats — run 2 εκκρεμεί |
 | `DRIFT_STEP_PER_300S` | 0.0001  | Πόσο αλλάζει η ταχύτητα του ρολογιού από κύκλο σε κύκλο (λόγω θερμοκρασίας). | 0,01 % ανά 5′ είναι εκτίμηση· θα μετρηθεί στο Gate 0 run 2. Επηρεάζει πολύ την ενέργεια. | `docs/analysis/cart_sim.py:32` | repo-doc | ανά κύκλο, κλιμακώνεται ∝ T |
@@ -199,14 +200,14 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
 | `PHY_RATE_MBPS` | 1 Mbps | Η ταχύτητα με την οποία στέλνει το ESP-NOW. | 1 Mbps: η προεπιλογή της Espressif, η πιο αργή αλλά με τη μεγαλύτερη εμβέλεια. | ESP-IDF ESP-NOW guide (frame format, default rate) | standard | DSSS DBPSK |
-| `PLCP_LONG_US` | 192 µs | Το «προοίμιο» πριν από κάθε μήνυμα στον αέρα. | 192 µs: υποχρεωτικό από το πρότυπο WiFi στο 1 Mbps. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard | long preamble 144 + header 48· υποχρεωτικό στο 1 Mbps |
+| `PLCP_LONG_US` | 192 µs | Το «προοίμιο» πριν από κάθε μήνυμα στον αέρα. | 192 µs: υποχρεωτικό από το πρότυπο WiFi στο 1 Mbps. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard | long preamble 144 + header 48· υποχρεωτικό στο 1 Mbps |
 | `ESPNOW_OVERHEAD_B` | 43 B | Τα bytes που προσθέτει το ESP-NOW γύρω από τα δικά μας δεδομένα. | 43 B: επικεφαλίδα WiFi, κωδικοί Espressif και έλεγχος σφαλμάτων. | ESP-IDF ESP-NOW guide (frame format, default rate) | standard | mac_header 24 + category_code 1 + oui 3 + random 4 + vendor_element_header 7 + fcs 4 |
-| `ACK_FRAME_B` | 14 B | Μέγεθος της αυτόματης επιβεβαίωσης του WiFi. | 14 B από το πρότυπο. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard | 802.11 ACK control frame |
-| `SIFS_US` | 10 µs | Μικρή παύση πριν από την αυτόματη επιβεβαίωση. | 10 µs από το πρότυπο WiFi. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard |  |
-| `SLOT_US` | 20 µs | Η μονάδα χρόνου της τυχαίας αναμονής πριν την αποστολή. | 20 µs από το πρότυπο WiFi (1 Mbps). | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard | εναλλακτικό preset ERP: 9 µs |
-| `DIFS_US` | 50 µs | Παύση που περιμένει κάθε κόμβος όταν ελευθερωθεί το κανάλι. | 50 µs = SIFS + 2 slots, από το πρότυπο. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard | SIFS + 2·slot |
-| `CW_MIN` | 31 slots | Το εύρος της τυχαίας αναμονής στην πρώτη προσπάθεια. | 31 slots από το πρότυπο· διπλασιάζεται μετά από κάθε αποτυχία. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard | εναλλακτικό preset ERP: 15 (cart_sim: 16) |
-| `CW_MAX` | 1023 slots | Το μέγιστο εύρος τυχαίας αναμονής. | 1023 slots από το πρότυπο. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard |  |
+| `ACK_FRAME_B` | 14 B | Μέγεθος της αυτόματης επιβεβαίωσης του WiFi. | 14 B από το πρότυπο. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard | 802.11 ACK control frame |
+| `SIFS_US` | 10 µs | Μικρή παύση πριν από την αυτόματη επιβεβαίωση. | 10 µs από το πρότυπο WiFi. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard |  |
+| `SLOT_US` | 20 µs | Η μονάδα χρόνου της τυχαίας αναμονής πριν την αποστολή. | 20 µs από το πρότυπο WiFi (1 Mbps). | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard | εναλλακτικό preset ERP: 9 µs |
+| `DIFS_US` | 50 µs | Παύση που περιμένει κάθε κόμβος όταν ελευθερωθεί το κανάλι. | 50 µs = SIFS + 2 slots, από το πρότυπο. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard | SIFS + 2·slot |
+| `CW_MIN` | 31 slots | Το εύρος της τυχαίας αναμονής στην πρώτη προσπάθεια. | 31 slots από το πρότυπο· διπλασιάζεται μετά από κάθε αποτυχία. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard | εναλλακτικό preset ERP: 15 (cart_sim: 16) |
+| `CW_MAX` | 1023 slots | Το μέγιστο εύρος τυχαίας αναμονής. | 1023 slots από το πρότυπο. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard |  |
 | `MAC_RETRY_LIMIT` | 5 retx | Πόσες φορές ξαναστέλνει αυτόματα το radio ένα μήνυμα που δεν επιβεβαιώθηκε. | ~5 κατά αναφορές χρηστών· η Espressif δεν το δημοσιεύει, γι' αυτό δοκιμάζονται και άλλες τιμές. | αναφορές κοινότητας (esp-idf #9383, Instructables) | unverified | η Espressif δεν το τεκμηριώνει· sweep {0,3,5,7} |
 | `MAX_PAYLOAD_B` | 250 B | Το μέγιστο μέγεθος δεδομένων σε ένα μήνυμα ESP-NOW. | 250 B από την τεκμηρίωση της Espressif. | ESP-IDF ESP-NOW guide (frame format, default rate) | standard | ESP-NOW v1 |
 
@@ -218,8 +219,8 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `PL_1M_DB` | 40.1 dB | Πόσο εξασθενεί το σήμα στο πρώτο μέτρο. | 40 dB: υπολογίζεται από τη φυσική (νόμος Friis) για 2,4 GHz. | Friis, d0 = 1 m | derived |  |
 | `PATHLOSS_EXPONENT` | 2.5  | Πόσο γρήγορα εξασθενεί το σήμα με την απόσταση. | 2,5: ανάμεσα στον ελεύθερο χώρο (2) και σε χώρο με εμπόδια (3–4)· φυτά και σκελετός θερμοκηπίου. | meshsim | model | θερμοκήπιο: 2–3 |
 | `SHADOWING_SIGMA_DB` | 4 dB | Τυχαίες διαφορές σήματος από εμπόδια. | 4 dB: τυπική τιμή εσωτερικού χώρου. | meshsim | model | log-normal |
-| `SENS_FER` | 0.08  | Το ποσοστό λαθών με το οποίο ορίζεται η ευαισθησία του δέκτη. | 8 %: ο ορισμός του προτύπου WiFi. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard | ορισμός sensitivity: FER 8 %, PSDU 1024 B |
-| `SENS_PSDU_B` | 1024 B | Μέγεθος μηνύματος στον ορισμό της ευαισθησίας. | 1024 B: ο ορισμός του προτύπου. | IEEE 802.11-2020 Clause 16 (DSSS PHY) | standard |  |
+| `SENS_FER` | 0.08  | Το ποσοστό λαθών με το οποίο ορίζεται η ευαισθησία του δέκτη. | 8 %: ο ορισμός του προτύπου WiFi. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard | ορισμός sensitivity: FER 8 %, PSDU 1024 B |
+| `SENS_PSDU_B` | 1024 B | Μέγεθος μηνύματος στον ορισμό της ευαισθησίας. | 1024 B: ο ορισμός του προτύπου. | IEEE 802.11-2020 Clause 15 (DSSS PHY) | standard |  |
 | `CCA_THRESHOLD_DBM` | -82 dBm | Πόσο δυνατό πρέπει να είναι ένα σήμα για να θεωρηθεί το κανάλι «κατειλημμένο». | −82 dBm: τυπική τιμή WiFi· η Espressif δεν δημοσιεύει τη δική της. | meshsim | model | carrier sense· hidden terminals από την τοπολογία |
 | `PER_MODEL` | SINR → BER(DBPSK) → PER(L)  | Πώς υπολογίζεται η πιθανότητα να χαθεί ένα μήνυμα. | Από την ισχύ του σήματος, με τύπους του προτύπου, ρυθμισμένους ώστε να ταιριάζουν στο datasheet. | meshsim | model | η παρεμβολή μετράει ως θόρυβος: οι συγκρούσεις προκύπτουν χωρίς αυθαίρετο capture threshold |
 
@@ -406,6 +407,7 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `net.per_rank` | 10 | Κόμβοι σε κάθε επίπεδο. | 10: το σενάριο που ζητήθηκε. |  |
 | `net.max_children` | 3 | Πόσα παιδιά έχει ο πιο φορτωμένος parent. | 3: συντηρητική εκτίμηση για τις συγκρούσεις. |  |
 | `net.hidden_frac` | 0.3 | Τι ποσοστό γειτόνων δεν ακούνε ο ένας τον άλλο. | 30 %: τυπικό σε χώρο με εμπόδια· δεν έχει μετρηθεί. |  |
+| `net.phase_sync` | False | Αν όλα τα «κλαδιά» του δέντρου ξυπνούν την ίδια στιγμή. | Όχι: στο firmware κάθε κόμβος του πρώτου επιπέδου έχει δικό του ρολόι. Με «ναι» βλέπεις τη χειρότερη περίπτωση. |  |
 | `timing.T_s` | 900 | Κάθε πόσα δευτερόλεπτα ξυπνά το δίκτυο. | 900 (15′): το ένα από τα δύο standards. |  |
 | `timing.report_every` | 1 | Κάθε πόσες μετρήσεις στέλνει. | 1: στέλνει κάθε μέτρηση, όπως σήμερα. |  |
 | `timing.t_boot_s` | 0.2 | Χρόνος εκκίνησης μετά τον ύπνο. | 0,2 s: μέση της βιβλιογραφίας (140–230 ms). |  |
@@ -414,7 +416,8 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `timing.app_ack_wait_s` | 2 | Πόσο περιμένει την απάντηση του Pi. | 2 s: από το firmware. |  |
 | `scheme.technique` | T1-ladder | Η τεχνική (T1 σκάλα, T2 παράθυρο, ή το σημερινό phase1). | T1: ο προσομοιωτής έδειξε ότι κλιμακώνεται σε βάθος. | phase1 \| T1-ladder \| T2-window |
 | `scheme.t2_ack` | unicast | Πώς γυρίζει η επιβεβαίωση στην T2. | unicast: πολύ λιγότερη κίνηση από το flood. | flood \| unicast \| aggregate |
-| `scheme.t1_hop_ack` | per_frame | Επιβεβαίωση ανά μήνυμα ή ανά ριπή στην T1. | Ανά μήνυμα: πιο απλό και ασφαλές. | per_frame \| batch |
+| `scheme.t1_hop_ack` | l2 | Πώς επιβεβαιώνεται κάθε hop στην T1. | l2: όπως το firmware, η αυτόματη επιβεβαίωση του radio αρκεί· δεν χρειάζεται επιπλέον μήνυμα. | l2 \| per_frame \| batch |
+| `scheme.t1_slot_s` | 2.5 | Πόσο μένει ανοιχτό το παράθυρο λήψης κάθε κόμβου. | 2,5 s όπως το firmware (χωράει το warm-up του DHT22)· με SHT40 μπορεί να μικρύνει πολύ. |  |
 | `scheme.max_ttl` | 64 | Όριο hops. | 64: όπως το firmware· βάλε 16 για να δεις το παλιό ταβάνι στο rank 17. |  |
 | `scheme.ttl_margin` | 2 | Περιθώριο hops. | 2: από το firmware. |  |
 | `scheme.relay_buffer` | 50 | Buffer του parent σε μηνύματα. | 50: χωράει στη μνήμη ύπνου και καλύπτει το 50×10. |  |
@@ -423,8 +426,11 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `sync.step_per_300s` | 0.0001 | Πόσο αλλάζει το ρολόι από κύκλο σε κύκλο. | 0,01 %: εκτίμηση μέχρι το Gate 0 run 2. |  |
 | `sync.policy` | margin | Πώς προσαρμόζεται το περιθώριο αφύπνισης. | margin: καλύτερο σε όλες τις δοκιμές του cart_sim. | margin \| aimd |
 | `sync.g_min_s` | 0.25 | Ελάχιστο περιθώριο. | 0,25 s: η διακύμανση εκκίνησης. |  |
+| `sync.g_cap_s` | 20 | Το πολύ πόσο νωρίς ξυπνά ένας κόμβος για να βρει τον parent. | Από το firmware (MESH_GUARD_CAP_MS = 20 s): κρατά το ξύπνημα κάτω από το όριο των 30 s. |  |
 | `sync.g_max_s` | — | Μέγιστο περιθώριο (κενό = από τον κανόνα). | Κενό: υπολογίζεται από το drift. |  |
 | `sync.g_max_rule` | cart_v2 | Κανόνας για το μέγιστο περιθώριο. | cart_v2 όπως το σχέδιο· το bias_wander (διόρθωση) μειώνει την ενέργεια στο μισό. | cart_v2 \| bias_wander |
+| `scheme.rank1_flush_s` | — | Πόσο χρόνο έχει ο κόμβος του πρώτου επιπέδου να στείλει όλα τα μηνύματα στη γέφυρα. | Κενό = όσο το παράθυρο (όπως το firmware). Η γέφυρα είναι πάντα ξύπνια, άρα μπορεί να μεγαλώσει. |  |
+| `sync.margin_k` | 1.5 | Πόσο φαρδύ περιθώριο αφύπνισης κρατά ο κόμβος σε σχέση με τις πρόσφατες αποκλίσεις. | 1,5 όπως το σχέδιο CART· μεγαλύτερο = λίγο περισσότερη ακρόαση, λιγότερα χαμένα ραντεβού. |  |
 | `sync.cycles` | 20000 | Κύκλοι της προσομοίωσης ρολογιών. | 20.000: σταθερά στατιστικά σε κλάσματα του δευτερολέπτου. |  |
 | `sync.z` | 3 | Πόσες τυπικές αποκλίσεις κάλυψη. | 3: καλύπτει το 99,7 %. |  |
 | `radio.link_margin_db` | 10 | Πόσο δυνατότερο από το όριο είναι το σήμα σε κάθε σύνδεση. | 10 dB: συνηθισμένο περιθώριο σχεδιασμού. |  |
@@ -432,6 +438,7 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `radio.cw` | 31 | Εύρος τυχαίας αναμονής. | 31: από το πρότυπο WiFi. |  |
 | `radio.jitter_s` | 0.3 | Τυχαία καθυστέρηση πριν την αποστολή. | 0,3 s: όπως το firmware· περισσότερο = λιγότερες συγκρούσεις. |  |
 | `radio.attempts` | 3 | Προσπάθειες μέσα στο παράθυρο. | 3: από το σχέδιο CART. |  |
+| `radio.max_util` | 0.3 | Πόσο «γεμάτο» επιτρέπεται να είναι το κανάλι εκεί που ακούνε οι κόμβοι ο ένας τον άλλο. | 30 %: πάνω από αυτό το CSMA αρχίζει να έχει πολλές συγκρούσεις (κορεσμός ~50–60 %). |  |
 | `radio.hop_proc_s` | 0.002 | Χρόνος επεξεργασίας ανά hop. | 2 ms: εκτίμηση για τον έλεγχο υπογραφής. |  |
 | `bridge.baud` | 115200 | Ταχύτητα γέφυρας–Pi. | 115200: όπως σήμερα. |  |
 | `bridge.framing` | hex_json | Μορφή γραμμής UART. | hex_json: όπως σήμερα. | hex_json \| binary |
@@ -463,6 +470,7 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `des.seeds` | 1 | Επαναλήψεις με διαφορετική τύχη. | 1: γρήγορο· 5+ δίνει διάστημα εμπιστοσύνης. |  |
 | `des.trace_cycles` | 1 | Κύκλοι που φαίνονται στο timeline. | 1: αρκεί για να δεις τη μορφή. |  |
 | `des.shadow_sigma_db` | 4 | Τυχαίες διαφορές σήματος. | 4 dB: τυπική τιμή. |  |
+| `des.parent_candidates` | 3 | Από πόσους γονείς διαλέγει ο κόμβος (κρατά τον καλύτερο RSSI). | 3: οι γειτονικοί κόμβοι του προηγούμενου rank· το firmware δεν μένει σε νεκρό link. |  |
 | `des.window_s` | — | Μήκος παραθύρου στην T2. | Κενό: από τον calculator. |  |
 | `des.clock_burnin` | 64 | Κύκλοι «προθέρμανσης» των ρολογιών. | 64: ώστε τα ρολόγια να ξεκινούν σε σταθερή κατάσταση. |  |
 | `des.sweep_energy` | expected | Πώς μετράει την ενέργεια των σπάνιων σαρώσεων. | Αναμενόμενη: λίγοι κύκλοι δεν αρκούν για να τις δεις. | expected \| observed |

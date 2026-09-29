@@ -36,6 +36,7 @@ PY_SOURCES = ["pi/scripts/serial_bridge.py"]
 PLANNED_SOURCES = ["docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md"]
 NODE_H = "firmware/libraries/GreenhouseMesh/mesh_node.h"
 CART_H = "firmware/libraries/GreenhouseMesh/mesh_cart.h"
+SCHED_H = "firmware/libraries/GreenhouseMesh/mesh_sched.h"
 EDGE = "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino"
 BRIDGE = "firmware/bridge_esp32/bridge_esp32.ino"
 
@@ -187,6 +188,11 @@ def parse_literals(texts):
         "COLD_BOOT_USB_WAIT_MS": _find(EDGE, edge, r"ESP_SLEEP_WAKEUP_TIMER\) delay\((\d+)\)"),
         "BATT_ADC_SAMPLES": _find(EDGE, edge, r"readBatteryMv\(\) \{.*?i < (\d+); i\+\+"),
         "BATT_ADC_SAMPLE_DELAY_MS": _find(EDGE, edge, r"analogReadMilliVolts\(BATT_ADC_PIN\);\s*delay\((\d+)\)"),
+        "GUARD_PAD_MS": _find(CART_H, texts[CART_H], r"c\.padMs = (\d+);"),
+        "GUARD_K_NUM": _find(CART_H, texts[CART_H], r"c\.kNum = (\d+);"),
+        "GUARD_K_DEN": _find(CART_H, texts[CART_H], r"c\.kDen = (\d+);"),
+        "G_MAX_FACTOR_X10": _find(SCHED_H, texts[SCHED_H], r"biasPpm \* (\d+) / 10"),
+        "G_MAX_WANDER_Z": _find(SCHED_H, texts[SCHED_H], r"wander = \(uint64_t\)(\d+) \* cycleMs"),
         "BRIDGE_FRAME_FORMAT": _find(BRIDGE, bridge,
                                      r'uartPrintf\("(\{\\"type\\":\\"frame\\".*?)", hex\)',
                                      cast=lambda s: s.replace('\\"', '"')),
