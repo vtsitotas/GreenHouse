@@ -24,7 +24,7 @@ def test_snapshot_matches_live_sources():
 @pytest.mark.parametrize("key,value", [
     ("MESH_PACKET_LEN", 61), ("sizeof(MeshBeacon)", 27), ("sizeof(MeshAck)", 20),
     ("sizeof(MeshJoinBeacon)", 8), ("MESH_PROVISION_LEN", 33), ("MESH_INFLIGHT_MAX", 11),
-    ("MESH_DATA_BUFFER_SIZE", 10), ("MESH_DEDUP_CACHE_SIZE", 32), ("MESH_MAX_TTL", 64),
+    ("MESH_DATA_BUFFER_SIZE", 10), ("MESH_DEDUP_CACHE_SIZE", 128), ("MESH_MAX_TTL", 128),
     ("sizeof(MeshRtcState)", 632), ("TX_FAIL_DROP_COUNT", 3), ("BATT_ADC_SAMPLES", 8),
 ])
 def test_firmware_values(cat, key, value):
@@ -55,8 +55,10 @@ def test_energy_reproduces_cart_sim_results(cat):
 
 
 def test_uart_line(cat):
-    assert cat["UART_FRAME_LINE_B"] == 150
-    assert cat["BRIDGE_MAX_FRAMES_S"] == pytest.approx(115200 / 1500, abs=0.01)
+    assert cat["UART_FRAME_LINE_B"] == 150                       # fallback hex-JSON line
+    assert cat["BRIDGE_MAX_FRAMES_S_HEX"] == pytest.approx(115200 / 1500, abs=0.01)
+    assert cat["UART_FRAME_BIN_B"] == 67                         # binary framing, mesh_uart.h
+    assert cat["BRIDGE_MAX_FRAMES_S"] == pytest.approx(921600 / 670, abs=0.01)
 
 
 def test_ttl_ceiling_rank17():

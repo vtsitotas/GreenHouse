@@ -7,6 +7,9 @@
 | [`PARAMETERS.md`](PARAMETERS.md) | Όλες οι παράμετροι με πηγή (παράγεται από τον κώδικα) + μητρώο εξαρτημάτων + όλες οι μεταβλητές run |
 | [`MODEL.md`](MODEL.md) | Όλοι οι μαθηματικοί τύποι, οι παραδοχές και οι απλουστεύσεις του calculator και του DES |
 | [`WORLD_GREENHOUSE_100x50.md`](WORLD_GREENHOUSE_100x50.md) | Μελέτη 100 ranks × 50: βέλτιστες ρυθμίσεις 15′/30′ και αλλαγές firmware |
+| [`GEOMETRY_PER_PLANT.md`](GEOMETRY_PER_PLANT.md) | Γεωμετρικό μοντέλο (θέσεις, φύλλωμα, fading, γέφυρες): στέκει ο «ένας αισθητήρας ανά φυτό»; |
+| [`KEFALAIO_PROSOMOIOSIS.md`](KEFALAIO_PROSOMOIOSIS.md) | Κεφάλαιο διπλωματικής (ελληνικά): μεθοδολογία, επικύρωση, αποτελέσματα, συμπεράσματα |
+| [`figures/`](figures/) | Σχήματα SVG + πίνακες CSV (`python make_figures.py`) |
 | `sim/runs/<run>/` | Κάθε run: `config.json`, `results.json`, `report.md`, `meta.json` (git commit, firmware hash) |
 | `sim/runs/index.csv` | Μία γραμμή ανά run για σύγκριση |
 | Spec | `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md` |

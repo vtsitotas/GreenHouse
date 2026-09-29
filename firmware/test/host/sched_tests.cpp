@@ -1,6 +1,7 @@
 // firmware/test/host/sched_tests.cpp -- host unit tests for mesh_sched.h (CART ladder scheduling)
 #include <cstdio>
 #include "../../libraries/GreenhouseMesh/mesh_sched.h"
+#include "../../libraries/GreenhouseMesh/mesh_config.h"
 
 static int failures = 0;
 #define CHECK(cond) do { if (!(cond)) { printf("FAIL %s:%d %s\n", __FILE__, __LINE__, #cond); failures++; } } while (0)
@@ -61,6 +62,19 @@ int main() {
   CHECK(meshSchedCatchDeadlineMs(&s, 2500) == 1500 + 2500 + 4000);
 
   for (uint32_t r = 0; r < 1000; r += 37) CHECK(meshSchedJitterMs(300, r * 2654435761u) < 300);
+
+  // ── deployment config (mesh_config.h): k = 5/2, pad 50 ──
+  MeshSchedCfg d = c;
+  d.kNum = MESH_GUARD_K_NUM; d.kDen = MESH_GUARD_K_DEN; d.padMs = MESH_GUARD_PAD_MS;
+  d.gMaxMs = meshSchedGuardMax(MESH_SLEEP_INTERVAL_MS, MESH_DRIFT_BIAS_PPM, MESH_DRIFT_STEP_PPM_300S,
+                               MESH_GUARD_CAP_MS);
+  CHECK(d.gMaxMs == 8140 || d.gMaxMs == 8141);    // T = 900 s production cycle
+  meshSchedReset(&s, &d);
+  meshSchedOnAnchor(&s, &d);
+  for (int i = 0; i < 17; i++) meshSchedOnCatch(&s, &d, (i % 2) ? 400 : -400);
+  CHECK(s.histN == 16 && s.guardMs == 2050);      // 2·2.5·400 + 50
+  CHECK(meshSchedGuardMax(1800000, MESH_DRIFT_BIAS_PPM, MESH_DRIFT_STEP_PPM_300S,
+                          MESH_GUARD_CAP_MS) == MESH_GUARD_CAP_MS);   // 30 min: wander 32.6 s → cap
 
   if (failures) { printf("%d FAILED\n", failures); return 1; }
   printf("ALL PASS\n");

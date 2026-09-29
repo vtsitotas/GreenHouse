@@ -133,8 +133,7 @@ static volatile int8_t   meshLastTxStatus  = -1;     // last send callback: -1 /
 static bool              meshCartActive    = false;  // inside a CART cycle
 static uint16_t          meshRelayDropped  = 0;      // frames lost to a full relay buffer
 
-// Fixed-size neighbor ring: no longer depends on compile-time fleet size.
-#define MESH_NEIGHBOR_SLOTS 16
+// Fixed-size neighbor ring (MESH_NEIGHBOR_SLOTS in mesh_config.h).
 typedef struct { uint8_t mac[6]; uint32_t lastHeardMs; bool used; } MeshNeighbor;
 static MeshNeighbor meshNeighbors[MESH_NEIGHBOR_SLOTS];
 

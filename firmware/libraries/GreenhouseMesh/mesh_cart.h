@@ -46,7 +46,7 @@ static MeshSchedCfg meshCartSchedCfg(uint32_t cycleMs) {
   c.gMinMs = MESH_WAKE_GUARD_MIN_MS;
   c.gMaxMs = meshSchedGuardMax(cycleMs, MESH_DRIFT_BIAS_PPM, MESH_DRIFT_STEP_PPM_300S, MESH_GUARD_CAP_MS);
   if (c.gMaxMs < c.gMinMs) c.gMaxMs = c.gMinMs;
-  c.padMs = 50; c.kNum = 3; c.kDen = 2;
+  c.padMs = MESH_GUARD_PAD_MS; c.kNum = MESH_GUARD_K_NUM; c.kDen = MESH_GUARD_K_DEN;
   return c;
 }
 

@@ -24,11 +24,11 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 
 ## Βασικά ευρήματα (από τις παράγωγες τιμές)
 
-- **Ταβάνι βάθους: rank 65.** Με τους TTL κανόνες του firmware, στο σενάριο 50×10 **0 κόμβοι δεν παραδίδουν ποτέ**.
+- **Ταβάνι βάθους: rank 129.** Με τους TTL κανόνες του firmware, στο σενάριο 50×10 **0 κόμβοι δεν παραδίδουν ποτέ**.
 - **Flood ACK: 137.200 re-broadcasts/κύκλο** (firmware TTL)· 137.200 χωρίς όριο TTL — κλιμάκωση O(N²).
-- **Γέφυρα:** γραμμή UART 150 B = 13.021 ms → **μέγιστο 76.8 frames/s**· ουρά εισόδου μόνο 40 frames.
+- **Γέφυρα:** γραμμή UART 150 B = 13.021 ms → **μέγιστο 1375.52 frames/s**· ουρά εισόδου μόνο 40 frames.
 - **Airtime (1 Mbps):** data 1024 µs, beacon 752 µs, ACK 696 µs· unicast με L2 ACK 1388 µs (+backoff → 1698 µs).
-- **Relay buffer:** firmware 50 frames· χωράνε έως 121 (μνήμη ύπνου μετρημένη στο ELF: 3848/8192 B), χρειάζονται τουλάχιστον 50 (subtree rank-1 στο 50×10).
+- **Relay buffer:** firmware 110 frames· χωράνε έως 121 (μνήμη ύπνου μετρημένη στο ELF: 3848/8192 B), χρειάζονται τουλάχιστον 50 (subtree rank-1 στο 50×10).
 - **Ενέργεια Phase-1 leaf:** 7.26 mAh/day @15′, 4.38 mAh/day @30′.
 
 ## A1. Firmware — πακέτα και μηνύματα
@@ -51,19 +51,19 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `MESH_BEACON_INTERVAL_MIN_MS` | 2000 ms | Πόσο συχνά στέλνει beacons ένας κόμβος όταν κάτι αλλάζει στο δίκτυο. | 2 s: γρήγορη ανακάλυψη γειτόνων όταν χρειάζεται, χωρίς να γεμίζει το κανάλι. | `firmware/libraries/GreenhouseMesh/mesh_config.h:33` | firmware | trickle floor (reset target) |
-| `MESH_BEACON_INTERVAL_MAX_MS` | 60000 ms | Το αραιότερο διάστημα beacons όταν το δίκτυο είναι σταθερό. | 60 s: σε ηρεμία ξοδεύει ελάχιστο χρόνο εκπομπής (τεχνική Trickle). | `firmware/libraries/GreenhouseMesh/mesh_config.h:34` | firmware | trickle ceiling· κάθε beacon διπλασιάζει το διάστημα |
-| `MESH_BRIDGE_BEACON_INTERVAL_MS` | 2000 ms | Πόσο συχνά στέλνει beacon η γέφυρα. | Η γέφυρα έχει ρεύμα από το Pi, οπότε μπορεί να στέλνει συνέχεια κάθε 2 s. | `firmware/libraries/GreenhouseMesh/mesh_config.h:35` | firmware | η γέφυρα δεν κάνει backoff |
-| `MESH_PARENT_TIMEOUT_FACTOR` | 3 × | Πόσα χαμένα beacons του parent σημαίνουν ότι «χάθηκε». | 3: ένα ή δύο χαμένα είναι συνηθισμένα (θόρυβος), τρία στη σειρά όχι. | `firmware/libraries/GreenhouseMesh/mesh_config.h:37` | firmware | parent χάνεται μετά από 3× το advertised interval |
-| `TX_FAIL_DROP_COUNT` | 3 tx | Πόσες συνεχόμενες αποτυχίες αποστολής κάνουν τον κόμβο να αλλάξει parent. | 3: γρηγορότερο από το timeout των beacons όταν ο parent έχει όντως πεθάνει. | `firmware/libraries/GreenhouseMesh/mesh_node.h:469` | firmware | διαδοχικές αποτυχίες unicast → drop parent |
-| `MESH_ORPHAN_FRESH_MS` | 60000 ms | Πότε ένας κόμβος χωρίς parent θεωρείται «νέο ορφανό» που χρειάζεται βοήθεια. | 60 s σιωπής: για να μην αντιδρούν οι γείτονες στον ίδιο κόμβο ξανά και ξανά. | `firmware/libraries/GreenhouseMesh/mesh_config.h:45` | firmware | UNROUTED beacon από MAC σιωπηλή τόσο → νέο orphan |
-| `MESH_ORPHAN_RESET_MIN_GAP_MS` | 10000 ms | Ελάχιστο διάστημα μεταξύ δύο «γρήγορων απαντήσεων» σε ορφανούς κόμβους. | 10 s: προστασία από κόμβο που αναβοσβήνει και θα έκαιγε μπαταρία στους γείτονες. | `firmware/libraries/GreenhouseMesh/mesh_config.h:47` | firmware | ≤1 orphan-triggered trickle reset ανά 10 s |
-| `MESH_RESCAN_AFTER_MS` | 60000 ms | Μετά από πόσο χρόνο χωρίς parent ξαναελέγχει ο κόμβος το κανάλι. | 60 s: αρκετό για να βρει parent κανονικά, πριν υποθέσει ότι άλλαξε κάτι. | `firmware/libraries/GreenhouseMesh/mesh_config.h:42` | firmware | always-on unrouted → επιβεβαίωση καναλιού |
-| `MESH_WINDOW_DURATION_MS` | 3000 ms | Πεδίο του beacon για το «παράθυρο αφύπνισης». | Κρατήθηκε για το μέλλον· στο CART βάθους N μεταφέρει πόσο είναι ανοιχτό το παράθυρο. | `firmware/libraries/GreenhouseMesh/mesh_config.h:39` | firmware | μεταφέρεται στο beacon, αχρησιμοποίητο σήμερα |
+| `MESH_BEACON_INTERVAL_MIN_MS` | 2000 ms | Πόσο συχνά στέλνει beacons ένας κόμβος όταν κάτι αλλάζει στο δίκτυο. | 2 s: γρήγορη ανακάλυψη γειτόνων όταν χρειάζεται, χωρίς να γεμίζει το κανάλι. | `firmware/libraries/GreenhouseMesh/mesh_config.h:34` | firmware | trickle floor (reset target) |
+| `MESH_BEACON_INTERVAL_MAX_MS` | 60000 ms | Το αραιότερο διάστημα beacons όταν το δίκτυο είναι σταθερό. | 60 s: σε ηρεμία ξοδεύει ελάχιστο χρόνο εκπομπής (τεχνική Trickle). | `firmware/libraries/GreenhouseMesh/mesh_config.h:35` | firmware | trickle ceiling· κάθε beacon διπλασιάζει το διάστημα |
+| `MESH_BRIDGE_BEACON_INTERVAL_MS` | 2000 ms | Πόσο συχνά στέλνει beacon η γέφυρα. | Η γέφυρα έχει ρεύμα από το Pi, οπότε μπορεί να στέλνει συνέχεια κάθε 2 s. | `firmware/libraries/GreenhouseMesh/mesh_config.h:36` | firmware | η γέφυρα δεν κάνει backoff |
+| `MESH_PARENT_TIMEOUT_FACTOR` | 3 × | Πόσα χαμένα beacons του parent σημαίνουν ότι «χάθηκε». | 3: ένα ή δύο χαμένα είναι συνηθισμένα (θόρυβος), τρία στη σειρά όχι. | `firmware/libraries/GreenhouseMesh/mesh_config.h:38` | firmware | parent χάνεται μετά από 3× το advertised interval |
+| `TX_FAIL_DROP_COUNT` | 3 tx | Πόσες συνεχόμενες αποτυχίες αποστολής κάνουν τον κόμβο να αλλάξει parent. | 3: γρηγορότερο από το timeout των beacons όταν ο parent έχει όντως πεθάνει. | `firmware/libraries/GreenhouseMesh/mesh_node.h:468` | firmware | διαδοχικές αποτυχίες unicast → drop parent |
+| `MESH_ORPHAN_FRESH_MS` | 60000 ms | Πότε ένας κόμβος χωρίς parent θεωρείται «νέο ορφανό» που χρειάζεται βοήθεια. | 60 s σιωπής: για να μην αντιδρούν οι γείτονες στον ίδιο κόμβο ξανά και ξανά. | `firmware/libraries/GreenhouseMesh/mesh_config.h:46` | firmware | UNROUTED beacon από MAC σιωπηλή τόσο → νέο orphan |
+| `MESH_ORPHAN_RESET_MIN_GAP_MS` | 10000 ms | Ελάχιστο διάστημα μεταξύ δύο «γρήγορων απαντήσεων» σε ορφανούς κόμβους. | 10 s: προστασία από κόμβο που αναβοσβήνει και θα έκαιγε μπαταρία στους γείτονες. | `firmware/libraries/GreenhouseMesh/mesh_config.h:48` | firmware | ≤1 orphan-triggered trickle reset ανά 10 s |
+| `MESH_RESCAN_AFTER_MS` | 60000 ms | Μετά από πόσο χρόνο χωρίς parent ξαναελέγχει ο κόμβος το κανάλι. | 60 s: αρκετό για να βρει parent κανονικά, πριν υποθέσει ότι άλλαξε κάτι. | `firmware/libraries/GreenhouseMesh/mesh_config.h:43` | firmware | always-on unrouted → επιβεβαίωση καναλιού |
+| `MESH_WINDOW_DURATION_MS` | 3000 ms | Πεδίο του beacon για το «παράθυρο αφύπνισης». | Κρατήθηκε για το μέλλον· στο CART βάθους N μεταφέρει πόσο είναι ανοιχτό το παράθυρο. | `firmware/libraries/GreenhouseMesh/mesh_config.h:40` | firmware | μεταφέρεται στο beacon, αχρησιμοποίητο σήμερα |
 | `MESH_RANK_UNROUTED` | 255  | Ειδική τιμή rank που σημαίνει «δεν έχω parent». | 255 = η μεγαλύτερη τιμή ενός byte, ώστε να μην μπερδεύεται με πραγματικό rank. | `firmware/libraries/GreenhouseMesh/mesh_config.h:13` | firmware | sentinel: χωρίς parent |
-| `MESH_NEIGHBOR_SLOTS` | 16 slots | Πόσους γείτονες θυμάται ο κόμβος. | 16 έφταναν για το bench· σε πυκνό δίκτυο (30 γείτονες) γεμίζει και καλό είναι να αυξηθεί. | `firmware/libraries/GreenhouseMesh/mesh_node.h:137` | firmware | LRU πίνακας γειτόνων (orphan detection) |
+| `MESH_NEIGHBOR_SLOTS` | 32 slots | Πόσους γείτονες θυμάται ο κόμβος. | 32: ένας κόμβος ακούει ~3 επίπεδα γειτόνων· το 16 γέμιζε ήδη με 10 κόμβους ανά επίπεδο (RAM, όχι RTC). | `firmware/libraries/GreenhouseMesh/mesh_config.h:120` | firmware | LRU πίνακας γειτόνων (orphan detection) |
 | `MESH_JOIN_BEACON_INTERVAL_MS` | 3000 ms | Πόσο συχνά φωνάζει «θέλω να μπω» ένας νέος αισθητήρας. | 3 s: ο χρήστης στέκεται δίπλα με την εφαρμογή, θέλουμε γρήγορη απάντηση. | `firmware/libraries/GreenhouseMesh/mesh_node.h:60` | firmware | μόνο μη-enrolled |
-| `MESH_FIXED_CHANNEL` | 1  | Το κανάλι WiFi όπου μιλάνε όλοι οι κόμβοι. | Κανάλι 1: σταθερό για όλους, αφού δεν υπάρχει router να το ορίσει. | `firmware/libraries/GreenhouseMesh/mesh_config.h:59` | firmware | όλοι οι κόμβοι στο ίδιο κανάλι (2412 MHz) |
+| `MESH_FIXED_CHANNEL` | 1  | Το κανάλι WiFi όπου μιλάνε όλοι οι κόμβοι. | Κανάλι 1: σταθερό για όλους, αφού δεν υπάρχει router να το ορίσει. | `firmware/libraries/GreenhouseMesh/mesh_config.h:60` | firmware | όλοι οι κόμβοι στο ίδιο κανάλι (2412 MHz) |
 | `PARENT_SELECTION` | strict rank < own· μετά μικρότερο rank· μετά RSSI  | Ο κανόνας με τον οποίο διαλέγει ένας κόμβος σε ποιον να στέλνει. | Μόνο σε κόμβο πιο κοντά στη γέφυρα (μικρότερο rank)· έτσι δεν γίνονται ποτέ κύκλοι. | `firmware/libraries/GreenhouseMesh/mesh_node.h:374` | firmware | RPL strict-rank → δομικά χωρίς loops |
 | `SLEEPY_PARENT_RULE` | sleepy parent δεκτός όταν το beacon έχει RX_OPEN και RELAY_CAP (CART depth N)  | Αν ένας κόμβος που κοιμάται μπορεί να γίνει parent. | Ναι, όταν έχει ανοιχτό παράθυρο λήψης και δέχεται παιδιά: έτσι όλοι οι κόμβοι κάνουν relay. | `firmware/libraries/GreenhouseMesh/mesh_node.h meshHandleBeacon()` | firmware | MESH_CART_ENABLE=0 επαναφέρει το Phase 1 |
 
@@ -72,80 +72,83 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
 | `MESH_TTL_MARGIN` | 2 hops | Πόσα επιπλέον hops επιτρέπονται πέρα από την απόσταση του κόμβου. | 2: καλύπτει αλλαγή parent την ώρα που το μήνυμα ταξιδεύει. | `firmware/libraries/GreenhouseMesh/mesh_config.h:14` | firmware | data ttl = rank + margin, στο transmit |
-| `MESH_MAX_TTL` | 64 hops | Το ανώτατο όριο hops ενός μηνύματος. | 64: το παλιό 16 σταματούσε κάθε μήνυμα πέρα από rank 17· το 64 αφήνει δίκτυο έως ~63 επίπεδα και κρατά τη δικλίδα. | `firmware/libraries/GreenhouseMesh/mesh_config.h:19` | firmware | ανώτατο όριο· relay κάνει drop ttl>max ή ttl==0 |
+| `MESH_MAX_TTL` | 128 hops | Το ανώτατο όριο hops ενός μηνύματος. | 128: το 16 σταματούσε στο rank 17 και το 64 στο 65· το 128 φτάνει ως το rank 129 (μελέτη 100×50) και κρατά τη δικλίδα. | `firmware/libraries/GreenhouseMesh/mesh_config.h:19` | firmware | ανώτατο όριο· relay κάνει drop ttl>max ή ttl==0 |
 | `MESH_ACK_TTL` | 6 hops | TTL της επιβεβαίωσης αν το Pi δεν στείλει δικό του. | 6: παλιά εφεδρική τιμή· το Pi στέλνει πάντα rank+2. | `firmware/libraries/GreenhouseMesh/mesh_node.h:77` | firmware | fallback της γέφυρας αν το Pi δεν στείλει ttl |
-| `ACK_TTL_MARGIN` | 2 hops | Περιθώριο hops για την επιβεβαίωση που γυρίζει. | 2, ίδιο με τα δεδομένα, για τον ίδιο λόγο. | `pi/scripts/serial_bridge.py:469` | firmware | Pi: ACK ttl = min(ACK_TTL_MAX, rank + margin) |
-| `ACK_TTL_MAX` | 64 hops | Ανώτατο όριο hops της επιβεβαίωσης στο Pi. | 64, ίδιο με το MESH_MAX_TTL· πρέπει να αλλάζουν μαζί. | `pi/scripts/serial_bridge.py:470` | firmware |  |
+| `ACK_TTL_MARGIN` | 2 hops | Περιθώριο hops για την επιβεβαίωση που γυρίζει. | 2, ίδιο με τα δεδομένα, για τον ίδιο λόγο. | `pi/scripts/serial_bridge.py:480` | firmware | Pi: ACK ttl = min(ACK_TTL_MAX, rank + margin) |
+| `ACK_TTL_MAX` | 128 hops | Ανώτατο όριο hops της επιβεβαίωσης στο Pi. | 64, ίδιο με το MESH_MAX_TTL· πρέπει να αλλάζουν μαζί. | `pi/scripts/serial_bridge.py:481` | firmware |  |
 
 ## A4. Firmware — buffers και μνήμη
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `MESH_DATA_BUFFER_SIZE` | 10 frames | Πόσες δικές του μετρήσεις κρατά ένας κόμβος όταν δεν μπορεί να στείλει. | 10: αρκούν για μερικούς κύκλους χωρίς σύνδεση και χωράνε άνετα στη μνήμη που επιβιώνει τον ύπνο. | `firmware/libraries/GreenhouseMesh/mesh_config.h:116` | firmware | δικές του μετρήσεις, ring drop-oldest, σε RTC |
+| `MESH_DATA_BUFFER_SIZE` | 10 frames | Πόσες δικές του μετρήσεις κρατά ένας κόμβος όταν δεν μπορεί να στείλει. | 10: αρκούν για μερικούς κύκλους χωρίς σύνδεση και χωράνε άνετα στη μνήμη που επιβιώνει τον ύπνο. | `firmware/libraries/GreenhouseMesh/mesh_config.h:134` | firmware | δικές του μετρήσεις, ring drop-oldest, σε RTC |
 | `MESH_INFLIGHT_MAX` | 11 frames | Πόσα μηνύματα περιμένουν επιβεβαίωση σε μία αφύπνιση. | Όλος ο buffer (10) + η νέα μέτρηση = 11. | `firmware/libraries/GreenhouseMesh/mesh_inflight.h:22` | firmware | frames που περιμένουν app-ACK σε ένα wake |
-| `MESH_DEDUP_CACHE_SIZE` | 32 entries | Πόσα πρόσφατα μηνύματα θυμάται ένας relay για να πετάει τα διπλά. | 32 έφταναν για λίγους κόμβους· κοντά στη γέφυρα σε μεγάλο δίκτυο θέλει περισσότερα. | `firmware/libraries/GreenhouseMesh/mesh_config.h:103` | firmware | (origin, seq) ring σε κάθε relay και στη γέφυρα |
-| `MESH_DEDUP_WINDOW_MS` | 30000 ms | Για πόσο θεωρείται ένα μήνυμα «ήδη ειδωμένο». | 30 s: μεγαλύτερο από μία αφύπνιση (10 s) και μικρότερο από τον κύκλο ύπνου. | `firmware/libraries/GreenhouseMesh/mesh_config.h:104` | firmware | static_assert: MAX_AWAKE < window < SLEEP_INTERVAL |
-| `MESH_ACK_DEDUP_CACHE_SIZE` | 8 entries | Πόσες πρόσφατες επιβεβαιώσεις θυμάται ο κόμβος. | 8: οι επιβεβαιώσεις είναι λίγες ανά αφύπνιση. | `firmware/libraries/GreenhouseMesh/mesh_node.h:146` | firmware | (target, seq) ring για ACK flood |
-| `sizeof(MeshRtcState)` | 632 B | Πόση μνήμη που επιβιώνει τον ύπνο πιάνει η κατάσταση του κόμβου. | Κυρίως ο buffer των 10 μετρήσεων (610 B)· μετρημένο από τον κώδικα. | `firmware/libraries/GreenhouseMesh/mesh_node.h:682` | firmware | επιβιώνει στον deep sleep (RTC FAST) |
+| `MESH_DEDUP_CACHE_SIZE` | 128 entries | Πόσα πρόσφατα μηνύματα θυμάται ένας relay για να πετάει τα διπλά. | 128: ο relay δίπλα στη γέφυρα βλέπει ~100 διαφορετικά μηνύματα ανά παράθυρο σε δίκτυο 100 επιπέδων· είναι RAM, όχι RTC. | `firmware/libraries/GreenhouseMesh/mesh_config.h:116` | firmware | (origin, seq) ring σε κάθε relay και στη γέφυρα |
+| `MESH_DEDUP_WINDOW_MS` | 30000 ms | Για πόσο θεωρείται ένα μήνυμα «ήδη ειδωμένο». | 30 s: μεγαλύτερο από μία αφύπνιση (10 s) και μικρότερο από τον κύκλο ύπνου. | `firmware/libraries/GreenhouseMesh/mesh_config.h:122` | firmware | static_assert: MAX_AWAKE < window < SLEEP_INTERVAL |
+| `MESH_ACK_DEDUP_CACHE_SIZE` | 8 entries | Πόσες πρόσφατες επιβεβαιώσεις θυμάται ο κόμβος. | 8: οι επιβεβαιώσεις είναι λίγες ανά αφύπνιση. | `firmware/libraries/GreenhouseMesh/mesh_node.h:145` | firmware | (target, seq) ring για ACK flood |
+| `sizeof(MeshRtcState)` | 632 B | Πόση μνήμη που επιβιώνει τον ύπνο πιάνει η κατάσταση του κόμβου. | Κυρίως ο buffer των 10 μετρήσεων (610 B)· μετρημένο από τον κώδικα. | `firmware/libraries/GreenhouseMesh/mesh_node.h:681` | firmware | επιβιώνει στον deep sleep (RTC FAST) |
 | `sizeof(MeshInFlightEntry)` | 64 B | Μέγεθος μίας εγγραφής «περιμένω επιβεβαίωση». | Το μήνυμα (61 B) + αριθμός + κατάσταση, στρογγυλεμένο από τον compiler. | `firmware/libraries/GreenhouseMesh/mesh_inflight.h:28` | firmware | RAM μόνο |
-| `RELAY_BUFFER_TODAY` | 50 frames | Πόσα μηνύματα άλλων κρατά ένας relay που κοιμάται. | 50: τα κρατά μέχρι να ανοίξει το παράθυρο του parent· χωράνε στη μνήμη ύπνου (έως ~121). | `firmware/libraries/GreenhouseMesh/mesh_config.h:97` | firmware | sleepy relays κρατούν frames σε RTC ως το παράθυρο του parent· always-on relays κάνουν cut-through |
+| `RELAY_BUFFER_TODAY` | 110 frames | Πόσα μηνύματα άλλων κρατά ένας relay που κοιμάται. | 50: τα κρατά μέχρι να ανοίξει το παράθυρο του parent· χωράνε στη μνήμη ύπνου (έως ~121). | `firmware/libraries/GreenhouseMesh/mesh_config.h:108` | firmware | sleepy relays κρατούν frames σε RTC ως το παράθυρο του parent· always-on relays κάνουν cut-through |
 
 ## A5. Firmware — κύκλος αφύπνισης (sleepy κόμβος)
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `MESH_SLEEP_INTERVAL_MS` | 60000 ms | Κάθε πόσο ξυπνά ο αισθητήρας να μετρήσει και να στείλει. | 60 s είναι τιμή δοκιμών στο bench· στην παραγωγή 15′ ή 30′ (ορίζεται ανά run). | `firmware/libraries/GreenhouseMesh/mesh_config.h:64` | firmware | τιμή test στο firmware σήμερα· στον sim το T ορίζεται ανά run (§F) |
-| `SENSOR_WARMUP_MS` | 2000 ms | Πόσο περιμένει ο κόμβος μετά το άναμμα των αισθητήρων πριν τους διαβάσει. | 2 s: ο DHT22 χρειάζεται τόσο για σωστή μέτρηση. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:40` | firmware | αισθητήρες ON· επικαλύπτεται με το radio bring-up |
-| `MESH_TX_CONFIRM_WAIT_MS` | 500 ms | Πόσο περιμένει ο κόμβος να μάθει αν ο parent πήρε το μήνυμα. | 500 ms: η επιβεβαίωση έρχεται σε χιλιοστά· είναι ανώτατο όριο ασφαλείας. | `firmware/libraries/GreenhouseMesh/mesh_config.h:67` | firmware | αναμονή send-callback (L2 ACK) |
-| `MESH_APP_ACK_WAIT_MS` | 2000 ms | Πόσο περιμένει ο κόμβος την απάντηση του Pi. | 2 s: αρκεί για τη διαδρομή μέσω γέφυρας και Pi σε λίγα hops. | `firmware/libraries/GreenhouseMesh/mesh_config.h:69` | firmware | αναμονή ACK από το Pi· αναπάντητα → επόμενο wake |
-| `MESH_WAKE_DISCOVERY_MS` | 5000 ms | Πόσο ψάχνει νέο parent όταν αποτύχει η αποστολή. | 5 s: αρκετό για να ακούσει γείτονες, χωρίς να αδειάσει η μπαταρία. | `firmware/libraries/GreenhouseMesh/mesh_config.h:65` | firmware | αναζήτηση νέου parent μετά από αποτυχία |
-| `MESH_WAKE_MAX_AWAKE_MS` | 10000 ms | Το μέγιστο που επιτρέπεται να μείνει ξύπνιος ο κόμβος σε μία αφύπνιση. | 10 s: δικλίδα ασφαλείας ώστε ένα σφάλμα να μην αδειάσει την μπαταρία. | `firmware/libraries/GreenhouseMesh/mesh_config.h:74` | firmware | σκληρό όριο αφύπνισης |
-| `MESH_MIN_SLEEP_MS` | 1000 ms | Ο ελάχιστος χρόνος ύπνου. | 1 s: για να μη δοθεί ποτέ μηδενικός ή αρνητικός χρόνος στον χρονοδιακόπτη. | `firmware/libraries/GreenhouseMesh/mesh_config.h:76` | firmware | ελάχιστος ύπνος |
-| `BATT_ADC_SAMPLES` | 8 δείγματα | Πόσες μετρήσεις τάσης μπαταρίας παίρνει και βγάζει μέσο όρο. | 8: μειώνει τον θόρυβο του ADC με ελάχιστο κόστος χρόνου. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:99` | firmware |  |
-| `BATT_ADC_SAMPLE_DELAY_MS` | 2 ms | Αναμονή ανάμεσα στις μετρήσεις τάσης. | 2 ms: αφήνει το ADC να ηρεμήσει. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:101` | firmware |  |
-| `COLD_BOOT_USB_WAIT_MS` | 1500 ms | Αναμονή στο πρώτο άναμμα για να προλάβει να συνδεθεί το USB. | 1,5 s για debugging· δεν γίνεται στις αφυπνίσεις από ύπνο. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:287` | firmware | μόνο σε cold boot, όχι σε timer wake |
-| `UNCONFIRMED_WAKES_RESCAN` | 2 wakes | Μετά από πόσες αποτυχημένες αφυπνίσεις ξαναψάχνει κανάλι. | 2: δεν αντιδρά σε μία τυχαία αποτυχία. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:175` | firmware | link counter → rescan καναλιού |
-| `SEND_INTERVAL_MS` | 5000 ms | Κάθε πόσο στέλνει ένας κόμβος που είναι πάντα ξύπνιος. | 5 s για το bench (γρήγορα δεδομένα για δοκιμές). | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:39` | firmware | always-on: περίοδος ≈ SEND_INTERVAL + WARMUP |
+| `MESH_SLEEP_INTERVAL_MS` | 900000 ms | Κάθε πόσο ξυπνά ο αισθητήρας να μετρήσει και να στείλει. | 15′: στον simulator είναι καλύτερο από το 30′ ακόμα και ανά ημέρα (το περιθώριο του ρολογιού μεγαλώνει ~T²). Για δοκιμές στον πάγκο: 60 s. | `firmware/libraries/GreenhouseMesh/mesh_config.h:65` | firmware | τιμή test στο firmware σήμερα· στον sim το T ορίζεται ανά run (§F) |
+| `SENSOR_WARMUP_MS` | 2000 ms | Πόσο περιμένει ο κόμβος μετά το άναμμα των αισθητήρων πριν τους διαβάσει. | 2 s: ο DHT22 χρειάζεται τόσο για σωστή μέτρηση. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:72` | firmware | αισθητήρες ON· επικαλύπτεται με το radio bring-up |
+| `MESH_TX_CONFIRM_WAIT_MS` | 500 ms | Πόσο περιμένει ο κόμβος να μάθει αν ο parent πήρε το μήνυμα. | 500 ms: η επιβεβαίωση έρχεται σε χιλιοστά· είναι ανώτατο όριο ασφαλείας. | `firmware/libraries/GreenhouseMesh/mesh_config.h:71` | firmware | αναμονή send-callback (L2 ACK) |
+| `MESH_APP_ACK_WAIT_MS` | 2000 ms | Πόσο περιμένει ο κόμβος την απάντηση του Pi. | 2 s: αρκεί για τη διαδρομή μέσω γέφυρας και Pi σε λίγα hops. | `firmware/libraries/GreenhouseMesh/mesh_config.h:73` | firmware | αναμονή ACK από το Pi· αναπάντητα → επόμενο wake |
+| `MESH_WAKE_DISCOVERY_MS` | 5000 ms | Πόσο ψάχνει νέο parent όταν αποτύχει η αποστολή. | 5 s: αρκετό για να ακούσει γείτονες, χωρίς να αδειάσει η μπαταρία. | `firmware/libraries/GreenhouseMesh/mesh_config.h:69` | firmware | αναζήτηση νέου parent μετά από αποτυχία |
+| `MESH_WAKE_MAX_AWAKE_MS` | 10000 ms | Το μέγιστο που επιτρέπεται να μείνει ξύπνιος ο κόμβος σε μία αφύπνιση. | 10 s: δικλίδα ασφαλείας ώστε ένα σφάλμα να μην αδειάσει την μπαταρία. | `firmware/libraries/GreenhouseMesh/mesh_config.h:78` | firmware | σκληρό όριο αφύπνισης |
+| `MESH_MIN_SLEEP_MS` | 1000 ms | Ο ελάχιστος χρόνος ύπνου. | 1 s: για να μη δοθεί ποτέ μηδενικός ή αρνητικός χρόνος στον χρονοδιακόπτη. | `firmware/libraries/GreenhouseMesh/mesh_config.h:80` | firmware | ελάχιστος ύπνος |
+| `BATT_ADC_SAMPLES` | 8 δείγματα | Πόσες μετρήσεις τάσης μπαταρίας παίρνει και βγάζει μέσο όρο. | 8: μειώνει τον θόρυβο του ADC με ελάχιστο κόστος χρόνου. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:158` | firmware |  |
+| `BATT_ADC_SAMPLE_DELAY_MS` | 2 ms | Αναμονή ανάμεσα στις μετρήσεις τάσης. | 2 ms: αφήνει το ADC να ηρεμήσει. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:160` | firmware |  |
+| `COLD_BOOT_USB_WAIT_MS` | 1500 ms | Αναμονή στο πρώτο άναμμα για να προλάβει να συνδεθεί το USB. | 1,5 s για debugging· δεν γίνεται στις αφυπνίσεις από ύπνο. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:344` | firmware | μόνο σε cold boot, όχι σε timer wake |
+| `UNCONFIRMED_WAKES_RESCAN` | 2 wakes | Μετά από πόσες αποτυχημένες αφυπνίσεις ξαναψάχνει κανάλι. | 2: δεν αντιδρά σε μία τυχαία αποτυχία. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:233` | firmware | link counter → rescan καναλιού |
+| `SEND_INTERVAL_MS` | 5000 ms | Κάθε πόσο στέλνει ένας κόμβος που είναι πάντα ξύπνιος. | 5 s για το bench (γρήγορα δεδομένα για δοκιμές). | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:62` | firmware | always-on: περίοδος ≈ SEND_INTERVAL + WARMUP |
 
 ## A6. Γέφυρα (bridge) και Pi
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `UART_BAUD` | 115200 baud | Ταχύτητα του καλωδίου γέφυρας–Pi. | 115200: η συνηθισμένη ταχύτητα, αξιόπιστη στο UART του Pi Zero. | `firmware/bridge_esp32/bridge_esp32.ino:15` | firmware | γέφυρα ↔ Pi, 8N1 |
-| `BRIDGE_FRAME_FORMAT` | {"type":"frame","data":"%s"}  | Πώς γράφει η γέφυρα κάθε μήνυμα προς το Pi. | JSON κείμενο με hex: εύκολο στο debugging, αλλά 2,5× μεγαλύτερο από δυαδική μορφή. | `firmware/bridge_esp32/bridge_esp32.ino:153` | firmware | κάθε data frame γίνεται μία γραμμή JSON με hex |
-| `BRIDGE_UART_WRITE` | println  | Η εντολή που γράφει τη γραμμή στο UART. | println: προσθέτει αλλαγή γραμμής ώστε το Pi να ξέρει πού τελειώνει κάθε μήνυμα. | `firmware/bridge_esp32/bridge_esp32.ino:37` | firmware | println → +CRLF· μπλοκάρει όσο γεμίζει το FIFO |
-| `BRIDGE_USB_ECHO` | Serial.printf  | Η γέφυρα γράφει κάθε μήνυμα και στο USB για debugging. | Βολικό στο bench· αν το USB συνδεθεί σε υπολογιστή που δεν διαβάζει, μπορεί να παγώνει. | `firmware/bridge_esp32/bridge_esp32.ino:38` | firmware | δεύτερη εγγραφή ανά frame στο USB-CDC (debug) |
+| `UART_BAUD` | 921600 baud | Ταχύτητα του καλωδίου γέφυρας–Pi. | 921600 με binary framing: ένα μήνυμα αισθητήρα θέλει 0,73 ms αντί για 13 ms. Το mini UART του Pi Zero W (κλειδωμένο core_freq) πέφτει στο 0,3 %. Fallback: 115200 με hex JSON. | `firmware/bridge_esp32/bridge_esp32.ino:26` | firmware | γέφυρα ↔ Pi, 8N1 |
+| `BRIDGE_FRAME_FORMAT` | {"type":"frame","data":"%s"}  | Πώς γράφει η γέφυρα κάθε μήνυμα προς το Pi. | JSON κείμενο με hex: εύκολο στο debugging, αλλά 2,5× μεγαλύτερο από δυαδική μορφή. | `firmware/bridge_esp32/bridge_esp32.ino:80` | firmware | κάθε data frame γίνεται μία γραμμή JSON με hex |
+| `BRIDGE_UART_WRITE` | println  | Η εντολή που γράφει τη γραμμή στο UART. | println: προσθέτει αλλαγή γραμμής ώστε το Pi να ξέρει πού τελειώνει κάθε μήνυμα. | `firmware/bridge_esp32/bridge_esp32.ino:61` | firmware | println → +CRLF· μπλοκάρει όσο γεμίζει το FIFO |
+| `BRIDGE_USB_ECHO` | 0  | Η γέφυρα γράφει κάθε μήνυμα και στο USB για debugging. | 0 (κλειστό): αν το USB είναι σε υπολογιστή που δεν διαβάζει, κάθε εγγραφή μπορεί να παγώνει τη λήψη ESP-NOW· ανοίγει με -DBRIDGE_USB_ECHO=1 για bench. | `firmware/bridge_esp32/bridge_esp32.ino:32` | firmware | 1 = δεύτερη εγγραφή ανά μήνυμα στο USB-CDC (debug) |
+| `BRIDGE_UART_BINARY` | 1  | Μορφή των μηνυμάτων γέφυρας–Pi. | 1 = δυαδικά πλαίσια με CRC (67 B ανά μήνυμα αντί για 150 B)· 0 = η παλιά γραμμή JSON. Το Pi αναγνωρίζει μόνο του και τα δύο. | `firmware/bridge_esp32/bridge_esp32.ino:23` | firmware | 1 = binary framing (mesh_uart.h), 0 = γραμμή hex JSON |
+| `MESH_UART_OVERHEAD` | 6 B | Bytes πλαισίωσης γύρω από κάθε δυαδικό μήνυμα. | 6: δύο bytes συγχρονισμού, τύπος, μήκος και CRC-16 για έλεγχο λαθών. | `firmware/libraries/GreenhouseMesh/mesh_uart.h:29` | firmware | sync 2 + type 1 + len 1 + CRC-16 2 |
+| `MESH_UART_ACK_LEN` | 10 B | Μέγεθος της δυαδικής επιβεβαίωσης από το Pi. | 10 B: MAC 6, seq 2, ok 1, TTL 1 (αντί για γραμμή JSON ~67 B). | `firmware/libraries/GreenhouseMesh/mesh_uart.h:27` | firmware | mac 6 + seq 2 + ok 1 + ttl 1 |
 | `BRIDGE_ACK_BROADCASTS` | 1 tx | Πόσες φορές στέλνει η γέφυρα κάθε επιβεβαίωση. | 1: οι relays την αναμεταδίδουν μόνοι τους. | `firmware/bridge_esp32/bridge_esp32.ino:105` | firmware | ένα broadcast ανά ACK, χωρίς retry, η γέφυρα δεν κάνει re-flood |
 | `BRIDGE_FRAME_QUEUE` | 0 frames | Ουρά μηνυμάτων μέσα στη γέφυρα. | Καμία: γράφει στο UART αμέσως. Σε μεγάλο δίκτυο αυτό γίνεται στενωπός. | `firmware/bridge_esp32/bridge_esp32.ino:121` | firmware | καμία ουρά εφαρμογής: η εγγραφή γίνεται μέσα στο ESP-NOW RX callback |
-| `BAUD` | 115200 baud | Ταχύτητα UART από την πλευρά του Pi. | Ίδια με της γέφυρας (115200). | `pi/scripts/serial_bridge.py:43` | firmware | Pi πλευρά |
-| `HEARTBEAT_INTERVAL_S` | 2 s | Κάθε πόσο λέει η γέφυρα στο Pi «είμαι ζωντανή». | 2 s: το Pi καταλαβαίνει γρήγορα αν χάθηκε η γέφυρα. | `pi/scripts/serial_bridge.py:55` | firmware |  |
-| `MESH_OFFLINE_AFTER` | 3 × | Πόσα χαμένα διαστήματα κάνουν έναν αισθητήρα «offline». | 3: ανέχεται 1–2 χαμένες μετρήσεις χωρίς ψεύτικο συναγερμό. | `firmware/libraries/GreenhouseMesh/mesh_config.h:130` | firmware |  |
-| `MESH_EXPECTED_REPORT_INTERVAL_MS` | 5000 ms | Κάθε πόσο περιμένει η γέφυρα μέτρηση από κόμβο που είναι πάντα ξύπνιος. | 5 s, ίδιο με το SEND_INTERVAL_MS. | `firmware/libraries/GreenhouseMesh/mesh_config.h:131` | firmware |  |
-| `_LIFEPO4_CURVE` | 3400→100 · 3350→90 · 3320→80 · 3300→70 · 3280→60 · 3260→50 · 3250→40 · 3220→30 · 3200→20 · 3000→10 · 2800→0 mV → % | Πίνακας που μετατρέπει την τάση μπαταρίας σε ποσοστό. | Η καμπύλη εκφόρτισης της LiFePO4, που είναι πολύ επίπεδη γύρω στα 3,2–3,3 V. | `pi/scripts/serial_bridge.py:255` | firmware | SoC πίνακας (piecewise linear) |
+| `AUTOBAUD_WINDOW_S` | 5 s | Πόσο περιμένει το Pi ένα έγκυρο μήνυμα πριν δοκιμάσει την άλλη ταχύτητα. | 5 s: η γέφυρα στέλνει heartbeat κάθε 2 s μόλις πάρει το NetKey, οπότε 5 s χωρίς τίποτα σημαίνουν λάθος baud. | `pi/scripts/serial_bridge.py:54` | firmware | Pi: auto-baud 921600 → 115200 αν δεν έρθει έγκυρο μήνυμα |
+| `HEARTBEAT_INTERVAL_S` | 2 s | Κάθε πόσο λέει η γέφυρα στο Pi «είμαι ζωντανή». | 2 s: το Pi καταλαβαίνει γρήγορα αν χάθηκε η γέφυρα. | `pi/scripts/serial_bridge.py:66` | firmware |  |
+| `MESH_OFFLINE_AFTER` | 3 × | Πόσα χαμένα διαστήματα κάνουν έναν αισθητήρα «offline». | 3: ανέχεται 1–2 χαμένες μετρήσεις χωρίς ψεύτικο συναγερμό. | `firmware/libraries/GreenhouseMesh/mesh_config.h:156` | firmware |  |
+| `MESH_EXPECTED_REPORT_INTERVAL_MS` | 5000 ms | Κάθε πόσο περιμένει η γέφυρα μέτρηση από κόμβο που είναι πάντα ξύπνιος. | 5 s, ίδιο με το SEND_INTERVAL_MS. | `firmware/libraries/GreenhouseMesh/mesh_config.h:157` | firmware |  |
+| `_LIFEPO4_CURVE` | 3400→100 · 3350→90 · 3320→80 · 3300→70 · 3280→60 · 3260→50 · 3250→40 · 3220→30 · 3200→20 · 3000→10 · 2800→0 mV → % | Πίνακας που μετατρέπει την τάση μπαταρίας σε ποσοστό. | Η καμπύλη εκφόρτισης της LiFePO4, που είναι πολύ επίπεδη γύρω στα 3,2–3,3 V. | `pi/scripts/serial_bridge.py:266` | firmware | SoC πίνακας (piecewise linear) |
 | `PI_PROCESS_MS` | 20 ms | Πόσο χρόνο θέλει το Pi για να επεξεργαστεί ένα μήνυμα. | 20 ms είναι εκτίμηση (δεν έχει μετρηθεί): ανάγνωση αρχείου, αποκρυπτογράφηση, αποστολή MQTT. | `pi/scripts/serial_bridge.py:303` | model | reload nodes.json + AES-GCM + ≤6 MQTT publish ανά frame — ΜΗ μετρημένο, εύρος 5–300 |
 
 ## A7. CART depth N: όλοι κοιμούνται και κάνουν relay (firmware + σχεδιασμένες τιμές)
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `MESH_CART_ENABLE` | 1  | Διακόπτης: όλοι οι κόμβοι κοιμούνται ΚΑΙ κάνουν relay. | 1 = ενεργό. Με 0 το firmware γυρίζει ακριβώς στη σημερινή (Phase 1) λειτουργία. | `firmware/libraries/GreenhouseMesh/mesh_config.h:83` | firmware | 0 = Phase 1 (rollback) |
-| `MESH_CART_SLOT_MS` | 2500 ms | Πόσο μένει ανοιχτό το παράθυρο λήψης κάθε κόμβου για τα παιδιά του. | 2,5 s: οι αισθητήρες ζεσταίνονται μέσα σε αυτό (2 s), οπότε η μέτρηση είναι έτοιμη όταν στείλει. | `firmware/libraries/GreenhouseMesh/mesh_config.h:87` | firmware | παράθυρο λήψης ανά κόμβο (σκάλα) |
-| `MESH_RELAY_BUFFER_SIZE` | 50 frames | Πόσα μηνύματα άλλων κρατά ένας relay στη μνήμη ύπνου. | 50: καλύπτει τον πιο φορτωμένο κόμβο στο 50×10 και πιάνει 3 KB από τα 8 KB. | `firmware/libraries/GreenhouseMesh/mesh_config.h:97` | firmware | relay buffer σε RTC |
-| `MESH_DRIFT_BIAS_PPM` | 1700 ppm | Πόσο διαφέρουν τα ρολόγια δύο κόμβων, στο firmware. | 1700 ppm = 0,17 %: μετρημένο στο bench (Gate 0 run 1). | `firmware/libraries/GreenhouseMesh/mesh_config.h:94` | firmware | Gate 0 run 1 |
-| `MESH_DRIFT_STEP_PPM_300S` | 100 ppm | Πόσο «χορεύει» το ρολόι από κύκλο σε κύκλο, στο firmware. | 100 ppm ανά 5′: εκτίμηση μέχρι το Gate 0 run 2. | `firmware/libraries/GreenhouseMesh/mesh_config.h:95` | firmware | Gate 0: προσωρινό |
-| `MESH_GUARD_CAP_MS` | 20000 ms | Το μέγιστο που ξυπνά νωρίτερα ένας κόμβος για να βρει τον parent. | 20 s: ασφάλεια ώστε ένα λάθος στο drift να μην κρατά τον κόμβο ξύπνιο για πάντα. | `firmware/libraries/GreenhouseMesh/mesh_config.h:96` | firmware | ανώτατο G_max |
+| `MESH_CART_ENABLE` | 1  | Διακόπτης: όλοι οι κόμβοι κοιμούνται ΚΑΙ κάνουν relay. | 1 = ενεργό. Με 0 το firmware γυρίζει ακριβώς στη σημερινή (Phase 1) λειτουργία. | `firmware/libraries/GreenhouseMesh/mesh_config.h:87` | firmware | 0 = Phase 1 (rollback) |
+| `MESH_CART_SLOT_MS` | 2500 ms | Πόσο μένει ανοιχτό το παράθυρο λήψης κάθε κόμβου για τα παιδιά του. | 2,5 s: οι αισθητήρες ζεσταίνονται μέσα σε αυτό (2 s), οπότε η μέτρηση είναι έτοιμη όταν στείλει. | `firmware/libraries/GreenhouseMesh/mesh_config.h:91` | firmware | παράθυρο λήψης ανά κόμβο (σκάλα) |
+| `MESH_RELAY_BUFFER_SIZE` | 110 frames | Πόσα μηνύματα άλλων κρατά ένας relay στη μνήμη ύπνου. | 110: ο κόμβος rank 1 κουβαλά 99 ξένα μηνύματα σε δίκτυο 100 επιπέδων· 110 × 61 B = 6,7 KB από τα 8 KB (ταβάνι 121). | `firmware/libraries/GreenhouseMesh/mesh_config.h:108` | firmware | relay buffer σε RTC |
+| `MESH_DRIFT_BIAS_PPM` | 1700 ppm | Πόσο διαφέρουν τα ρολόγια δύο κόμβων, στο firmware. | 1700 ppm = 0,17 %: μετρημένο στο bench (Gate 0 run 1). | `firmware/libraries/GreenhouseMesh/mesh_config.h:101` | firmware | Gate 0 run 1 |
+| `MESH_DRIFT_STEP_PPM_300S` | 100 ppm | Πόσο «χορεύει» το ρολόι από κύκλο σε κύκλο, στο firmware. | 100 ppm ανά 5′: εκτίμηση μέχρι το Gate 0 run 2. | `firmware/libraries/GreenhouseMesh/mesh_config.h:102` | firmware | Gate 0: προσωρινό |
+| `MESH_GUARD_CAP_MS` | 20000 ms | Το μέγιστο που ξυπνά νωρίτερα ένας κόμβος για να βρει τον parent. | 20 s: ασφάλεια ώστε ένα λάθος στο drift να μην κρατά τον κόμβο ξύπνιο για πάντα. | `firmware/libraries/GreenhouseMesh/mesh_config.h:103` | firmware | ανώτατο G_max |
 | `MESH_SLEEPY_RELAY_DEPTH_MAX` | 1 hops | Πόσοι κοιμισμένοι relays επιτρέπονται στη σειρά (αρχικό CART). | 1 στο αρχικό σχέδιο για ασφάλεια· το CART βάθους N το καταργεί. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:974` | planned | 0 = Phase 1 |
 | `MESH_MAX_SLEEPY_CHILDREN` | 6  | Πόσα παιδιά δέχεται ένας κοιμισμένος relay (αρχικό CART). | 6: κρατά χαμηλές τις συγκρούσεις και τον buffer. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:977` | planned | admission control μέσω RELAY_CAP |
-| `MESH_RX_BEACON_PERIOD_MS` | 100 ms | Κάθε πόσο λέει ο relay «είμαι ξύπνιος, στείλτε» όσο είναι ανοιχτό το παράθυρο. | 100 ms: τα παιδιά τον βρίσκουν γρήγορα, με ελάχιστο χρόνο εκπομπής. | `firmware/libraries/GreenhouseMesh/mesh_config.h:92` | firmware | RX_OPEN beacons μέσα στο παράθυρο |
-| `MESH_WAKE_GUARD_MIN_MS` | 250 ms | Το ελάχιστο περιθώριο χρόνου που ξυπνά νωρίτερα ένας κόμβος. | 250 ms: καλύπτει τη διακύμανση εκκίνησης του ESP32-C3. | `firmware/libraries/GreenhouseMesh/mesh_config.h:93` | firmware | radio/boot jitter floor |
-| `MESH_CART_JITTER_MS` | 300 ms | Τυχαία καθυστέρηση πριν στείλει, για να μη μιλάνε όλα τα παιδιά μαζί. | 300 ms: με τα 100 ms του σχεδίου ο προσομοιωτής έβγαλε ~50 % συγκρούσεις σε 10 κόμβους ανά επίπεδο. | `firmware/libraries/GreenhouseMesh/mesh_config.h:89` | firmware | J |
-| `MESH_CART_ATTEMPTS` | 3  | Πόσες φορές ξαναδοκιμάζει ένα παιδί μέσα στο παράθυρο. | 3: με τυχαία καθυστέρηση οι συγκρούσεις σχεδόν εξαφανίζονται. | `firmware/libraries/GreenhouseMesh/mesh_config.h:91` | firmware |  |
+| `MESH_RX_BEACON_PERIOD_MS` | 100 ms | Κάθε πόσο λέει ο relay «είμαι ξύπνιος, στείλτε» όσο είναι ανοιχτό το παράθυρο. | 100 ms: τα παιδιά τον βρίσκουν γρήγορα, με ελάχιστο χρόνο εκπομπής. | `firmware/libraries/GreenhouseMesh/mesh_config.h:99` | firmware | RX_OPEN beacons μέσα στο παράθυρο |
+| `MESH_WAKE_GUARD_MIN_MS` | 250 ms | Το ελάχιστο περιθώριο χρόνου που ξυπνά νωρίτερα ένας κόμβος. | 250 ms: καλύπτει τη διακύμανση εκκίνησης του ESP32-C3. | `firmware/libraries/GreenhouseMesh/mesh_config.h:100` | firmware | radio/boot jitter floor |
+| `MESH_CART_JITTER_MS` | 300 ms | Τυχαία καθυστέρηση πριν στείλει, για να μη μιλάνε όλα τα παιδιά μαζί. | 300 ms: με τα 100 ms του σχεδίου ο προσομοιωτής έβγαλε ~50 % συγκρούσεις σε 10 κόμβους ανά επίπεδο. | `firmware/libraries/GreenhouseMesh/mesh_config.h:96` | firmware | J |
+| `MESH_CART_ATTEMPTS` | 3  | Πόσες φορές ξαναδοκιμάζει ένα παιδί μέσα στο παράθυρο. | 3: με τυχαία καθυστέρηση οι συγκρούσεις σχεδόν εξαφανίζονται. | `firmware/libraries/GreenhouseMesh/mesh_config.h:98` | firmware |  |
 | `MESH_CART_PER_CHILD_MS` | 150 ms | Χρόνος παραθύρου που προστίθεται για κάθε παιδί. | 150 ms: αποστολή + επιβεβαίωση + περιθώριο. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:985` | planned |  |
 | `MESH_KNOCK_WINDOW_MS` | 500 ms | Χρόνος για νέο παιδί που «χτυπά την πόρτα». | 500 ms: αρκετό για να ακουστεί ένα νέο παιδί. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:986` | planned |  |
 | `MESH_RELAY_ACK_LINGER_MS` | 300 ms | Πόσο μένει ξύπνιος ο relay μετά για να περάσουν οι τελευταίες επιβεβαιώσεις. | 300 ms: η επιβεβαίωση από το Pi έρχεται σε 50–300 ms. | `docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md:987` | planned |  |
 | `MESH_SCHED_HIST` | 16 catches | Πόσες πρόσφατες αποκλίσεις ρολογιού θυμάται ο κόμβος. | 16: αρκετές για να εκτιμήσει σωστά πόσο «χορεύει» το ρολόι. | `firmware/libraries/GreenhouseMesh/mesh_sched.h:16` | firmware | margin policy window |
-| `GUARD_MARGIN_K` | 1.5  | Συντελεστής ασφαλείας του περιθωρίου αφύπνισης. | 1,5× η μεγαλύτερη πρόσφατη απόκλιση: αρκεί για λίγα hops. Σε βάθος 100 χρειάζεται 2,5 (οι αστοχίες αθροίζονται ανά hop — βλ. WORLD_GREENHOUSE_100x50.md). | `firmware/libraries/GreenhouseMesh/mesh_cart.h:49` | firmware | k = kNum/kDen = 3/2· G = clamp(2·k·max|err| + pad, G_min, G_max) |
-| `GUARD_PAD_MS` | 50 ms | Σταθερό επιπλέον περιθώριο. | 50 ms για μικρές τυχαίες καθυστερήσεις του radio. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:49` | firmware |  |
+| `GUARD_MARGIN_K` | 2.5  | Συντελεστής ασφαλείας του περιθωρίου αφύπνισης. | 2,5 (5/2): με 1,5 χάνεται 1,3 % ανά hop και σε βάθος 100 φτάνει στην ώρα του μόνο το 56 %· το 2,5 κρατά >99 % με +0,1 mAh/ημ (WORLD_GREENHOUSE_100x50.md). | `firmware/libraries/GreenhouseMesh/mesh_config.h:104` | firmware | k = kNum/kDen = 5/2· G = clamp(2·k·max|err| + pad, G_min, G_max) |
+| `GUARD_PAD_MS` | 50 ms | Σταθερό επιπλέον περιθώριο. | 50 ms για μικρές τυχαίες καθυστερήσεις του radio. | `firmware/libraries/GreenhouseMesh/mesh_config.h:107` | firmware |  |
 | `G_MAX_FACTOR` | 1.3  | Συντελεστής ασφαλείας του μέγιστου περιθωρίου. | 1,3: 30 % πάνω από το θεωρητικό ελάχιστο. | `firmware/libraries/GreenhouseMesh/mesh_sched.h:40` | firmware | G_max ≥ 2·|b|·T·1,3 |
 | `G_MAX_WANDER_Z` | 6 σ | Πόσες τυπικές αποκλίσεις της «περιπλάνησης» του ρολογιού καλύπτει το μέγιστο περιθώριο. | 6σ συνολικό εύρος (±3σ): σχεδόν ποτέ δεν ξεφεύγει ο parent από το παράθυρο. | `firmware/libraries/GreenhouseMesh/mesh_sched.h:42` | firmware | G_max ≥ z·σ_wander, σ = T·step/√(1−0,98²) |
 | `DRIFT_BIAS_PLANNING` | 0.006  | Πόσο διαφέρουν τα ρολόγια δύο κόμβων (αρχική εκτίμηση). | 0,6 %: από δημοσιευμένες μετρήσεις σε ESP32, πριν μετρήσουμε. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §2` | repo-doc | 0,6 % σχετικό bias |
@@ -256,12 +259,15 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `UNICAST_DATA_NO_BACKOFF_US` | 1388 µs | Όλος ο χρόνος μιας αποστολής με επιβεβαίωση, χωρίς αναμονή. | Παύση + μήνυμα + παύση + επιβεβαίωση. | DIFS + DATA + SIFS + ACK | derived |  |
 | `UNICAST_DATA_MEAN_US` | 1698 µs | Ο μέσος χρόνος μιας αποστολής, με τη μέση τυχαία αναμονή. | Προσθέτει τη μέση αναμονή (15,5 slots × 20 µs). | `+ μέσο backoff CW/2·slot` | derived |  |
 | `CART_SPEC_AIRTIME_ERROR` | beacon 0,63 → 0,752 ms· data+ACK 1,2 → 1,338 ms  | Διόρθωση στους χρόνους του παλιού σχεδίου CART. | Το σχέδιο είχε ξεχάσει 15 bytes του ESP-NOW· οι σωστοί χρόνοι είναι λίγο μεγαλύτεροι. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §2` | derived | το spec παρέλειψε 15 B vendor action header |
-| `UART_FRAME_LINE_B` | 150 B | Πόσα bytes γράφει η γέφυρα στο Pi για κάθε μήνυμα. | Υπολογίζεται: JSON κείμενο + 122 χαρακτήρες hex + αλλαγή γραμμής = 150. | format + 2·61 hex + CRLF | derived |  |
-| `UART_FRAME_LINE_MS` | 13.021 ms | Πόσο κρατά η αποστολή μιας γραμμής στο καλώδιο. | 150 bytes × 10 bits / 115200. | `10 bit/byte @ UART_BAUD` | derived |  |
-| `BRIDGE_MAX_FRAMES_S` | 76.8 frames/s | Πόσα μηνύματα το δευτερόλεπτο χωράνε από τη γέφυρα στο Pi. | 1 / χρόνο γραμμής = ~77. Είναι το όριο όλου του δικτύου. | `1 / line time` | derived | ανώτατος ρυθμός γέφυρας (χωρίς USB echo) |
+| `UART_FRAME_LINE_B` | 150 B | Πόσα bytes γράφει η γέφυρα στο Pi για κάθε μήνυμα. | Υπολογίζεται: JSON κείμενο + 122 χαρακτήρες hex + αλλαγή γραμμής = 150. | format + 2·61 hex + CRLF | derived | fallback: hex JSON |
+| `UART_FRAME_LINE_MS` | 13.021 ms | Πόσο κρατά η αποστολή μιας γραμμής στο καλώδιο. | 150 bytes × 10 bits / 115200. | `10 bit/byte @ 115200` | derived | fallback |
+| `BRIDGE_MAX_FRAMES_S_HEX` | 76.8 frames/s | Πόσα μηνύματα το δευτερόλεπτο χωράνε με την παλιά γραμμή JSON. | 1 / χρόνο γραμμής = ~77 στα 115200: ήταν το όριο όλου του δικτύου. | `1 / line time` | derived | ανώτατος ρυθμός γέφυρας με hex JSON @ 115200 |
+| `UART_FRAME_BIN_B` | 67 B | Πόσα bytes γράφει η γέφυρα ανά μήνυμα με binary framing. | 61 + 6 πλαισίωση = 67 (αντί για 150). | 61 + MESH_UART_OVERHEAD | derived | binary framing |
+| `UART_FRAME_BIN_MS` | 0.727 ms | Πόσο κρατά ένα δυαδικό μήνυμα στο καλώδιο. | 67 bytes × 10 bits / 921600 = 0,73 ms. | `10 bit/byte @ UART_BAUD` | derived |  |
+| `BRIDGE_MAX_FRAMES_S` | 1375.52 frames/s | Πόσα μηνύματα το δευτερόλεπτο χωράνε από τη γέφυρα στο Pi (σημερινό firmware). | ~1375 με binary στα 921600· πλέον το όριο είναι ο χρόνος επεξεργασίας του Pi, όχι το καλώδιο. | `1 / frame time` | derived | ανώτατος ρυθμός UART με το σημερινό firmware (binary) |
 | `UART_ACK_LINE_B` | 62 – 68 B | Πόσα bytes στέλνει το Pi στη γέφυρα για κάθε επιβεβαίωση. | Υπολογίζεται από τη μορφή JSON· αλλάζει λίγο με τον αριθμό μηνύματος. | compact json.dumps + \n | derived | εύρος seq/ttl/ok |
 | `BRIDGE_INGRESS_QUEUE` | 40 frames | Πόσα μηνύματα μπορούν να περιμένουν μέσα στη γέφυρα. | 8 + 32 θέσεις λήψης του radio. Αν γεμίσουν, τα επόμενα χάνονται. | static + dynamic RX buffers | derived | όσο το println μπλοκάρει, τα frames περιμένουν εδώ |
-| `DEPTH_CEILING_RANK` | 65 rank | Το βαθύτερο επίπεδο από το οποίο φτάνουν ακόμα μηνύματα. | Υπολογίζεται από τους κανόνες TTL: με 16 σταματούσε στο 17, με 64 φτάνει το 65. | TTL κανόνες firmware + Pi | derived | βαθύτεροι κόμβοι δεν παραδίδουν / δεν παίρνουν ACK |
+| `DEPTH_CEILING_RANK` | 129 rank | Το βαθύτερο επίπεδο από το οποίο φτάνουν ακόμα μηνύματα. | Υπολογίζεται από τους κανόνες TTL: με 16 σταματούσε στο 17, με 64 φτάνει το 65. | TTL κανόνες firmware + Pi | derived | βαθύτεροι κόμβοι δεν παραδίδουν / δεν παίρνουν ACK |
 | `UNDELIVERED_NODES_SCENARIO` | 0 κόμβοι | Πόσοι κόμβοι του σεναρίου δεν θα έφταναν ποτέ στο Pi. | Όσοι είναι βαθύτερα από το όριο TTL (με 64 κανένας στο 50×10). | 50×10 με firmware TTL | derived |  |
 | `FLOOD_REBROADCASTS_FW` | 137200 broadcasts/κύκλο | Πόσες αναμεταδόσεις επιβεβαιώσεων γίνονται σε κάθε κύκλο με τη σημερινή μέθοδο. | Υπολογίζεται: κάθε κόμβος αναμεταδίδει κάθε επιβεβαίωση μία φορά· μεγαλώνει με το τετράγωνο. | 50×10, όλοι relay, χωρίς απώλειες | derived | O(N²) |
 | `FLOOD_REBROADCASTS_NO_TTL` | 137200 broadcasts/κύκλο | Το ίδιο, αν αφαιρεθεί το όριο TTL. | Δείχνει πόσο χειρότερο γίνεται σε βάθος 50. | 50×10, what-if MAX_TTL=255 | derived |  |
@@ -283,22 +289,22 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `RTC:meshRelayMagic` | 4 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayMagic του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:171` | firmware | uint32_t |
-| `RTC:meshRelayBuf` | 3050 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayBuf του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:172` | firmware | uint8_t |
-| `RTC:meshRelayCount` | 1 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayCount του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:173` | firmware | uint8_t |
-| `RTC:meshRelayHead` | 1 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayHead του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:174` | firmware | uint8_t |
-| `RTC:meshRtcState` | 632 B | Μνήμη ύπνου που πιάνει η κατάσταση του κόμβου. | Μετρημένη από τον κώδικα. | `firmware/libraries/GreenhouseMesh/mesh_node.h:684` | firmware | MeshRtcState |
+| `RTC:meshRelayMagic` | 4 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayMagic του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:170` | firmware | uint32_t |
+| `RTC:meshRelayBuf` | 6710 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayBuf του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:171` | firmware | uint8_t |
+| `RTC:meshRelayCount` | 1 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayCount του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:172` | firmware | uint8_t |
+| `RTC:meshRelayHead` | 1 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshRelayHead του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_node.h:173` | firmware | uint8_t |
+| `RTC:meshRtcState` | 632 B | Μνήμη ύπνου που πιάνει η κατάσταση του κόμβου. | Μετρημένη από τον κώδικα. | `firmware/libraries/GreenhouseMesh/mesh_node.h:683` | firmware | MeshRtcState |
 | `RTC:meshSchedMagic` | 4 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshSchedMagic του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:27` | firmware | uint32_t |
 | `RTC:meshSchedParent` | 6 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshSchedParent του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:28` | firmware | uint8_t |
 | `RTC:meshSched` | 44 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshSched του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:29` | firmware | MeshSchedState |
 | `RTC:meshCartParentCycle` | 4 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshCartParentCycle του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:30` | firmware | uint32_t |
 | `RTC:meshCartSweepFails` | 1 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshCartSweepFails του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:31` | firmware | uint8_t |
 | `RTC:meshCartTxFailCycles` | 1 B | Μνήμη ύπνου που πιάνει η μεταβλητή meshCartTxFailCycles του firmware. | Διαβάζεται από τον κώδικα: μέγεθος τύπου × πλήθος στοιχείων. | `firmware/libraries/GreenhouseMesh/mesh_cart.h:32` | firmware | uint8_t |
-| `RTC:g_unconfirmedWakes` | 1 B | Μνήμη ύπνου του μετρητή αποτυχημένων αφυπνίσεων. | 1 byte. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:63` | firmware | uint8_t |
-| `RTC_OURS_B` | 3749 B | Πόση μνήμη ύπνου δηλώνει ο δικός μας κώδικας. | Άθροισμα όλων των μεταβλητών που επιβιώνουν τον ύπνο. | Σ RTC_DATA_ATTR | derived | ό,τι δηλώνει ο δικός μας κώδικας |
+| `RTC:g_unconfirmedWakes` | 1 B | Μνήμη ύπνου του μετρητή αποτυχημένων αφυπνίσεων. | 1 byte. | `firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:122` | firmware | uint8_t |
+| `RTC_OURS_B` | 7409 B | Πόση μνήμη ύπνου δηλώνει ο δικός μας κώδικας. | Άθροισμα όλων των μεταβλητών που επιβιώνουν τον ύπνο. | Σ RTC_DATA_ATTR | derived | ό,τι δηλώνει ο δικός μας κώδικας |
 | `RTC_MEASURED_TOTAL_B` | 3848 B | Πόση μνήμη ύπνου πιάνει συνολικά το firmware, μετρημένη. | Μετρήθηκε στο πραγματικό compiled αρχείο (ELF) του αισθητήρα. | riscv32-esp-elf-size -A edge_node_esp32_c3.ino.elf (core 3.3.11, 2026-09-28) | measured | .rtc.text 20 + .rtc.data 3756 + .rtc.force_slow 32 + .rtc_reserved 40 |
 | `RTC_IDF_MEASURED_B` | 92 B | Πόση μνήμη ύπνου παίρνει το λογισμικό της Espressif και του Arduino. | 92 B: μετρημένο· πολύ λιγότερο από όσο φοβόμασταν. | ίδια μέτρηση | measured | ό,τι παίρνουν ESP-IDF/Arduino/bootloader (όλα τα RTC sections εκτός .rtc.data) |
-| `RTC_FREE_UPPER_BOUND_B` | 4351 B | Πόση μνήμη ύπνου μένει ελεύθερη. | 8192 − Espressif (μετρημένο) − ό,τι χρησιμοποιούμε. | 8192 − ESP-IDF (μετρημένο) − δικά μας | derived | ελεύθερη μνήμη ύπνου με τον τρέχοντα relay buffer |
+| `RTC_FREE_UPPER_BOUND_B` | 691 B | Πόση μνήμη ύπνου μένει ελεύθερη. | 8192 − Espressif (μετρημένο) − ό,τι χρησιμοποιούμε. | 8192 − ESP-IDF (μετρημένο) − δικά μας | derived | ελεύθερη μνήμη ύπνου με τον τρέχοντα relay buffer |
 | `RELAY_BUFFER_MAX_UPPER_BOUND` | 121 frames | Το μέγιστο που θα χωρούσε ο relay buffer στη μνήμη ύπνου. | Ελεύθερη μνήμη + σημερινός buffer, διά 61 B ανά μήνυμα (~121). | `⌊(ελεύθερη + σημερινός relay buffer) / 61⌋` | derived | πόσα frames θα χωρούσε ο relay buffer το πολύ |
 | `RELAY_BUFFER_MIN_REQUIRED` | 50 frames | Το ελάχιστο που πρέπει να χωράει για το σενάριο 50×10. | Όσα μηνύματα περνά ο πιο φορτωμένος relay (50). | RANK1_SUBTREE | derived | T1 per-cycle: ένα rank-1 relay πρέπει να χωρέσει όλο το subtree του |
 | `RELAY_FLUSH_TIME_S_AT_MIN` | 0.0849 s | Πόσο χρόνο θέλει ένας relay για να στείλει 50 μηνύματα. | 50 × 1,7 ms ≈ 0,085 s: πολύ λιγότερο από το όριο αφύπνισης. | B × UNICAST_DATA_MEAN | derived | έναντι MESH_WAKE_MAX_AWAKE_MS = 10000 ms |
@@ -418,9 +424,9 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `scheme.t2_ack` | unicast | Πώς γυρίζει η επιβεβαίωση στην T2. | unicast: πολύ λιγότερη κίνηση από το flood. | flood \| unicast \| aggregate |
 | `scheme.t1_hop_ack` | l2 | Πώς επιβεβαιώνεται κάθε hop στην T1. | l2: όπως το firmware, η αυτόματη επιβεβαίωση του radio αρκεί· δεν χρειάζεται επιπλέον μήνυμα. | l2 \| per_frame \| batch |
 | `scheme.t1_slot_s` | 2.5 | Πόσο μένει ανοιχτό το παράθυρο λήψης κάθε κόμβου. | 2,5 s όπως το firmware (χωράει το warm-up του DHT22)· με SHT40 μπορεί να μικρύνει πολύ. |  |
-| `scheme.max_ttl` | 64 | Όριο hops. | 64: όπως το firmware· βάλε 16 για να δεις το παλιό ταβάνι στο rank 17. |  |
+| `scheme.max_ttl` | 128 | Όριο hops. | 64: όπως το firmware· βάλε 16 για να δεις το παλιό ταβάνι στο rank 17. |  |
 | `scheme.ttl_margin` | 2 | Περιθώριο hops. | 2: από το firmware. |  |
-| `scheme.relay_buffer` | 50 | Buffer του parent σε μηνύματα. | 50: χωράει στη μνήμη ύπνου και καλύπτει το 50×10. |  |
+| `scheme.relay_buffer` | 110 | Buffer του parent σε μηνύματα. | 50: χωράει στη μνήμη ύπνου και καλύπτει το 50×10. |  |
 | `scheme.own_buffer` | 10 | Buffer δικών μετρήσεων. | 10: από το firmware. |  |
 | `sync.bias` | 0.0017 | Σταθερή διαφορά ρολογιών. | 0,17 %: μετρημένο στο bench. |  |
 | `sync.step_per_300s` | 0.0001 | Πόσο αλλάζει το ρολόι από κύκλο σε κύκλο. | 0,01 %: εκτίμηση μέχρι το Gate 0 run 2. |  |
@@ -429,8 +435,9 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `sync.g_cap_s` | 20 | Το πολύ πόσο νωρίς ξυπνά ένας κόμβος για να βρει τον parent. | Από το firmware (MESH_GUARD_CAP_MS = 20 s): κρατά το ξύπνημα κάτω από το όριο των 30 s. |  |
 | `sync.g_max_s` | — | Μέγιστο περιθώριο (κενό = από τον κανόνα). | Κενό: υπολογίζεται από το drift. |  |
 | `sync.g_max_rule` | cart_v2 | Κανόνας για το μέγιστο περιθώριο. | cart_v2 όπως το σχέδιο· το bias_wander (διόρθωση) μειώνει την ενέργεια στο μισό. | cart_v2 \| bias_wander |
+| `scheme.rx_beacon_period_s` | 0.1 | Κάθε πόσο λέει ο κόμβος «το παράθυρό μου είναι ανοιχτό». | 100 ms όπως το firmware· σε πυκνό δίκτυο αυτά τα beacons είναι το μεγαλύτερο φορτίο του καναλιού, οπότε 250 ms το υποδιπλασιάζουν. |  |
 | `scheme.rank1_flush_s` | — | Πόσο χρόνο έχει ο κόμβος του πρώτου επιπέδου να στείλει όλα τα μηνύματα στη γέφυρα. | Κενό = όσο το παράθυρο (όπως το firmware). Η γέφυρα είναι πάντα ξύπνια, άρα μπορεί να μεγαλώσει. |  |
-| `sync.margin_k` | 1.5 | Πόσο φαρδύ περιθώριο αφύπνισης κρατά ο κόμβος σε σχέση με τις πρόσφατες αποκλίσεις. | 1,5 όπως το σχέδιο CART· μεγαλύτερο = λίγο περισσότερη ακρόαση, λιγότερα χαμένα ραντεβού. |  |
+| `sync.margin_k` | 2.5 | Πόσο φαρδύ περιθώριο αφύπνισης κρατά ο κόμβος σε σχέση με τις πρόσφατες αποκλίσεις. | 1,5 όπως το σχέδιο CART· μεγαλύτερο = λίγο περισσότερη ακρόαση, λιγότερα χαμένα ραντεβού. |  |
 | `sync.cycles` | 20000 | Κύκλοι της προσομοίωσης ρολογιών. | 20.000: σταθερά στατιστικά σε κλάσματα του δευτερολέπτου. |  |
 | `sync.z` | 3 | Πόσες τυπικές αποκλίσεις κάλυψη. | 3: καλύπτει το 99,7 %. |  |
 | `radio.link_margin_db` | 10 | Πόσο δυνατότερο από το όριο είναι το σήμα σε κάθε σύνδεση. | 10 dB: συνηθισμένο περιθώριο σχεδιασμού. |  |
@@ -440,8 +447,8 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `radio.attempts` | 3 | Προσπάθειες μέσα στο παράθυρο. | 3: από το σχέδιο CART. |  |
 | `radio.max_util` | 0.3 | Πόσο «γεμάτο» επιτρέπεται να είναι το κανάλι εκεί που ακούνε οι κόμβοι ο ένας τον άλλο. | 30 %: πάνω από αυτό το CSMA αρχίζει να έχει πολλές συγκρούσεις (κορεσμός ~50–60 %). |  |
 | `radio.hop_proc_s` | 0.002 | Χρόνος επεξεργασίας ανά hop. | 2 ms: εκτίμηση για τον έλεγχο υπογραφής. |  |
-| `bridge.baud` | 115200 | Ταχύτητα γέφυρας–Pi. | 115200: όπως σήμερα. |  |
-| `bridge.framing` | hex_json | Μορφή γραμμής UART. | hex_json: όπως σήμερα. | hex_json \| binary |
+| `bridge.baud` | 921600 | Ταχύτητα γέφυρας–Pi. | 115200: όπως σήμερα. |  |
+| `bridge.framing` | binary | Μορφή γραμμής UART. | hex_json: όπως σήμερα. | hex_json \| binary |
 | `bridge.usb_echo` | False | Αν η γέφυρα γράφει και στο USB. | Όχι: στην εγκατάσταση δεν είναι συνδεδεμένο USB. |  |
 | `bridge.ingress_queue` | 40 | Ουρά εισόδου γέφυρας. | 40: οι θέσεις λήψης του radio. |  |
 | `pi.process_s` | 0.02 | Χρόνος Pi ανά μήνυμα. | 0,02 s: εκτίμηση, δεν έχει μετρηθεί. |  |
@@ -474,6 +481,27 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `des.window_s` | — | Μήκος παραθύρου στην T2. | Κενό: από τον calculator. |  |
 | `des.clock_burnin` | 64 | Κύκλοι «προθέρμανσης» των ρολογιών. | 64: ώστε τα ρολόγια να ξεκινούν σε σταθερή κατάσταση. |  |
 | `des.sweep_energy` | expected | Πώς μετράει την ενέργεια των σπάνιων σαρώσεων. | Αναμενόμενη: λίγοι κύκλοι δεν αρκούν για να τις δεις. | expected \| observed |
+| `geo.length_m` | 200 | Μήκος του θερμοκηπίου. | 200 m: θερμοκήπιο 1 ha (200 × 50 m). |  |
+| `geo.width_m` | 50 | Πλάτος του θερμοκηπίου. | 50 m: θερμοκήπιο 1 ha. |  |
+| `geo.plant_density_m2` | 2.5 | Πόσα φυτά υπάρχουν ανά m². | 2,5: τυπική πυκνότητα ντομάτας σε θερμοκήπιο. |  |
+| `geo.plants_per_sensor` | 10 | Ένας αισθητήρας ανά τόσα φυτά. | 10: 2 500 αισθητήρες στο 1 ha· το 1 σημαίνει «ένας ανά φυτό». |  |
+| `geo.bridges` | 1 | Πόσες γέφυρες (σημεία σύνδεσης με το Pi) έχει το θερμοκήπιο. | 1: η σημερινή εγκατάσταση. |  |
+| `geo.bridge_layout` | wall | Πού μπαίνουν οι γέφυρες. | Στον τοίχο: εκεί υπάρχει ρεύμα· στο κέντρο μικραίνει το βάθος. | wall \| center |
+| `geo.channels` | 1 | Πόσα κανάλια WiFi μοιράζονται οι ζώνες των γεφυρών. | 1: σήμερα όλοι στο κανάλι 1· με 3 (1/6/11) κάθε ζώνη ακούει μόνο το δικό της κανάλι. |  |
+| `geo.antenna_h_m` | 0.5 | Ύψος της κεραίας του κόμβου από το έδαφος. | 0,5 m: μέσα στα φυτά· χαμηλά η ανάκλαση στο έδαφος αυξάνει την απώλεια μετά τα ~8 m. |  |
+| `geo.bridge_h_m` | 2 | Ύψος της κεραίας της γέφυρας. | 2 m: στον τοίχο, πάνω από τα φυτά. |  |
+| `geo.ant_gain_dbi` | -3 | Κέρδος κεραίας σε κάθε άκρο. | −3 dBi: η μικρή κεραία του SuperMini κοντά σε μπαταρία/PCB· συντηρητική, δεν έχει μετρηθεί. |  |
+| `geo.foliage_frac` | 1 | Τι ποσοστό της διαδρομής περνά μέσα από φύλλα. | 1: χειρότερη περίπτωση· 0,5 όταν το σήμα ταξιδεύει κυρίως στους διαδρόμους. |  |
+| `geo.wet_factor` | 1 | Επιπλέον απώλεια όταν τα φύλλα είναι βρεγμένα. | 1: στεγνά· 1,3 για βρεγμένα (υπόθεση). |  |
+| `geo.shadow_sigma_db` | 4 | Τυχαίες σταθερές διαφορές σήματος ανά ζεύγος κόμβων. | 4 dB: τυπική τιμή για εσωτερικό χώρο. |  |
+| `geo.rician_k_db` | 3 | Πόσο ισχυρή είναι η απευθείας διαδρομή σε σχέση με τις ανακλάσεις. | 3 dB: μερική οπτική επαφή μέσα σε φυτά· κενό = καθόλου (Rayleigh, χειρότερη). |  |
+| `geo.max_link_per` | 0.1 | Πότε ένα link θεωρείται χρήσιμο. | PER ≤ 10 %: με 5 επαναλήψεις του MAC σχεδόν κάθε μήνυμα περνά. |  |
+| `geo.parent_candidates_max` | 32 | Από πόσους υποψήφιους γονείς διαλέγει ο κόμβος. | Όσες θέσεις έχει ο πίνακας γειτόνων του firmware (32). |  |
+| `geo.parent_policy` | rssi | Πώς διαλέγεται ο γονιός. | rssi: όπως σήμερα, ο πιο δυνατός· balanced: ο λιγότερο φορτωμένος (χρειάζεται αλλαγή firmware). | rssi \| balanced |
+| `geo.cs_dbm` | — | Από πόσο ασθενές σήμα και πάνω «ακούγεται» ένας γείτονας. | Η ευαισθησία (−98,4 dBm): συντηρητικό, μετρά όποιον θα μπορούσε να συγκρουστεί μαζί μας. |  |
+| `geo.fill_max` | 0.8 | Πόσο μπορεί να γεμίσει το παράθυρο λήψης. | 80 %: μένει χώρος για να αδειάσει καθυστέρηση. |  |
+| `geo.sample_nodes` | 400 | Σε πόσους κόμβους ελέγχεται το κανάλι. | 400 τυχαίοι + όλοι οι κοντινοί στη γέφυρα (οι πιο φορτωμένοι). |  |
+| `geo.seed` | 1 | Seed της τυχαίας διάταξης. | Ίδιο seed → ίδιο αποτέλεσμα. |  |
 | `req.lifetime_days` | 365 | Στόχος αυτονομίας χωρίς ήλιο. | 365 ημέρες: ένας χρόνος χωρίς αλλαγή μπαταρίας. |  |
 | `req.latency_s` | 900 | Μέγιστη αποδεκτή καθυστέρηση. | 900 s: μία μέτρηση ανά κύκλο. |  |
 | `req.pdr` | 0.99 | Ελάχιστο ποσοστό μετρήσεων που πρέπει να φτάνουν. | 99 %: συνήθης στόχος για αισθητήρες. |  |

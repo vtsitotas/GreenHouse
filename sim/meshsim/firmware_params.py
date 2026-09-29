@@ -28,6 +28,7 @@ C_SOURCES = [
     "firmware/libraries/GreenhouseMesh/mesh_node.h",
     "firmware/libraries/GreenhouseMesh/mesh_sched.h",
     "firmware/libraries/GreenhouseMesh/mesh_cart.h",
+    "firmware/libraries/GreenhouseMesh/mesh_uart.h",
     "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino",
     "firmware/bridge_esp32/bridge_esp32.ino",
 ]
@@ -65,6 +66,9 @@ _BINOPS = {ast.Add: lambda a, b: a + b, ast.Sub: lambda a, b: a - b,
            ast.Mod: lambda a, b: a % b, ast.LShift: lambda a, b: a << b,
            ast.RShift: lambda a, b: a >> b, ast.BitOr: lambda a, b: a | b,
            ast.BitAnd: lambda a, b: a & b}
+_CMPOPS = {ast.Gt: lambda a, b: int(a > b), ast.Lt: lambda a, b: int(a < b),
+           ast.GtE: lambda a, b: int(a >= b), ast.LtE: lambda a, b: int(a <= b),
+           ast.Eq: lambda a, b: int(a == b), ast.NotEq: lambda a, b: int(a != b)}
 
 
 def _src(rel, line):
@@ -76,8 +80,13 @@ def _line_of(text, pos):
 
 
 def safe_eval(expr, env):
-    """C integer arithmetic over literals and already-known defines only."""
-    tree = ast.parse(_INT_SUFFIX.sub(r"\1", expr).strip(), mode="eval")
+    """C integer arithmetic over literals and already-known defines only
+    (plus a single `cond ? a : b`, rewritten to Python's conditional)."""
+    expr = _INT_SUFFIX.sub(r"\1", expr).strip()
+    m = re.fullmatch(r"\(?\s*([^?]+?)\s*\?\s*([^:]+?)\s*:\s*([^)]+?)\s*\)?", expr)
+    if m:
+        expr = f"({m.group(2)}) if ({m.group(1)}) else ({m.group(3)})"
+    tree = ast.parse(expr, mode="eval")
 
     def ev(n):
         if isinstance(n, ast.Expression):
@@ -86,6 +95,10 @@ def safe_eval(expr, env):
             return n.value
         if isinstance(n, ast.Name) and n.id in env and isinstance(env[n.id], (int, float)):
             return env[n.id]
+        if isinstance(n, ast.IfExp):
+            return ev(n.body) if ev(n.test) else ev(n.orelse)
+        if isinstance(n, ast.Compare) and len(n.ops) == 1 and type(n.ops[0]) in _CMPOPS:
+            return _CMPOPS[type(n.ops[0])](ev(n.left), ev(n.comparators[0]))
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub):
             return -ev(n.operand)
         if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div):
@@ -188,16 +201,12 @@ def parse_literals(texts):
         "COLD_BOOT_USB_WAIT_MS": _find(EDGE, edge, r"ESP_SLEEP_WAKEUP_TIMER\) delay\((\d+)\)"),
         "BATT_ADC_SAMPLES": _find(EDGE, edge, r"readBatteryMv\(\) \{.*?i < (\d+); i\+\+"),
         "BATT_ADC_SAMPLE_DELAY_MS": _find(EDGE, edge, r"analogReadMilliVolts\(BATT_ADC_PIN\);\s*delay\((\d+)\)"),
-        "GUARD_PAD_MS": _find(CART_H, texts[CART_H], r"c\.padMs = (\d+);"),
-        "GUARD_K_NUM": _find(CART_H, texts[CART_H], r"c\.kNum = (\d+);"),
-        "GUARD_K_DEN": _find(CART_H, texts[CART_H], r"c\.kDen = (\d+);"),
         "G_MAX_FACTOR_X10": _find(SCHED_H, texts[SCHED_H], r"biasPpm \* (\d+) / 10"),
         "G_MAX_WANDER_Z": _find(SCHED_H, texts[SCHED_H], r"wander = \(uint64_t\)(\d+) \* cycleMs"),
         "BRIDGE_FRAME_FORMAT": _find(BRIDGE, bridge,
                                      r'uartPrintf\("(\{\\"type\\":\\"frame\\".*?)", hex\)',
                                      cast=lambda s: s.replace('\\"', '"')),
         "BRIDGE_UART_WRITE": _find(BRIDGE, bridge, r"Serial1\.(println)\(buf\)", cast=str),
-        "BRIDGE_USB_ECHO": _find(BRIDGE, bridge, r"(Serial\.printf)\(\"\s+\S+ %s", cast=str),
     }
     rtc = []
     for rel in (NODE_H, CART_H, EDGE):

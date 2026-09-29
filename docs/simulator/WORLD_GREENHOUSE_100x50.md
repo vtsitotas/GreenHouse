@@ -46,6 +46,12 @@
 
 ## Αλλαγές που χρειάζεται το firmware για 100 ranks
 
+> **Εφαρμόστηκαν στο firmware (2026-09-30):**
+> - `MESH_MAX_TTL 128`, `MESH_RELAY_BUFFER_SIZE 110`, `MESH_GUARD_K_NUM/DEN 5/2`, `MESH_DEDUP_CACHE_SIZE 128`, `MESH_NEIGHBOR_SLOTS 32`, `MESH_SLEEP_INTERVAL_MS 900000`, και `ACK_TTL_MAX 128` στο Pi.
+> - Ελέγχονται με host tests, `static_assert` και compile. Η RTC του edge ELF είναι 7508 / 8192 B.
+>
+> Εκκρεμούν η σκόπιμη απλωμένη φάση των rank-1 και η γέφυρα στα 921600 binary.
+
 | Τι | Σήμερα | Χρειάζεται | Γιατί |
 |---|---|---|---|
 | `MESH_MAX_TTL` | 64 (ταβάνι rank 65) | **128** | ≥ 102 για να φτάσει το rank 100 (TTL = rank + 2) |
