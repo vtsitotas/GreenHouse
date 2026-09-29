@@ -30,7 +30,8 @@ SPEC = [
     ("scheme.t1_hop_ack", "per_frame", "T1: ACK ανά frame ή ένα ανά ριπή", ["per_frame", "batch"]),
     ("scheme.max_ttl", lambda c: c["MESH_MAX_TTL"], "MESH_MAX_TTL (firmware 16)", None),
     ("scheme.ttl_margin", lambda c: c["MESH_TTL_MARGIN"], "MESH_TTL_MARGIN", None),
-    ("scheme.relay_buffer", 50, "buffer parent/relay (frames)· άνω όριο RTC από §H", None),
+    ("scheme.relay_buffer", lambda c: c["MESH_RELAY_BUFFER_SIZE"] if "MESH_RELAY_BUFFER_SIZE" in c else 50,
+     "buffer parent/relay (frames)· άνω όριο RTC από §H", None),
     ("scheme.own_buffer", lambda c: c["MESH_DATA_BUFFER_SIZE"], "buffer δικών μετρήσεων", None),
     # ── clock sync (CART generalised) ─────────────────────────────────────
     ("sync.bias", lambda c: c["DRIFT_BIAS_MEASURED"], "σχετικό bias ρολογιού ζεύγους (0,17 % μετρημένο)", None),

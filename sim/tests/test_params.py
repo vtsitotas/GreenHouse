@@ -24,7 +24,7 @@ def test_snapshot_matches_live_sources():
 @pytest.mark.parametrize("key,value", [
     ("MESH_PACKET_LEN", 61), ("sizeof(MeshBeacon)", 27), ("sizeof(MeshAck)", 20),
     ("sizeof(MeshJoinBeacon)", 8), ("MESH_PROVISION_LEN", 33), ("MESH_INFLIGHT_MAX", 11),
-    ("MESH_DATA_BUFFER_SIZE", 10), ("MESH_DEDUP_CACHE_SIZE", 32), ("MESH_MAX_TTL", 16),
+    ("MESH_DATA_BUFFER_SIZE", 10), ("MESH_DEDUP_CACHE_SIZE", 32), ("MESH_MAX_TTL", 64),
     ("sizeof(MeshRtcState)", 632), ("TX_FAIL_DROP_COUNT", 3), ("BATT_ADC_SAMPLES", 8),
 ])
 def test_firmware_values(cat, key, value):
@@ -96,7 +96,7 @@ def test_md1k_blocking_k1():
 
 def test_every_parameter_is_explained(cat):
     from meshsim import config, explain
-    missing = [k for k in cat.params if k not in explain.CATALOGUE]
+    missing = [k for k in cat.params if explain.for_param(k) is None]
     missing += [k for k, *_ in config.SPEC if k not in explain.CONFIG]
     assert not missing, f"add a plain-language explanation to meshsim/explain.py for: {missing}"
     for what, why in list(explain.CATALOGUE.values()) + list(explain.CONFIG.values()):
@@ -105,5 +105,5 @@ def test_every_parameter_is_explained(cat):
 
 def test_markdown_renders(cat):
     md = params.to_markdown(cat)
-    assert "rank 17" in md and "18.100" in md
+    assert "Ταβάνι βάθους" in md and "Flood ACK" in md
     assert md.count("\n## ") >= len(params.GROUPS)

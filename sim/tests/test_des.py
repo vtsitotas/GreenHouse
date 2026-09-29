@@ -37,12 +37,12 @@ def test_chain_hidden_terminals_collide(cat):
 
 def test_ttl_ceiling_in_simulation(cat):
     # drift ~0 so that only the TTL rule decides who gets through
-    kw = dict(net__ranks=20, net__per_rank=1, net__hidden_frac=0, des__cycles=3,
+    kw = dict(net__ranks=20, net__per_rank=1, net__hidden_frac=0, des__cycles=3, scheme__max_ttl=16,
               scheme__technique="T2-window", sync__step_per_300s=1e-7, des__window_s=8.0)
     res = sim(cat, "greenhouse", **kw)
     deep = {x["rank"]: x["delivered"] for x in res["per_rank"]}
     assert all(deep[r] == 0 for r in range(18, 21))
-    res64 = sim(cat, "greenhouse", scheme__max_ttl=64, **kw)
+    res64 = sim(cat, "greenhouse", **dict(kw, scheme__max_ttl=64))
     assert sum(x["delivered"] for x in res64["per_rank"] if x["rank"] >= 18) > 0
 
 

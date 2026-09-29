@@ -11,7 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 
 from . import analytic as an
-from .explain import CATALOGUE as EXPLAIN, CONFIG as CONFIG_EXPLAIN
+from .explain import CONFIG as CONFIG_EXPLAIN, for_param as explain_param
 from . import firmware_params
 
 GROUPS = [
@@ -139,8 +139,12 @@ def build(fw=None):
     fwd("A2", "MESH_FIXED_CHANNEL", "", "όλοι οι κόμβοι στο ίδιο κανάλι (2412 MHz)")
     c.add("A2", "PARENT_SELECTION", "strict rank < own· μετά μικρότερο rank· μετά RSSI",
           "", f"{firmware_params.NODE_H}:374", "RPL strict-rank → δομικά χωρίς loops")
-    c.add("A2", "SLEEPY_PARENT_RULE", "sleepy beacon ποτέ parent (Phase 1)", "",
-          f"{firmware_params.NODE_H}:350", "το CART το αίρει για relay-capable κόμβους")
+    cart_on = D.get("MESH_CART_ENABLE", {}).get("value") == 1
+    c.add("A2", "SLEEPY_PARENT_RULE",
+          "sleepy parent δεκτός όταν το beacon έχει RX_OPEN και RELAY_CAP (CART depth N)" if cart_on
+          else "sleepy beacon ποτέ parent (Phase 1)", "",
+          f"{firmware_params.NODE_H} meshHandleBeacon()",
+          "MESH_CART_ENABLE=0 επαναφέρει το Phase 1" if cart_on else "το CART το αίρει")
 
     # ── A3 TTL ───────────────────────────────────────────────────────────────
     fwd("A3", "MESH_TTL_MARGIN", "hops", "data ttl = rank + margin, στο transmit")
@@ -157,8 +161,13 @@ def build(fw=None):
     fwd("A4", "MESH_ACK_DEDUP_CACHE_SIZE", "entries", "(target, seq) ring για ACK flood")
     struct("A4", "MeshRtcState", "επιβιώνει στον deep sleep (RTC FAST)")
     struct("A4", "MeshInFlightEntry", "RAM μόνο")
-    c.add("A4", "RELAY_BUFFER_TODAY", 0, "frames", f"{firmware_params.NODE_H}:671",
-          "τα relays κάνουν cut-through, χωρίς buffer — ο buffer B της T1 είναι νέα παράμετρος (§H)")
+    if cart_on and "MESH_RELAY_BUFFER_SIZE" in D:
+        c.add("A4", "RELAY_BUFFER_TODAY", D["MESH_RELAY_BUFFER_SIZE"]["value"], "frames",
+              D["MESH_RELAY_BUFFER_SIZE"]["src"],
+              "sleepy relays κρατούν frames σε RTC ως το παράθυρο του parent· always-on relays κάνουν cut-through")
+    else:
+        c.add("A4", "RELAY_BUFFER_TODAY", 0, "frames", f"{firmware_params.NODE_H} meshRelayData()",
+              "τα relays κάνουν cut-through, χωρίς buffer")
 
     # ── A5 wake cycle ────────────────────────────────────────────────────────
     fwd("A5", "MESH_SLEEP_INTERVAL_MS", "ms",
@@ -193,7 +202,20 @@ def build(fw=None):
           "reload nodes.json + AES-GCM + ≤6 MQTT publish ανά frame — ΜΗ μετρημένο, εύρος 5–300",
           "model")
 
-    # ── A7 CART (planned) ────────────────────────────────────────────────────
+    # ── A7 CART ──────────────────────────────────────────────────────────────
+    # Implemented in firmware (CART depth N, 2026-09-28): read from mesh_config.h.
+    for key, unit, note in (
+        ("MESH_CART_ENABLE", "", "0 = Phase 1 (rollback)"),
+        ("MESH_CART_SLOT_MS", "ms", "παράθυρο λήψης ανά κόμβο (σκάλα)"),
+        ("MESH_RELAY_BUFFER_SIZE", "frames", "relay buffer σε RTC"),
+        ("MESH_DRIFT_BIAS_PPM", "ppm", "Gate 0 run 1"),
+        ("MESH_DRIFT_STEP_PPM_300S", "ppm", "Gate 0: προσωρινό"),
+        ("MESH_GUARD_CAP_MS", "ms", "ανώτατο G_max"),
+    ):
+        if key in D:
+            fwd("A7", key, unit, note)
+    # Designed in the CART plan; where the firmware now defines the same name,
+    # the firmware value wins.
     PL = fw["planned"]
     for key, unit, note in (
         ("MESH_SLEEPY_RELAY_DEPTH_MAX", "hops", "0 = Phase 1"),
@@ -207,7 +229,10 @@ def build(fw=None):
         ("MESH_RELAY_ACK_LINGER_MS", "ms", ""),
         ("MESH_SCHED_HIST", "catches", "margin policy window"),
     ):
-        c.add("A7", key, PL[key]["value"], unit, PL[key]["src"], note, "planned")
+        if key in D:
+            fwd("A7", key, unit, note)
+        else:
+            c.add("A7", key, PL[key]["value"], unit, PL[key]["src"], note, "planned")
     c.add("A7", "GUARD_MARGIN_K", 1.5, "", f"{CARTV2} §3.3", "G = clamp(2·k·max|err| + pad, G_min, G_max)", "planned")
     c.add("A7", "GUARD_PAD_MS", 50, "ms", f"{CARTV2} §3.3", "", "planned")
     c.add("A7", "G_MAX_FACTOR", 1.3, "", f"{CARTV2} §3.3", "G_max = 2·|b|·T·1.3", "planned")
@@ -370,16 +395,27 @@ def build(fw=None):
     c.add("G", "ALWAYS_ON_MAH_DAY", c["I_ALWAYS_ON_MA"] * 24, "mAh/day", "100 mA × 24 h", "", "derived")
 
     # ── H relay-buffer RTC budget ────────────────────────────────────────────
-    rtc_used = 0
+    rtc_used, relay_bytes = 0, 0
     for v in L["RTC_VARS"]["value"]:
         size = firmware_params.TYPE_SIZE.get(v["type"]) or S[v["type"]]["size"]
+        for d in v.get("dims", []):
+            size *= firmware_params.safe_eval(d, {k: x["value"] for k, x in D.items()})
         rtc_used += size
+        if v["name"] == "meshRelayBuf":
+            relay_bytes = size
         c.add("H", f"RTC:{v['name']}", size, "B", v["src"], v["type"], "firmware")
-    free_upper = c["RTC_FAST_MEM_B"] - c["CONFIG_BOOTLOADER_RESERVE_RTC_SIZE"] - rtc_used
-    c.add("H", "RTC_FREE_UPPER_BOUND_B", free_upper, "B", "8192 − bootloader − RTC_DATA_ATTR",
-          "πριν αφαιρεθούν τα δεδομένα RTC του ESP-IDF/Arduino (μέτρηση στο βήμα 2)", "derived")
-    c.add("H", "RELAY_BUFFER_MAX_UPPER_BOUND", free_upper // pkt, "frames", f"⌊free / {pkt}⌋",
-          "άνω φράγμα· η τελική τιμή μετά τη μέτρηση ELF sections", "derived")
+    c.add("H", "RTC_OURS_B", rtc_used, "B", "Σ RTC_DATA_ATTR", "ό,τι δηλώνει ο δικός μας κώδικας", "derived")
+    c.add("H", "RTC_MEASURED_TOTAL_B", 3848, "B",
+          "riscv32-esp-elf-size -A edge_node_esp32_c3.ino.elf (core 3.3.11, 2026-09-28)",
+          ".rtc.text 20 + .rtc.data 3756 + .rtc.force_slow 32 + .rtc_reserved 40", "measured")
+    c.add("H", "RTC_IDF_MEASURED_B", 92, "B", "ίδια μέτρηση",
+          "ό,τι παίρνουν ESP-IDF/Arduino/bootloader (όλα τα RTC sections εκτός .rtc.data)", "measured")
+    free_upper = c["RTC_FAST_MEM_B"] - c["RTC_IDF_MEASURED_B"] - rtc_used
+    c.add("H", "RTC_FREE_UPPER_BOUND_B", free_upper, "B", "8192 − ESP-IDF (μετρημένο) − δικά μας",
+          "ελεύθερη μνήμη ύπνου με τον τρέχοντα relay buffer", "derived")
+    c.add("H", "RELAY_BUFFER_MAX_UPPER_BOUND", (free_upper + relay_bytes) // pkt, "frames",
+          f"⌊(ελεύθερη + σημερινός relay buffer) / {pkt}⌋", "πόσα frames θα χωρούσε ο relay buffer το πολύ",
+          "derived")
     c.add("H", "RELAY_BUFFER_MIN_REQUIRED", c["RANK1_SUBTREE"], "frames", "RANK1_SUBTREE",
           "T1 per-cycle: ένα rank-1 relay πρέπει να χωρέσει όλο το subtree του", "derived")
     c.add("H", "RELAY_FLUSH_TIME_S_AT_MIN", round(c["RANK1_SUBTREE"] * c["UNICAST_DATA_MEAN_US"] / 1e6, 4),
@@ -412,8 +448,9 @@ def to_markdown(c):
     P(f"- **Airtime (1 Mbps):** data {c['AIRTIME_DATA_US']:.0f} µs, beacon {c['AIRTIME_BEACON_US']:.0f} µs, "
       f"ACK {c['AIRTIME_ACK_US']:.0f} µs· unicast με L2 ACK {c['UNICAST_DATA_NO_BACKOFF_US']:.0f} µs "
       f"(+backoff → {c['UNICAST_DATA_MEAN_US']:.0f} µs).")
-    P(f"- **Relay buffer:** άνω φράγμα RTC {c['RELAY_BUFFER_MAX_UPPER_BOUND']} frames, ελάχιστο απαιτούμενο "
-      f"{c['RELAY_BUFFER_MIN_REQUIRED']} (subtree rank-1)· τελική τιμή μετά τη μέτρηση RTC του ESP-IDF.")
+    P(f"- **Relay buffer:** firmware {c['RELAY_BUFFER_TODAY']} frames· χωράνε έως "
+      f"{c['RELAY_BUFFER_MAX_UPPER_BOUND']} (μνήμη ύπνου μετρημένη στο ELF: {c['RTC_MEASURED_TOTAL_B']}/8192 B), "
+      f"χρειάζονται τουλάχιστον {c['RELAY_BUFFER_MIN_REQUIRED']} (subtree rank-1 στο 50×10).")
     P(f"- **Ενέργεια Phase-1 leaf:** {c['MAH_DAY_PHASE1_LEAF_T900']} mAh/day @15′, "
       f"{c['MAH_DAY_PHASE1_LEAF_T1800']} mAh/day @30′.\n")
     titles = dict(GROUPS)
@@ -425,7 +462,7 @@ def to_markdown(c):
         P("| Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |")
         P("|---|---|---|---|---|---|---|")
         for p in rows:
-            what, why = EXPLAIN.get(p.key, ("", ""))
+            what, why = explain_param(p.key) or ("", "")
             P(f"| `{p.key}` | {_fmt(p.value)} {p.unit} | {what} | {why} | {_code(p.source)} | {p.kind} | {p.note} |")
         P("")
     _hardware_md(P)

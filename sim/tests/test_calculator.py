@@ -49,7 +49,7 @@ def test_time_and_energy_conservation(cat, tech):
 
 
 def test_ttl_ceiling_and_fix(cat):
-    _, res = run(cat, "stress_50x10")
+    _, res = run(cat, "stress_50x10", scheme__max_ttl=16)      # the old firmware limit
     assert res["ttl_depth_ceiling"] == 17
     assert res["summary"]["delivered_nodes"] == 170
     _, res64 = run(cat, "stress_50x10", scheme__max_ttl=64)
@@ -57,7 +57,8 @@ def test_ttl_ceiling_and_fix(cat):
 
 
 def test_t2_flood_counts_match_closed_form(cat):
-    _, res = run(cat, "stress_50x10", scheme__technique="T2-window", scheme__t2_ack="flood")
+    _, res = run(cat, "stress_50x10", scheme__technique="T2-window", scheme__t2_ack="flood",
+                 scheme__max_ttl=16)
     assert res["scheme"]["ack_transmissions"] == 18100
 
 

@@ -26,6 +26,8 @@ C_SOURCES = [
     "firmware/libraries/GreenhouseMesh/mesh_crypto.h",
     "firmware/libraries/GreenhouseMesh/mesh_inflight.h",
     "firmware/libraries/GreenhouseMesh/mesh_node.h",
+    "firmware/libraries/GreenhouseMesh/mesh_sched.h",
+    "firmware/libraries/GreenhouseMesh/mesh_cart.h",
     "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino",
     "firmware/bridge_esp32/bridge_esp32.ino",
 ]
@@ -33,6 +35,7 @@ PY_SOURCES = ["pi/scripts/serial_bridge.py"]
 # Designed-but-unbuilt constants (CART Part C) live as #define blocks in the plan.
 PLANNED_SOURCES = ["docs/superpowers/plans/2026-09-23-cart-phase2-synced-wake.md"]
 NODE_H = "firmware/libraries/GreenhouseMesh/mesh_node.h"
+CART_H = "firmware/libraries/GreenhouseMesh/mesh_cart.h"
 EDGE = "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino"
 BRIDGE = "firmware/bridge_esp32/bridge_esp32.ino"
 
@@ -139,7 +142,8 @@ def parse_structs(rel, text, env, structs):
         packed, body, name = bool(m.group(1)), m.group(2), m.group(3)
         offset, max_align, ok = 0, 1, True
         for field in filter(None, (f.strip() for f in body.split(";"))):
-            fm = re.match(r"(\w+)\s+(\w+)((?:\s*\[[^\]]+\])*)$", field)
+            # "type name[dim]" or "type a, b[dim], c" (several declarators)
+            fm = re.match(r"(\w+)\s+(.+)$", field, re.S)
             ftype = fm.group(1) if fm else None
             if ftype in TYPE_SIZE:
                 size = align = TYPE_SIZE[ftype]
@@ -148,11 +152,18 @@ def parse_structs(rel, text, env, structs):
             else:
                 ok = False
                 break
-            count = 1
-            for d in re.findall(r"\[([^\]]+)\]", fm.group(3)):
-                count *= safe_eval(d, env)
             align = 1 if packed else align
-            offset = -(-offset // align) * align + size * count
+            for decl in (d.strip() for d in fm.group(2).split(",")):
+                dm = re.match(r"(\w+)((?:\s*\[[^\]]+\])*)$", decl)
+                if not dm:
+                    ok = False
+                    break
+                count = 1
+                for d in re.findall(r"\[([^\]]+)\]", dm.group(2)):
+                    count *= safe_eval(d, env)
+                offset = -(-offset // align) * align + size * count
+            if not ok:
+                break
             max_align = max(max_align, align)
         if ok:
             structs[name] = {"size": -(-offset // max_align) * max_align, "align": max_align,
@@ -183,9 +194,13 @@ def parse_literals(texts):
         "BRIDGE_USB_ECHO": _find(BRIDGE, bridge, r"(Serial\.printf)\(\"\s+\S+ %s", cast=str),
     }
     rtc = []
-    for rel in (NODE_H, EDGE):
-        for m in re.finditer(r"RTC_DATA_ATTR\s+(?:static\s+)?(\w+)\s+(\w+)", texts[rel]):
+    for rel in (NODE_H, CART_H, EDGE):
+        if rel not in texts:
+            continue
+        for m in re.finditer(r"RTC_DATA_ATTR\s+(?:static\s+)?(\w+)\s+(\w+)((?:\s*\[[^\]]+\])*)",
+                             texts[rel]):
             rtc.append({"type": m.group(1), "name": m.group(2),
+                        "dims": re.findall(r"\[([^\]]+)\]", m.group(3)),
                         "src": _src(rel, _line_of(texts[rel], m.start()))})
     lit["RTC_VARS"] = {"value": rtc, "src": "RTC_DATA_ATTR declarations"}
     return lit
