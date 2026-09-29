@@ -11,6 +11,7 @@ import json
 from dataclasses import asdict, dataclass
 
 from . import analytic as an
+from .explain import CATALOGUE as EXPLAIN, CONFIG as CONFIG_EXPLAIN
 from . import firmware_params
 
 GROUPS = [
@@ -421,10 +422,11 @@ def to_markdown(c):
         if not rows:
             continue
         P(f"## {gid}. {titles[gid]}\n")
-        P("| Παράμετρος | Τιμή | Μονάδα | Πηγή | kind | Σημείωση |")
-        P("|---|---|---|---|---|---|")
+        P("| Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |")
+        P("|---|---|---|---|---|---|---|")
         for p in rows:
-            P(f"| `{p.key}` | {_fmt(p.value)} | {p.unit} | {_code(p.source)} | {p.kind} | {p.note} |")
+            what, why = EXPLAIN.get(p.key, ("", ""))
+            P(f"| `{p.key}` | {_fmt(p.value)} {p.unit} | {what} | {why} | {_code(p.source)} | {p.kind} | {p.note} |")
         P("")
     _hardware_md(P)
     _config_md(P, c)
@@ -451,10 +453,11 @@ def _config_md(P, c):
     from . import config
     P("## J. Μεταβλητές run (`--set key=value`)\n")
     P("Κάθε run: defaults ← preset ← `--set`. Όλα καταγράφονται στο `sim/runs/<run>/config.json`.\n")
-    P("| key | default | περιγραφή | επιλογές |\n|---|---|---|---|")
+    P("| key | default | Τι είναι | Γιατί αυτή η default | επιλογές |\n|---|---|---|---|---|")
     for row in config.describe(c):
         ch = " \\| ".join(map(str, row["choices"])) if row["choices"] else ""
-        P(f"| `{row['key']}` | {_fmt(row['default'])} | {row['desc']} | {ch} |")
+        what, why = CONFIG_EXPLAIN.get(row["key"], (row["desc"], ""))
+        P(f"| `{row['key']}` | {_fmt(row['default'])} | {what} | {why} | {ch} |")
     P("")
     P("### Presets\n")
     for name, p in config.PRESETS.items():

@@ -94,6 +94,15 @@ def test_md1k_blocking_k1():
         assert an.md1k_blocking(rho, 1) == pytest.approx(rho / (1 + rho))
 
 
+def test_every_parameter_is_explained(cat):
+    from meshsim import config, explain
+    missing = [k for k in cat.params if k not in explain.CATALOGUE]
+    missing += [k for k, *_ in config.SPEC if k not in explain.CONFIG]
+    assert not missing, f"add a plain-language explanation to meshsim/explain.py for: {missing}"
+    for what, why in list(explain.CATALOGUE.values()) + list(explain.CONFIG.values()):
+        assert what and why and "|" not in what + why
+
+
 def test_markdown_renders(cat):
     md = params.to_markdown(cat)
     assert "rank 17" in md and "18.100" in md
