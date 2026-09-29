@@ -28,6 +28,7 @@ C_SOURCES = [
     "firmware/libraries/GreenhouseMesh/mesh_node.h",
     "firmware/libraries/GreenhouseMesh/mesh_sched.h",
     "firmware/libraries/GreenhouseMesh/mesh_cart.h",
+    "firmware/libraries/GreenhouseMesh/mesh_uart.h",
     "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino",
     "firmware/bridge_esp32/bridge_esp32.ino",
 ]
@@ -76,8 +77,13 @@ def _line_of(text, pos):
 
 
 def safe_eval(expr, env):
-    """C integer arithmetic over literals and already-known defines only."""
-    tree = ast.parse(_INT_SUFFIX.sub(r"\1", expr).strip(), mode="eval")
+    """C integer arithmetic over literals and already-known defines only
+    (plus a single `cond ? a : b`, rewritten to Python's conditional)."""
+    expr = _INT_SUFFIX.sub(r"\1", expr).strip()
+    m = re.fullmatch(r"\(?\s*([^?]+?)\s*\?\s*([^:]+?)\s*:\s*([^)]+?)\s*\)?", expr)
+    if m:
+        expr = f"({m.group(2)}) if ({m.group(1)}) else ({m.group(3)})"
+    tree = ast.parse(expr, mode="eval")
 
     def ev(n):
         if isinstance(n, ast.Expression):
@@ -86,6 +92,8 @@ def safe_eval(expr, env):
             return n.value
         if isinstance(n, ast.Name) and n.id in env and isinstance(env[n.id], (int, float)):
             return env[n.id]
+        if isinstance(n, ast.IfExp):
+            return ev(n.body) if ev(n.test) else ev(n.orelse)
         if isinstance(n, ast.UnaryOp) and isinstance(n.op, ast.USub):
             return -ev(n.operand)
         if isinstance(n, ast.BinOp) and isinstance(n.op, ast.Div):
@@ -194,7 +202,6 @@ def parse_literals(texts):
                                      r'uartPrintf\("(\{\\"type\\":\\"frame\\".*?)", hex\)',
                                      cast=lambda s: s.replace('\\"', '"')),
         "BRIDGE_UART_WRITE": _find(BRIDGE, bridge, r"Serial1\.(println)\(buf\)", cast=str),
-        "BRIDGE_USB_ECHO": _find(BRIDGE, bridge, r"(Serial\.printf)\(\"\s+\S+ %s", cast=str),
     }
     rtc = []
     for rel in (NODE_H, CART_H, EDGE):

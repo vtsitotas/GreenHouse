@@ -5,6 +5,16 @@
    "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:32",
    "value": 3
   },
+  "BRIDGE_UART_BINARY": {
+   "comment": "",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:23",
+   "value": 1
+  },
+  "BRIDGE_USB_ECHO": {
+   "comment": "",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:32",
+   "value": 0
+  },
   "DHT_DATA_PIN": {
    "comment": "GPIO6 — moved away from JTAG pins",
    "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:22",
@@ -137,7 +147,7 @@
   },
   "MESH_EXPECTED_REPORT_INTERVAL_MS": {
    "comment": "matches SEND_INTERVAL_MS on edges",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:146",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:154",
    "value": 5000
   },
   "MESH_FIXED_CHANNEL": {
@@ -252,7 +262,7 @@
   },
   "MESH_OFFLINE_AFTER": {
    "comment": "x expected report interval",
-   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:145",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:153",
    "value": 3
   },
   "MESH_ORPHAN_FRESH_MS": {
@@ -350,6 +360,46 @@
    "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:71",
    "value": 500
   },
+  "MESH_UART_ACK_LEN": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:27",
+   "value": 10
+  },
+  "MESH_UART_MAX_PAYLOAD": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:28",
+   "value": 250
+  },
+  "MESH_UART_OVERHEAD": {
+   "comment": "sync 2 + type 1 + len 1 + crc 2",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:29",
+   "value": 6
+  },
+  "MESH_UART_SYNC0": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:22",
+   "value": 165
+  },
+  "MESH_UART_SYNC1": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:23",
+   "value": 90
+  },
+  "MESH_UART_T_ACK": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:26",
+   "value": 129
+  },
+  "MESH_UART_T_FRAME": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:24",
+   "value": 1
+  },
+  "MESH_UART_T_JSON": {
+   "comment": "",
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:25",
+   "value": 2
+  },
   "MESH_WAKE_DISCOVERY_MS": {
    "comment": "orphaned-wake listen window before",
    "src": "firmware/libraries/GreenhouseMesh/mesh_config.h:69",
@@ -402,17 +452,17 @@
   },
   "UART_BAUD": {
    "comment": "",
-   "src": "firmware/bridge_esp32/bridge_esp32.ino:15",
-   "value": 115200
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:26",
+   "value": 921600
   },
   "UART_RX_PIN": {
    "comment": "",
-   "src": "firmware/bridge_esp32/bridge_esp32.ino:13",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:14",
    "value": 5
   },
   "UART_TX_PIN": {
    "comment": "",
-   "src": "firmware/bridge_esp32/bridge_esp32.ino:14",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:15",
    "value": 4
   }
  },
@@ -426,16 +476,12 @@
    "value": 2
   },
   "BRIDGE_FRAME_FORMAT": {
-   "src": "firmware/bridge_esp32/bridge_esp32.ino:153",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:80",
    "value": "{\"type\":\"frame\",\"data\":\"%s\"}"
   },
   "BRIDGE_UART_WRITE": {
-   "src": "firmware/bridge_esp32/bridge_esp32.ino:37",
+   "src": "firmware/bridge_esp32/bridge_esp32.ino:61",
    "value": "println"
-  },
-  "BRIDGE_USB_ECHO": {
-   "src": "firmware/bridge_esp32/bridge_esp32.ino:38",
-   "value": "Serial.printf"
   },
   "COLD_BOOT_USB_WAIT_MS": {
    "src": "firmware/edge_node_esp32_c3/edge_node_esp32_c3.ino:287",
@@ -648,51 +694,51 @@
  },
  "python": {
   "ACK_TTL_MARGIN": {
-   "src": "pi/scripts/serial_bridge.py:469",
+   "src": "pi/scripts/serial_bridge.py:480",
    "value": 2
   },
   "ACK_TTL_MAX": {
-   "src": "pi/scripts/serial_bridge.py:470",
+   "src": "pi/scripts/serial_bridge.py:481",
    "value": 128
   },
-  "BAUD": {
-   "src": "pi/scripts/serial_bridge.py:43",
-   "value": 115200
+  "AUTOBAUD_WINDOW_S": {
+   "src": "pi/scripts/serial_bridge.py:54",
+   "value": 5.0
   },
   "BRIDGE_MESH_REFRESH_S": {
-   "src": "pi/scripts/serial_bridge.py:87",
+   "src": "pi/scripts/serial_bridge.py:98",
    "value": 60.0
   },
   "HEARTBEAT_INTERVAL_S": {
-   "src": "pi/scripts/serial_bridge.py:55",
+   "src": "pi/scripts/serial_bridge.py:66",
    "value": 2.0
   },
   "HEARTBEAT_OFFLINE_AFTER": {
-   "src": "pi/scripts/serial_bridge.py:59",
+   "src": "pi/scripts/serial_bridge.py:70",
    "value": 3
   },
   "MQTT_PORT": {
-   "src": "pi/scripts/serial_bridge.py:45",
+   "src": "pi/scripts/serial_bridge.py:56",
    "value": 1883
   },
   "OFFLINE_CHECK_INTERVAL_S": {
-   "src": "pi/scripts/serial_bridge.py:64",
+   "src": "pi/scripts/serial_bridge.py:75",
    "value": 1.0
   },
   "PROVISION_RESEND_S": {
-   "src": "pi/scripts/serial_bridge.py:397",
+   "src": "pi/scripts/serial_bridge.py:408",
    "value": 10.0
   },
   "PROVISION_WARN_AFTER": {
-   "src": "pi/scripts/serial_bridge.py:398",
+   "src": "pi/scripts/serial_bridge.py:409",
    "value": 6
   },
   "SERIAL_SILENCE_RESTART_S": {
-   "src": "pi/scripts/serial_bridge.py:71",
+   "src": "pi/scripts/serial_bridge.py:82",
    "value": 30.0
   },
   "_LIFEPO4_CURVE": {
-   "src": "pi/scripts/serial_bridge.py:255",
+   "src": "pi/scripts/serial_bridge.py:266",
    "value": [
     [
      3400,
@@ -741,7 +787,7 @@
    ]
   },
   "_MESH_PAYLOAD_KEYS": {
-   "src": "pi/scripts/serial_bridge.py:95",
+   "src": "pi/scripts/serial_bridge.py:106",
    "value": [
     "parent",
     "rank",
@@ -812,6 +858,12 @@
    "packed": false,
    "size": 44,
    "src": "firmware/libraries/GreenhouseMesh/mesh_sched.h:29"
+  },
+  "MeshUartDecoder": {
+   "align": 2,
+   "packed": false,
+   "size": 260,
+   "src": "firmware/libraries/GreenhouseMesh/mesh_uart.h:59"
   },
   "SensorReading": {
    "align": 4,

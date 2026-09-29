@@ -26,7 +26,7 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 
 - **Ταβάνι βάθους: rank 129.** Με τους TTL κανόνες του firmware, στο σενάριο 50×10 **0 κόμβοι δεν παραδίδουν ποτέ**.
 - **Flood ACK: 137.200 re-broadcasts/κύκλο** (firmware TTL)· 137.200 χωρίς όριο TTL — κλιμάκωση O(N²).
-- **Γέφυρα:** γραμμή UART 150 B = 13.021 ms → **μέγιστο 76.8 frames/s**· ουρά εισόδου μόνο 40 frames.
+- **Γέφυρα:** γραμμή UART 150 B = 13.021 ms → **μέγιστο 1375.52 frames/s**· ουρά εισόδου μόνο 40 frames.
 - **Airtime (1 Mbps):** data 1024 µs, beacon 752 µs, ACK 696 µs· unicast με L2 ACK 1388 µs (+backoff → 1698 µs).
 - **Relay buffer:** firmware 110 frames· χωράνε έως 121 (μνήμη ύπνου μετρημένη στο ELF: 3848/8192 B), χρειάζονται τουλάχιστον 50 (subtree rank-1 στο 50×10).
 - **Ενέργεια Phase-1 leaf:** 7.26 mAh/day @15′, 4.38 mAh/day @30′.
@@ -74,8 +74,8 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `MESH_TTL_MARGIN` | 2 hops | Πόσα επιπλέον hops επιτρέπονται πέρα από την απόσταση του κόμβου. | 2: καλύπτει αλλαγή parent την ώρα που το μήνυμα ταξιδεύει. | `firmware/libraries/GreenhouseMesh/mesh_config.h:14` | firmware | data ttl = rank + margin, στο transmit |
 | `MESH_MAX_TTL` | 128 hops | Το ανώτατο όριο hops ενός μηνύματος. | 128: το 16 σταματούσε στο rank 17 και το 64 στο 65· το 128 φτάνει ως το rank 129 (μελέτη 100×50) και κρατά τη δικλίδα. | `firmware/libraries/GreenhouseMesh/mesh_config.h:19` | firmware | ανώτατο όριο· relay κάνει drop ttl>max ή ttl==0 |
 | `MESH_ACK_TTL` | 6 hops | TTL της επιβεβαίωσης αν το Pi δεν στείλει δικό του. | 6: παλιά εφεδρική τιμή· το Pi στέλνει πάντα rank+2. | `firmware/libraries/GreenhouseMesh/mesh_node.h:77` | firmware | fallback της γέφυρας αν το Pi δεν στείλει ttl |
-| `ACK_TTL_MARGIN` | 2 hops | Περιθώριο hops για την επιβεβαίωση που γυρίζει. | 2, ίδιο με τα δεδομένα, για τον ίδιο λόγο. | `pi/scripts/serial_bridge.py:469` | firmware | Pi: ACK ttl = min(ACK_TTL_MAX, rank + margin) |
-| `ACK_TTL_MAX` | 128 hops | Ανώτατο όριο hops της επιβεβαίωσης στο Pi. | 64, ίδιο με το MESH_MAX_TTL· πρέπει να αλλάζουν μαζί. | `pi/scripts/serial_bridge.py:470` | firmware |  |
+| `ACK_TTL_MARGIN` | 2 hops | Περιθώριο hops για την επιβεβαίωση που γυρίζει. | 2, ίδιο με τα δεδομένα, για τον ίδιο λόγο. | `pi/scripts/serial_bridge.py:480` | firmware | Pi: ACK ttl = min(ACK_TTL_MAX, rank + margin) |
+| `ACK_TTL_MAX` | 128 hops | Ανώτατο όριο hops της επιβεβαίωσης στο Pi. | 64, ίδιο με το MESH_MAX_TTL· πρέπει να αλλάζουν μαζί. | `pi/scripts/serial_bridge.py:481` | firmware |  |
 
 ## A4. Firmware — buffers και μνήμη
 
@@ -111,17 +111,20 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 
 | Παράμετρος | Τιμή | Τι είναι | Γιατί αυτή η τιμή | Πηγή | kind | Τεχνική σημείωση |
 |---|---|---|---|---|---|---|
-| `UART_BAUD` | 115200 baud | Ταχύτητα του καλωδίου γέφυρας–Pi. | 115200: η συνηθισμένη ταχύτητα, αξιόπιστη στο UART του Pi Zero. | `firmware/bridge_esp32/bridge_esp32.ino:15` | firmware | γέφυρα ↔ Pi, 8N1 |
-| `BRIDGE_FRAME_FORMAT` | {"type":"frame","data":"%s"}  | Πώς γράφει η γέφυρα κάθε μήνυμα προς το Pi. | JSON κείμενο με hex: εύκολο στο debugging, αλλά 2,5× μεγαλύτερο από δυαδική μορφή. | `firmware/bridge_esp32/bridge_esp32.ino:153` | firmware | κάθε data frame γίνεται μία γραμμή JSON με hex |
-| `BRIDGE_UART_WRITE` | println  | Η εντολή που γράφει τη γραμμή στο UART. | println: προσθέτει αλλαγή γραμμής ώστε το Pi να ξέρει πού τελειώνει κάθε μήνυμα. | `firmware/bridge_esp32/bridge_esp32.ino:37` | firmware | println → +CRLF· μπλοκάρει όσο γεμίζει το FIFO |
-| `BRIDGE_USB_ECHO` | Serial.printf  | Η γέφυρα γράφει κάθε μήνυμα και στο USB για debugging. | Βολικό στο bench· αν το USB συνδεθεί σε υπολογιστή που δεν διαβάζει, μπορεί να παγώνει. | `firmware/bridge_esp32/bridge_esp32.ino:38` | firmware | δεύτερη εγγραφή ανά frame στο USB-CDC (debug) |
+| `UART_BAUD` | 921600 baud | Ταχύτητα του καλωδίου γέφυρας–Pi. | 921600 με binary framing: ένα μήνυμα αισθητήρα θέλει 0,73 ms αντί για 13 ms. Το mini UART του Pi Zero W (κλειδωμένο core_freq) πέφτει στο 0,3 %. Fallback: 115200 με hex JSON. | `firmware/bridge_esp32/bridge_esp32.ino:26` | firmware | γέφυρα ↔ Pi, 8N1 |
+| `BRIDGE_FRAME_FORMAT` | {"type":"frame","data":"%s"}  | Πώς γράφει η γέφυρα κάθε μήνυμα προς το Pi. | JSON κείμενο με hex: εύκολο στο debugging, αλλά 2,5× μεγαλύτερο από δυαδική μορφή. | `firmware/bridge_esp32/bridge_esp32.ino:80` | firmware | κάθε data frame γίνεται μία γραμμή JSON με hex |
+| `BRIDGE_UART_WRITE` | println  | Η εντολή που γράφει τη γραμμή στο UART. | println: προσθέτει αλλαγή γραμμής ώστε το Pi να ξέρει πού τελειώνει κάθε μήνυμα. | `firmware/bridge_esp32/bridge_esp32.ino:61` | firmware | println → +CRLF· μπλοκάρει όσο γεμίζει το FIFO |
+| `BRIDGE_USB_ECHO` | 0  | Η γέφυρα γράφει κάθε μήνυμα και στο USB για debugging. | 0 (κλειστό): αν το USB είναι σε υπολογιστή που δεν διαβάζει, κάθε εγγραφή μπορεί να παγώνει τη λήψη ESP-NOW· ανοίγει με -DBRIDGE_USB_ECHO=1 για bench. | `firmware/bridge_esp32/bridge_esp32.ino:32` | firmware | 1 = δεύτερη εγγραφή ανά μήνυμα στο USB-CDC (debug) |
+| `BRIDGE_UART_BINARY` | 1  | Μορφή των μηνυμάτων γέφυρας–Pi. | 1 = δυαδικά πλαίσια με CRC (67 B ανά μήνυμα αντί για 150 B)· 0 = η παλιά γραμμή JSON. Το Pi αναγνωρίζει μόνο του και τα δύο. | `firmware/bridge_esp32/bridge_esp32.ino:23` | firmware | 1 = binary framing (mesh_uart.h), 0 = γραμμή hex JSON |
+| `MESH_UART_OVERHEAD` | 6 B | Bytes πλαισίωσης γύρω από κάθε δυαδικό μήνυμα. | 6: δύο bytes συγχρονισμού, τύπος, μήκος και CRC-16 για έλεγχο λαθών. | `firmware/libraries/GreenhouseMesh/mesh_uart.h:29` | firmware | sync 2 + type 1 + len 1 + CRC-16 2 |
+| `MESH_UART_ACK_LEN` | 10 B | Μέγεθος της δυαδικής επιβεβαίωσης από το Pi. | 10 B: MAC 6, seq 2, ok 1, TTL 1 (αντί για γραμμή JSON ~67 B). | `firmware/libraries/GreenhouseMesh/mesh_uart.h:27` | firmware | mac 6 + seq 2 + ok 1 + ttl 1 |
 | `BRIDGE_ACK_BROADCASTS` | 1 tx | Πόσες φορές στέλνει η γέφυρα κάθε επιβεβαίωση. | 1: οι relays την αναμεταδίδουν μόνοι τους. | `firmware/bridge_esp32/bridge_esp32.ino:105` | firmware | ένα broadcast ανά ACK, χωρίς retry, η γέφυρα δεν κάνει re-flood |
 | `BRIDGE_FRAME_QUEUE` | 0 frames | Ουρά μηνυμάτων μέσα στη γέφυρα. | Καμία: γράφει στο UART αμέσως. Σε μεγάλο δίκτυο αυτό γίνεται στενωπός. | `firmware/bridge_esp32/bridge_esp32.ino:121` | firmware | καμία ουρά εφαρμογής: η εγγραφή γίνεται μέσα στο ESP-NOW RX callback |
-| `BAUD` | 115200 baud | Ταχύτητα UART από την πλευρά του Pi. | Ίδια με της γέφυρας (115200). | `pi/scripts/serial_bridge.py:43` | firmware | Pi πλευρά |
-| `HEARTBEAT_INTERVAL_S` | 2 s | Κάθε πόσο λέει η γέφυρα στο Pi «είμαι ζωντανή». | 2 s: το Pi καταλαβαίνει γρήγορα αν χάθηκε η γέφυρα. | `pi/scripts/serial_bridge.py:55` | firmware |  |
+| `AUTOBAUD_WINDOW_S` | 5 s | Πόσο περιμένει το Pi ένα έγκυρο μήνυμα πριν δοκιμάσει την άλλη ταχύτητα. | 5 s: η γέφυρα στέλνει heartbeat κάθε 2 s μόλις πάρει το NetKey, οπότε 5 s χωρίς τίποτα σημαίνουν λάθος baud. | `pi/scripts/serial_bridge.py:54` | firmware | Pi: auto-baud 921600 → 115200 αν δεν έρθει έγκυρο μήνυμα |
+| `HEARTBEAT_INTERVAL_S` | 2 s | Κάθε πόσο λέει η γέφυρα στο Pi «είμαι ζωντανή». | 2 s: το Pi καταλαβαίνει γρήγορα αν χάθηκε η γέφυρα. | `pi/scripts/serial_bridge.py:66` | firmware |  |
 | `MESH_OFFLINE_AFTER` | 3 × | Πόσα χαμένα διαστήματα κάνουν έναν αισθητήρα «offline». | 3: ανέχεται 1–2 χαμένες μετρήσεις χωρίς ψεύτικο συναγερμό. | `firmware/libraries/GreenhouseMesh/mesh_config.h:153` | firmware |  |
 | `MESH_EXPECTED_REPORT_INTERVAL_MS` | 5000 ms | Κάθε πόσο περιμένει η γέφυρα μέτρηση από κόμβο που είναι πάντα ξύπνιος. | 5 s, ίδιο με το SEND_INTERVAL_MS. | `firmware/libraries/GreenhouseMesh/mesh_config.h:154` | firmware |  |
-| `_LIFEPO4_CURVE` | 3400→100 · 3350→90 · 3320→80 · 3300→70 · 3280→60 · 3260→50 · 3250→40 · 3220→30 · 3200→20 · 3000→10 · 2800→0 mV → % | Πίνακας που μετατρέπει την τάση μπαταρίας σε ποσοστό. | Η καμπύλη εκφόρτισης της LiFePO4, που είναι πολύ επίπεδη γύρω στα 3,2–3,3 V. | `pi/scripts/serial_bridge.py:255` | firmware | SoC πίνακας (piecewise linear) |
+| `_LIFEPO4_CURVE` | 3400→100 · 3350→90 · 3320→80 · 3300→70 · 3280→60 · 3260→50 · 3250→40 · 3220→30 · 3200→20 · 3000→10 · 2800→0 mV → % | Πίνακας που μετατρέπει την τάση μπαταρίας σε ποσοστό. | Η καμπύλη εκφόρτισης της LiFePO4, που είναι πολύ επίπεδη γύρω στα 3,2–3,3 V. | `pi/scripts/serial_bridge.py:266` | firmware | SoC πίνακας (piecewise linear) |
 | `PI_PROCESS_MS` | 20 ms | Πόσο χρόνο θέλει το Pi για να επεξεργαστεί ένα μήνυμα. | 20 ms είναι εκτίμηση (δεν έχει μετρηθεί): ανάγνωση αρχείου, αποκρυπτογράφηση, αποστολή MQTT. | `pi/scripts/serial_bridge.py:303` | model | reload nodes.json + AES-GCM + ≤6 MQTT publish ανά frame — ΜΗ μετρημένο, εύρος 5–300 |
 
 ## A7. CART depth N: όλοι κοιμούνται και κάνουν relay (firmware + σχεδιασμένες τιμές)
@@ -256,9 +259,12 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `UNICAST_DATA_NO_BACKOFF_US` | 1388 µs | Όλος ο χρόνος μιας αποστολής με επιβεβαίωση, χωρίς αναμονή. | Παύση + μήνυμα + παύση + επιβεβαίωση. | DIFS + DATA + SIFS + ACK | derived |  |
 | `UNICAST_DATA_MEAN_US` | 1698 µs | Ο μέσος χρόνος μιας αποστολής, με τη μέση τυχαία αναμονή. | Προσθέτει τη μέση αναμονή (15,5 slots × 20 µs). | `+ μέσο backoff CW/2·slot` | derived |  |
 | `CART_SPEC_AIRTIME_ERROR` | beacon 0,63 → 0,752 ms· data+ACK 1,2 → 1,338 ms  | Διόρθωση στους χρόνους του παλιού σχεδίου CART. | Το σχέδιο είχε ξεχάσει 15 bytes του ESP-NOW· οι σωστοί χρόνοι είναι λίγο μεγαλύτεροι. | `docs/superpowers/specs/2026-09-23-cart-v2-revision.md §2` | derived | το spec παρέλειψε 15 B vendor action header |
-| `UART_FRAME_LINE_B` | 150 B | Πόσα bytes γράφει η γέφυρα στο Pi για κάθε μήνυμα. | Υπολογίζεται: JSON κείμενο + 122 χαρακτήρες hex + αλλαγή γραμμής = 150. | format + 2·61 hex + CRLF | derived |  |
-| `UART_FRAME_LINE_MS` | 13.021 ms | Πόσο κρατά η αποστολή μιας γραμμής στο καλώδιο. | 150 bytes × 10 bits / 115200. | `10 bit/byte @ UART_BAUD` | derived |  |
-| `BRIDGE_MAX_FRAMES_S` | 76.8 frames/s | Πόσα μηνύματα το δευτερόλεπτο χωράνε από τη γέφυρα στο Pi. | 1 / χρόνο γραμμής = ~77. Είναι το όριο όλου του δικτύου. | `1 / line time` | derived | ανώτατος ρυθμός γέφυρας (χωρίς USB echo) |
+| `UART_FRAME_LINE_B` | 150 B | Πόσα bytes γράφει η γέφυρα στο Pi για κάθε μήνυμα. | Υπολογίζεται: JSON κείμενο + 122 χαρακτήρες hex + αλλαγή γραμμής = 150. | format + 2·61 hex + CRLF | derived | fallback: hex JSON |
+| `UART_FRAME_LINE_MS` | 13.021 ms | Πόσο κρατά η αποστολή μιας γραμμής στο καλώδιο. | 150 bytes × 10 bits / 115200. | `10 bit/byte @ 115200` | derived | fallback |
+| `BRIDGE_MAX_FRAMES_S_HEX` | 76.8 frames/s | Πόσα μηνύματα το δευτερόλεπτο χωράνε με την παλιά γραμμή JSON. | 1 / χρόνο γραμμής = ~77 στα 115200: ήταν το όριο όλου του δικτύου. | `1 / line time` | derived | ανώτατος ρυθμός γέφυρας με hex JSON @ 115200 |
+| `UART_FRAME_BIN_B` | 67 B | Πόσα bytes γράφει η γέφυρα ανά μήνυμα με binary framing. | 61 + 6 πλαισίωση = 67 (αντί για 150). | 61 + MESH_UART_OVERHEAD | derived | binary framing |
+| `UART_FRAME_BIN_MS` | 0.727 ms | Πόσο κρατά ένα δυαδικό μήνυμα στο καλώδιο. | 67 bytes × 10 bits / 921600 = 0,73 ms. | `10 bit/byte @ UART_BAUD` | derived |  |
+| `BRIDGE_MAX_FRAMES_S` | 1375.52 frames/s | Πόσα μηνύματα το δευτερόλεπτο χωράνε από τη γέφυρα στο Pi (σημερινό firmware). | ~1375 με binary στα 921600· πλέον το όριο είναι ο χρόνος επεξεργασίας του Pi, όχι το καλώδιο. | `1 / frame time` | derived | ανώτατος ρυθμός UART με το σημερινό firmware (binary) |
 | `UART_ACK_LINE_B` | 62 – 68 B | Πόσα bytes στέλνει το Pi στη γέφυρα για κάθε επιβεβαίωση. | Υπολογίζεται από τη μορφή JSON· αλλάζει λίγο με τον αριθμό μηνύματος. | compact json.dumps + \n | derived | εύρος seq/ttl/ok |
 | `BRIDGE_INGRESS_QUEUE` | 40 frames | Πόσα μηνύματα μπορούν να περιμένουν μέσα στη γέφυρα. | 8 + 32 θέσεις λήψης του radio. Αν γεμίσουν, τα επόμενα χάνονται. | static + dynamic RX buffers | derived | όσο το println μπλοκάρει, τα frames περιμένουν εδώ |
 | `DEPTH_CEILING_RANK` | 129 rank | Το βαθύτερο επίπεδο από το οποίο φτάνουν ακόμα μηνύματα. | Υπολογίζεται από τους κανόνες TTL: με 16 σταματούσε στο 17, με 64 φτάνει το 65. | TTL κανόνες firmware + Pi | derived | βαθύτεροι κόμβοι δεν παραδίδουν / δεν παίρνουν ACK |
@@ -440,8 +446,8 @@ Spec: `docs/superpowers/specs/2026-09-28-mesh-simulator-design.md`
 | `radio.attempts` | 3 | Προσπάθειες μέσα στο παράθυρο. | 3: από το σχέδιο CART. |  |
 | `radio.max_util` | 0.3 | Πόσο «γεμάτο» επιτρέπεται να είναι το κανάλι εκεί που ακούνε οι κόμβοι ο ένας τον άλλο. | 30 %: πάνω από αυτό το CSMA αρχίζει να έχει πολλές συγκρούσεις (κορεσμός ~50–60 %). |  |
 | `radio.hop_proc_s` | 0.002 | Χρόνος επεξεργασίας ανά hop. | 2 ms: εκτίμηση για τον έλεγχο υπογραφής. |  |
-| `bridge.baud` | 115200 | Ταχύτητα γέφυρας–Pi. | 115200: όπως σήμερα. |  |
-| `bridge.framing` | hex_json | Μορφή γραμμής UART. | hex_json: όπως σήμερα. | hex_json \| binary |
+| `bridge.baud` | 921600 | Ταχύτητα γέφυρας–Pi. | 115200: όπως σήμερα. |  |
+| `bridge.framing` | binary | Μορφή γραμμής UART. | hex_json: όπως σήμερα. | hex_json \| binary |
 | `bridge.usb_echo` | False | Αν η γέφυρα γράφει και στο USB. | Όχι: στην εγκατάσταση δεν είναι συνδεδεμένο USB. |  |
 | `bridge.ingress_queue` | 40 | Ουρά εισόδου γέφυρας. | 40: οι θέσεις λήψης του radio. |  |
 | `pi.process_s` | 0.02 | Χρόνος Pi ανά μήνυμα. | 0,02 s: εκτίμηση, δεν έχει μετρηθεί. |  |

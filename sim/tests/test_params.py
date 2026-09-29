@@ -55,8 +55,10 @@ def test_energy_reproduces_cart_sim_results(cat):
 
 
 def test_uart_line(cat):
-    assert cat["UART_FRAME_LINE_B"] == 150
-    assert cat["BRIDGE_MAX_FRAMES_S"] == pytest.approx(115200 / 1500, abs=0.01)
+    assert cat["UART_FRAME_LINE_B"] == 150                       # fallback hex-JSON line
+    assert cat["BRIDGE_MAX_FRAMES_S_HEX"] == pytest.approx(115200 / 1500, abs=0.01)
+    assert cat["UART_FRAME_BIN_B"] == 67                         # binary framing, mesh_uart.h
+    assert cat["BRIDGE_MAX_FRAMES_S"] == pytest.approx(921600 / 670, abs=0.01)
 
 
 def test_ttl_ceiling_rank17():

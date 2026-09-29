@@ -62,8 +62,10 @@ SPEC = [
     ("radio.hop_proc_s", 0.002, "επεξεργασία ανά hop (CMAC verify, callback) — μοντέλο", None),
     # ── bridge / Pi ───────────────────────────────────────────────────────
     ("bridge.baud", lambda c: c["UART_BAUD"], "UART baud γέφυρας ↔ Pi", None),
-    ("bridge.framing", "hex_json", "μορφή γραμμής UART", ["hex_json", "binary"]),
-    ("bridge.usb_echo", False, "USB debug echo (με host που δεν διαβάζει: έως ~2 s block)", None),
+    ("bridge.framing", lambda c: "binary" if "BRIDGE_UART_BINARY" in c and c["BRIDGE_UART_BINARY"] else "hex_json",
+     "μορφή UART γέφυρας ↔ Pi (firmware BRIDGE_UART_BINARY)", ["hex_json", "binary"]),
+    ("bridge.usb_echo", lambda c: "BRIDGE_USB_ECHO" in c and bool(c["BRIDGE_USB_ECHO"]),
+     "USB debug echo (με host που δεν διαβάζει: έως ~2 s block)", None),
     ("bridge.ingress_queue", lambda c: c["BRIDGE_INGRESS_QUEUE"], "ουρά εισόδου γέφυρας (frames)", None),
     ("pi.process_s", lambda c: c["PI_PROCESS_MS"] / 1000, "Pi επεξεργασία ανά frame (ΜΗ μετρημένο)", None),
     # ── hardware ──────────────────────────────────────────────────────────

@@ -241,7 +241,7 @@ TTL_ack(r)  = clamp(min(ACK_TTL_MAX, r + margin), 1, MESH_MAX_TTL)      serial_b
 
 **Γραμμή frame:**
 - hex JSON: `len(fmt) + 2·L + 2 (CRLF)` = 150 B.
-- binary (πρόταση): L + 5 (sync 2 + len 1 + CRC 2) = 66 B.
+- binary (firmware `mesh_uart.h`, προεπιλογή από 2026-09-30): `A5 5A | type | len | payload | CRC-16/CCITT` = L + 6 = 67 B· ACK 10 + 6 = 16 B.
 
 ```
 t_uart   = bytes · 10 bit / baud                               (8N1)
@@ -249,8 +249,9 @@ t_gw     = max(t_uart, t_Pi, t_uart_ack)                       (ανεξάρτη
 max ρυθμός = 1 / t_gw
 ack_rtt  = t_uart + t_Pi + t_uart_ack + t_ack_broadcast
 ```
-- **Σήμερα:** 150 B στα 115200 → 13,0 ms, Pi 20 ms (**μη μετρημένο**) → t_gw = 20 ms, 50 frames/s.
-- **Πρόταση:** 66 B στα 921600 → 0,72 ms, Pi 5 ms → t_gw = 5 ms, 200 frames/s.
+- **Fallback (παλιά γέφυρα):** 150 B στα 115200 → 13,0 ms, Pi 20 ms (**μη μετρημένο**) → t_gw = 20 ms, 50 frames/s.
+- **Σημερινό firmware:** 67 B στα 921600 → 0,73 ms. Με Pi 20 ms → t_gw = 20 ms (το όριο είναι πια το Pi)· με Pi 5 ms → 200 frames/s.
+- Το Pi αναγνωρίζει μόνο του baud (921600 → 115200, `AUTOBAUD_WINDOW_S`) και framing ανά μήνυμα, άρα δουλεύει και με τις δύο γέφυρες.
 
 **Ουρά εισόδου γέφυρας:**
 - Χωράει `bridge.ingress_queue` = 40 frames (WiFi RX buffers 8 static + 32 dynamic).

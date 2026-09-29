@@ -4,6 +4,7 @@
 #include <WiFi.h>
 #include "mesh_config.h"
 #include "mesh_node.h"
+#include "mesh_uart.h"
 
 // ── UART link to the Pi ────────────────────────────────────────────────────────
 // HardwareSerial::begin() takes (baud, config, RX_PIN, TX_PIN) — RX BEFORE TX.
@@ -12,7 +13,24 @@
 //   ESP32 GPIO5 (RX) ◄────────── Pi physical pin  8 = GPIO14 (TXD)
 #define UART_RX_PIN  5
 #define UART_TX_PIN  4
-#define UART_BAUD    115200
+// Link framing (mesh_uart.h). 1 = binary frames at 921600: 67 B = 0.73 ms per
+// sensor frame instead of a 150-B hex line = 13 ms at 115200. The Pi Zero W's
+// /dev/serial0 is the mini UART with core_freq pinned by enable_uart=1, so
+// 921600 lands within 0.3 %. Fallback: BRIDGE_UART_BINARY 0 + UART_BAUD 115200
+// restores the original hex-JSON line protocol byte for byte; serial_bridge.py
+// auto-detects both baud and framing, so only this sketch changes.
+#ifndef BRIDGE_UART_BINARY
+#define BRIDGE_UART_BINARY  1
+#endif
+#ifndef UART_BAUD
+#define UART_BAUD    (BRIDGE_UART_BINARY ? 921600 : 115200)
+#endif
+// USB debug echo of every UART message. Off by default: with a USB host that
+// is attached but not reading, HWCDC blocks each print up to its timeout —
+// inside the ESP-NOW receive callback (meshsim check `usb_echo`).
+#ifndef BRIDGE_USB_ECHO
+#define BRIDGE_USB_ECHO     0
+#endif
 
 // ── Bridge key store (RAM only, never NVS) ────────────────────────────────────
 // NetKey: received from the Pi on every serial connect; never written to flash.
@@ -23,19 +41,56 @@ static uint8_t bridgeNetKey[16];
 static bool    bridgeHasNetKey = false;
 
 // ── UART command parser ────────────────────────────────────────────────────────
-static char  uartLine[256];
-static int   uartLineLen = 0;
+static MeshUartDecoder uartDec;
 
 char bridgeMac[13];
 
+// Low-rate JSON messages (hello, heartbeat, mesh, status, unenrolled): a JSON
+// line in the fallback protocol, a JSON frame in binary mode.
 void uartPrintf(const char* fmt, ...) {
   char buf[256];
   va_list ap;
   va_start(ap, fmt);
   vsnprintf(buf, sizeof(buf), fmt, ap);
   va_end(ap);
+#if BRIDGE_UART_BINARY
+  uint8_t out[MESH_UART_MAX_PAYLOAD + MESH_UART_OVERHEAD];
+  size_t n = meshUartEncode(MESH_UART_T_JSON, (const uint8_t*)buf, strlen(buf), out);
+  if (n) Serial1.write(out, n);
+#else
   Serial1.println(buf);
-  Serial.printf("  → %s\n", buf);  // USB debug echo
+#endif
+#if BRIDGE_USB_ECHO
+  Serial.printf("  → %s\n", buf);
+#endif
+}
+
+// A sealed sensor frame, verbatim.
+static void uartSendFrame(const uint8_t* data) {
+#if BRIDGE_UART_BINARY
+  uint8_t out[MESH_PACKET_LEN + MESH_UART_OVERHEAD];
+  size_t n = meshUartEncode(MESH_UART_T_FRAME, data, MESH_PACKET_LEN, out);
+  if (n) Serial1.write(out, n);
+#if BRIDGE_USB_ECHO
+  Serial.printf("  → frame (%u B binary)\n", (unsigned)n);
+#endif
+#else
+  char hex[MESH_PACKET_LEN * 2 + 1];
+  for (int i = 0; i < MESH_PACKET_LEN; i++) sprintf(hex + i * 2, "%02x", data[i]);
+  uartPrintf("{\"type\":\"frame\",\"data\":\"%s\"}", hex);
+#endif
+}
+
+static void bridgeSendAck(const uint8_t* mac, uint16_t seq, bool ok, int ttl) {
+  if (ttl < 1) ttl = 1;
+  if (ttl > MESH_MAX_TTL) ttl = MESH_MAX_TTL;
+  uint8_t ackPkt[sizeof(MeshAck)];
+  if (meshBuildAck(ackPkt, mac, seq, ok ? MESH_ACK_OK : MESH_ACK_REJECTED, (uint8_t)ttl)) {
+    esp_now_send(MESH_BCAST, ackPkt, sizeof(ackPkt));
+#if BRIDGE_USB_ECHO
+    Serial.printf("[bridge] ack broadcast: seq=%u ok=%d\n", seq, ok);
+#endif
+  }
 }
 
 void sendHeartbeat() {
@@ -97,23 +152,26 @@ static void handleUartLine(const char* line) {
     uint16_t seq = (uint16_t)atoi(s + 6);
     bool ok = (strncmp(o + 5, "true", 4) == 0);
     const char* t = strstr(line, "\"ttl\":");
-    int ttl = t ? atoi(t + 6) : MESH_ACK_TTL;
-    if (ttl < 1) ttl = 1;
-    if (ttl > MESH_MAX_TTL) ttl = MESH_MAX_TTL;
-    uint8_t ackPkt[sizeof(MeshAck)];
-    if (meshBuildAck(ackPkt, mac, seq, ok ? MESH_ACK_OK : MESH_ACK_REJECTED, (uint8_t)ttl)) {
-      esp_now_send(MESH_BCAST, ackPkt, sizeof(ackPkt));
-      Serial.printf("[bridge] ack broadcast: seq=%u ok=%d\n", seq, ok);
-    }
+    bridgeSendAck(mac, seq, ok, t ? atoi(t + 6) : MESH_ACK_TTL);
   }
 }
 
+// Both protocols are accepted in both modes: a JSON line ('{' … '\n'), or a
+// binary frame (0x81 ACK / 0x02 JSON command).
 static void pumpUart() {
   while (Serial1.available()) {
-    char c = (char)Serial1.read();
-    if (c == '\n') { uartLine[uartLineLen] = 0; handleUartLine(uartLine); uartLineLen = 0; }
-    else if (uartLineLen < (int)sizeof(uartLine) - 1) uartLine[uartLineLen++] = c;
-    else uartLineLen = 0;   // overlong line, discard
+    MeshUartEvent e = meshUartFeed(&uartDec, (uint8_t)Serial1.read());
+    if (e == MESH_UART_GOT_LINE) {
+      handleUartLine((const char*)uartDec.buf);
+    } else if (e == MESH_UART_GOT_FRAME) {
+      if (uartDec.type == MESH_UART_T_ACK && uartDec.len == MESH_UART_ACK_LEN) {
+        const uint8_t* p = uartDec.buf;
+        bridgeSendAck(p, (uint16_t)(p[6] | ((uint16_t)p[7] << 8)), p[8] != 0, p[9]);
+      } else if (uartDec.type == MESH_UART_T_JSON) {
+        uartDec.buf[uartDec.len] = 0;
+        handleUartLine((const char*)uartDec.buf);
+      }
+    }
   }
 }
 
@@ -148,9 +206,7 @@ void onDataRecv(const esp_now_recv_info_t* info, const uint8_t* data, int len) {
   }
 
   // Forward the sealed frame verbatim — the Pi decrypts and publishes
-  char hex[MESH_PACKET_LEN * 2 + 1];
-  for (int i = 0; i < MESH_PACKET_LEN; i++) sprintf(hex + i * 2, "%02x", data[i]);
-  uartPrintf("{\"type\":\"frame\",\"data\":\"%s\"}", hex);
+  uartSendFrame(data);
 }
 
 // ── liveness tracking ─────────────────────────────────────────────────────────
@@ -175,8 +231,15 @@ void setup() {
   esp_wifi_set_promiscuous(false);
   Serial.printf("[wifi] fixed mesh channel: ch%d\n", MESH_FIXED_CHANNEL);
 
+  // A TX ring buffer so a frame written from the ESP-NOW receive callback is
+  // queued, not bit-banged out while the WiFi task waits (the core's default
+  // is 0 = blocking). Must be set before begin().
+  Serial1.setTxBufferSize(1024);
+  Serial1.setRxBufferSize(1024);
   Serial1.begin(UART_BAUD, SERIAL_8N1, UART_RX_PIN, UART_TX_PIN);
-  Serial.printf("[uart] Serial1 up: rx=%d tx=%d baud=%d\n", UART_RX_PIN, UART_TX_PIN, UART_BAUD);
+  meshUartReset(&uartDec);
+  Serial.printf("[uart] Serial1 up: rx=%d tx=%d baud=%d framing=%s\n", UART_RX_PIN, UART_TX_PIN,
+                UART_BAUD, BRIDGE_UART_BINARY ? "binary" : "hex-json");
 
   // Announce boot to the Pi — it will re-send the NetKey automatically so
   // this bridge is usable again without a manual service restart on the Pi.

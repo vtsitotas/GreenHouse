@@ -188,12 +188,15 @@ def build(fw=None):
     fwd("A6", "UART_BAUD", "baud", "γέφυρα ↔ Pi, 8N1")
     lit("A6", "BRIDGE_FRAME_FORMAT", "", "κάθε data frame γίνεται μία γραμμή JSON με hex")
     lit("A6", "BRIDGE_UART_WRITE", "", "println → +CRLF· μπλοκάρει όσο γεμίζει το FIFO")
-    lit("A6", "BRIDGE_USB_ECHO", "", "δεύτερη εγγραφή ανά frame στο USB-CDC (debug)")
+    fwd("A6", "BRIDGE_USB_ECHO", "", "1 = δεύτερη εγγραφή ανά μήνυμα στο USB-CDC (debug)")
+    fwd("A6", "BRIDGE_UART_BINARY", "", "1 = binary framing (mesh_uart.h), 0 = γραμμή hex JSON")
+    fwd("A6", "MESH_UART_OVERHEAD", "B", "sync 2 + type 1 + len 1 + CRC-16 2")
+    fwd("A6", "MESH_UART_ACK_LEN", "B", "mac 6 + seq 2 + ok 1 + ttl 1")
     c.add("A6", "BRIDGE_ACK_BROADCASTS", 1, "tx", f"{firmware_params.BRIDGE}:105",
           "ένα broadcast ανά ACK, χωρίς retry, η γέφυρα δεν κάνει re-flood")
     c.add("A6", "BRIDGE_FRAME_QUEUE", 0, "frames", f"{firmware_params.BRIDGE}:121",
           "καμία ουρά εφαρμογής: η εγγραφή γίνεται μέσα στο ESP-NOW RX callback")
-    py("A6", "BAUD", "baud", "Pi πλευρά")
+    py("A6", "AUTOBAUD_WINDOW_S", "s", "Pi: auto-baud 921600 → 115200 αν δεν έρθει έγκυρο μήνυμα")
     py("A6", "HEARTBEAT_INTERVAL_S", "s", "")
     fwd("A6", "MESH_OFFLINE_AFTER", "×", "")
     fwd("A6", "MESH_EXPECTED_REPORT_INTERVAL_MS", "ms", "")
@@ -351,13 +354,18 @@ def build(fw=None):
           "beacon 0,63 → 0,752 ms· data+ACK 1,2 → 1,338 ms", "", CARTV2 + " §2",
           "το spec παρέλειψε 15 B vendor action header", "derived")
 
-    baud = c["UART_BAUD"]
     line_b = an.bridge_frame_line_bytes(c["BRIDGE_FRAME_FORMAT"], pkt, c["BRIDGE_UART_WRITE"] == "println")
-    line_s = line_b * an.uart_byte_time_s(baud)
-    c.add("G", "UART_FRAME_LINE_B", line_b, "B", "format + 2·61 hex + CRLF", "", "derived")
-    c.add("G", "UART_FRAME_LINE_MS", round(line_s * 1e3, 3), "ms", "10 bit/byte @ UART_BAUD", "", "derived")
-    c.add("G", "BRIDGE_MAX_FRAMES_S", round(1 / line_s, 2), "frames/s", "1 / line time",
-          "ανώτατος ρυθμός γέφυρας (χωρίς USB echo)", "derived")
+    line_s = line_b * an.uart_byte_time_s(115200)
+    c.add("G", "UART_FRAME_LINE_B", line_b, "B", "format + 2·61 hex + CRLF", "fallback: hex JSON", "derived")
+    c.add("G", "UART_FRAME_LINE_MS", round(line_s * 1e3, 3), "ms", "10 bit/byte @ 115200", "fallback", "derived")
+    c.add("G", "BRIDGE_MAX_FRAMES_S_HEX", round(1 / line_s, 2), "frames/s", "1 / line time",
+          "ανώτατος ρυθμός γέφυρας με hex JSON @ 115200", "derived")
+    bin_b = pkt + c["MESH_UART_OVERHEAD"]
+    bin_s = bin_b * an.uart_byte_time_s(c["UART_BAUD"])
+    c.add("G", "UART_FRAME_BIN_B", bin_b, "B", "61 + MESH_UART_OVERHEAD", "binary framing", "derived")
+    c.add("G", "UART_FRAME_BIN_MS", round(bin_s * 1e3, 3), "ms", "10 bit/byte @ UART_BAUD", "", "derived")
+    c.add("G", "BRIDGE_MAX_FRAMES_S", round(1 / bin_s, 2), "frames/s", "1 / frame time",
+          "ανώτατος ρυθμός UART με το σημερινό firmware (binary)", "derived")
     ack_lo = an.pi_ack_line_bytes(0, ttl=1)
     ack_hi = an.pi_ack_line_bytes(65535, ok=False, ttl=16)
     c.add("G", "UART_ACK_LINE_B", (ack_lo, ack_hi), "B", "compact json.dumps + \\n", "εύρος seq/ttl/ok", "derived")

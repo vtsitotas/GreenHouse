@@ -75,9 +75,9 @@ def _gateway(cfg, cat, rad):
     if cfg["bridge.framing"] == "hex_json":
         line = an.bridge_frame_line_bytes(cat["BRIDGE_FRAME_FORMAT"], rad["packet_b"], True)
         ack_line = an.pi_ack_line_bytes(65535, ok=True, ttl=64)
-    else:  # proposed binary framing: sync 2 + len 1 + payload + CRC-16 2
-        line = rad["packet_b"] + 5
-        ack_line = 6 + 2 + 1 + 1 + 5      # mac + seq + status + ttl + framing
+    else:  # binary framing, firmware mesh_uart.h: A5 5A type len payload CRC-16
+        line = rad["packet_b"] + cat["MESH_UART_OVERHEAD"]
+        ack_line = cat["MESH_UART_ACK_LEN"] + cat["MESH_UART_OVERHEAD"]
     t_uart = line * an.uart_byte_time_s(baud)
     t_uart_ack = ack_line * an.uart_byte_time_s(baud)
     t_gw = max(t_uart, cfg["pi.process_s"], t_uart_ack)

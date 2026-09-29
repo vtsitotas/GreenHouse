@@ -29,6 +29,7 @@ _sys.path.insert(0, _os.path.join(_os.path.dirname(__file__), '..', 'shared'))
 import mesh_crypto
 import mesh_packet
 import nodes as node_store
+import uart_framing
 
 try:
     from security_log import log_security_event
@@ -40,7 +41,17 @@ except Exception:  # pragma: no cover - logging must never break mesh ingestion
 # HAT moves the ESP32 bridge to UART3 (the HAT's GPS owns GPIO14/15) and sets
 # GREENHOUSE_SERIAL_PORT in the service unit -- see docs/LORAWAN_SETUP.md.
 SERIAL_PORT = _os.environ.get('GREENHOUSE_SERIAL_PORT', '/dev/serial0')
-BAUD = 115200
+# Link speed/framing (firmware/libraries/GreenhouseMesh/mesh_uart.h). The new
+# bridge firmware talks binary frames at 921600; the original talks hex-JSON
+# lines at 115200. 'auto' (default) tries each baud until a valid message
+# arrives, and the framing is detected per message, so either bridge works
+# without touching the Pi. Set GREENHOUSE_UART_BAUD=115200 to pin one.
+_BAUD_ENV = _os.environ.get('GREENHOUSE_UART_BAUD', 'auto')
+BAUDS = (921600, 115200) if _BAUD_ENV == 'auto' else (int(_BAUD_ENV),)
+BAUD = BAUDS[0]
+# Heartbeats come every 2 s once the bridge holds the NetKey, which we (re)send
+# on every baud switch — so 5 s of nothing valid means the wrong baud.
+AUTOBAUD_WINDOW_S = 5.0
 MQTT_HOST = '127.0.0.1'
 MQTT_PORT = 1883
 
@@ -471,6 +482,11 @@ ACK_TTL_MAX = 128    # mirrors MESH_MAX_TTL (16 → rank 17, 64 → rank 65, 128
 
 
 def send_ack(ser, mac: str, seq: int, ok: bool, ttl=None) -> None:
+    # A bridge that speaks binary framing gets a 16-byte binary ack instead of
+    # a ~67-byte JSON line (0.17 ms vs 5.8 ms of UART at the respective bauds).
+    if getattr(ser, 'binary', False):
+        ser.write(uart_framing.encode_ack(mac, seq, ok, ttl if ttl is not None else ACK_TTL_MAX))
+        return
     payload = {'type': 'ack', 'mac': mac, 'seq': seq, 'ok': ok}
     if ttl is not None:
         payload['ttl'] = ttl
@@ -527,6 +543,38 @@ def handle_line(client, line: bytes, state: dict, ser=None) -> None:
             # unknown/missing type: drop silently
     except (KeyError, TypeError, ValueError):
         return  # well-formed JSON but wrong shape for its type -- drop
+
+
+class BridgeLink:
+    """The serial port plus what we learned about the bridge on the other end:
+    ``binary`` flips to True the first time it sends a binary frame, and from
+    then on acks go out binary too (send_ack reads it)."""
+
+    def __init__(self, ser):
+        self.ser = ser
+        self.binary = False
+        self.decoder = uart_framing.Decoder()
+
+    def write(self, data: bytes) -> int:
+        return self.ser.write(data)
+
+
+def dispatch_bytes(client, link: BridgeLink, data: bytes, state: dict) -> int:
+    """Feed raw UART bytes; handle every complete message. Returns how many
+    valid messages were seen (used for auto-baud and stall detection)."""
+    n = 0
+    for event in link.decoder.feed(data):
+        n += 1
+        if event[0] == 'line':
+            handle_line(client, event[1], state, link)
+            continue
+        _kind, msg_type, payload = event
+        link.binary = True
+        if msg_type == uart_framing.T_FRAME:
+            handle_frame(client, {'type': 'frame', 'data': payload.hex()}, state, link)
+        elif msg_type == uart_framing.T_JSON:
+            handle_line(client, payload, state, link)
+    return n
 
 
 def check_heartbeat_offline(client, state: dict) -> None:
@@ -597,7 +645,7 @@ def run() -> None:
     client.connect(MQTT_HOST, MQTT_PORT, keepalive=60)
     client.loop_start()
 
-    ser = serial.Serial(SERIAL_PORT, BAUD, timeout=1)
+    ser = BridgeLink(serial.Serial(SERIAL_PORT, BAUD, timeout=0.2))
 
     # The bridge holds the NetKey in RAM only (never its own flash), so it
     # must be re-sent here on every process start -- this is the only place
@@ -626,18 +674,29 @@ def run() -> None:
             note_retained_status(state, topic, payload)
             
     client.on_message = on_message
-    print(f'[serial-bridge] listening on {SERIAL_PORT} @ {BAUD}', flush=True)
+    print(f'[serial-bridge] listening on {SERIAL_PORT} @ {BAUD} (candidates {BAUDS})', flush=True)
 
     last_offline_check = time.monotonic()
     started = last_offline_check
     last_rx = None
+    baud_i, baud_since, baud_locked = 0, started, len(BAUDS) == 1
     while True:
-        line = ser.readline()
-        if line:
+        data = ser.ser.read(max(1, ser.ser.in_waiting))
+        if data and dispatch_bytes(client, ser, data, state):
             last_rx = time.monotonic()
-        handle_line(client, line, state, ser)
+            if not baud_locked:
+                baud_locked = True
+                print(f'[serial-bridge] bridge found @ {BAUDS[baud_i]} '
+                      f'({"binary" if ser.binary else "hex-json"} framing)', flush=True)
 
         now = time.monotonic()
+        if not baud_locked and now - baud_since >= AUTOBAUD_WINDOW_S:
+            baud_i = (baud_i + 1) % len(BAUDS)
+            baud_since = now
+            ser.ser.baudrate = BAUDS[baud_i]
+            ser.decoder = uart_framing.Decoder()
+            send_netkey(ser, state['net_key'])     # the bridge only heartbeats once keyed
+            print(f'[serial-bridge] nothing valid yet, trying {BAUDS[baud_i]} baud', flush=True)
         if now - last_offline_check >= OFFLINE_CHECK_INTERVAL_S:
             last_offline_check = now
             if serial_link_stalled(last_rx, started, now):
